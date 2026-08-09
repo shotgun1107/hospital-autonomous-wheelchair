@@ -1,0 +1,28 @@
+# Personal Codex configuration
+/AGENTS.override.md
+/.codex/
+
+# Local handoff and archived review exports
+/handoff/
+
+# Local research downloads and generated artifacts
+/tmp/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build and cache outputs
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
+build/
+coverage/
