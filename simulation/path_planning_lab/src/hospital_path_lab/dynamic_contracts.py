@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from math import hypot, isfinite
 
 from hospital_path_lab.contracts import Pose2D, RobotState, Twist2D
@@ -13,6 +14,11 @@ DYNAMIC_CONTROL_FREQUENCY_HZ = 20.0
 DYNAMIC_CONTROL_PERIOD_S = 1.0 / DYNAMIC_CONTROL_FREQUENCY_HZ
 ACTOR_RADIUS_M = 0.18
 MAX_ACTOR_SPEED_MPS = 0.50
+MAX_ACTOR_ACCELERATION_MPS2 = 0.50
+DYNAMIC_OBSERVATION_FREQUENCY_HZ = 10.0
+DYNAMIC_OBSERVATION_PERIOD_S = 1.0 / DYNAMIC_OBSERVATION_FREQUENCY_HZ
+DYNAMIC_OBSERVATION_TTL_S = 0.300
+DYNAMIC_COMMAND_APPLY_LATENCY_S = 0.050
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +70,70 @@ class ActorState:
             raise ValueError("actor radius must be positive")
         if self.trajectory_revision < 0:
             raise ValueError("trajectory_revision must not be negative")
+
+
+class DynamicObservationFrameKind(StrEnum):
+    TRACKS = "tracks"
+    EMPTY = "empty"
+
+
+@dataclass(frozen=True, slots=True)
+class ActorTrack:
+    """Controller-facing Actor observation without future ground truth."""
+
+    track_id: str
+    actor_binding_id: str
+    observed_position: Point2D
+    observed_velocity: Vector2D
+    position_sigma_m: float
+    velocity_sigma_mps: float
+
+    def __post_init__(self) -> None:
+        if not self.track_id or not self.actor_binding_id:
+            raise ValueError("track identity fields must not be empty")
+        _require_finite(
+            "track uncertainty",
+            self.position_sigma_m,
+            self.velocity_sigma_mps,
+        )
+        if min(self.position_sigma_m, self.velocity_sigma_mps) < 0.0:
+            raise ValueError("track uncertainty must not be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicObservationFrame:
+    """A delivered 10 Hz observation frame; dropout is represented by no frame."""
+
+    stream_id: str
+    episode_id: str
+    episode_seed: int
+    map_id: str
+    map_revision: int
+    observation_revision: int
+    sequence: int
+    observed_at_s: float
+    delivered_at_s: float
+    frame_kind: DynamicObservationFrameKind
+    tracks: tuple[ActorTrack, ...]
+    content_hash: str
+
+    def __post_init__(self) -> None:
+        if not self.stream_id or not self.episode_id or not self.map_id:
+            raise ValueError("observation identity fields must not be empty")
+        if not self.content_hash:
+            raise ValueError("observation content_hash must not be empty")
+        if min(self.map_revision, self.observation_revision, self.sequence) < 0:
+            raise ValueError("observation revisions and sequence must not be negative")
+        _require_finite(
+            "observation timestamp",
+            self.observed_at_s,
+            self.delivered_at_s,
+        )
+        if min(self.observed_at_s, self.delivered_at_s) < 0.0:
+            raise ValueError("observation timestamps must not be negative")
+        if not isinstance(self.frame_kind, DynamicObservationFrameKind):
+            raise TypeError("frame_kind must be a DynamicObservationFrameKind")
+        object.__setattr__(self, "tracks", tuple(self.tracks))
 
 
 @dataclass(frozen=True, slots=True)

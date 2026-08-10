@@ -1,5 +1,18 @@
 # 2단계 — 관측 생성과 Actor 예측
 
+## 구현 상태
+
+- 상태: **구현·전용시험·전체 회귀 완료**
+- 완료일: 2026-08-10
+- 전용시험: 관측·예측 합계 `43 passed`
+- 영향권 시험: 1·2단계 동적 시험 `53 passed`
+- 전체 회귀: `197 passed`
+- 다음 단계 선행 구현: 없음
+
+구현은 Stage 1 trace를 변경하지 않고 외부에서 소비한다. source validator가 발급한
+`FRESH` snapshot만 `build_actor_prediction_set()`에 들어가며 raw frame, invalid,
+stale, unavailable, 아직 전달되지 않은 snapshot은 prediction input이 될 수 없다.
+
 ## 목표
 
 정확한 Actor ground truth에서 controller용 열화 관측을 생성하고, source 계약을 검증한
@@ -69,6 +82,7 @@ ActorTrack
 - stream, episode seed, map ID 불일치
 - sequence 또는 revision 역행
 - content hash 불일치
+- active profile과 track의 위치·속도 σ 불일치
 - 같은 frame의 중복 track ID
 - 기존 track ID의 actor binding 변경
 - non-finite position·velocity·timestamp
@@ -76,6 +90,10 @@ ActorTrack
 
 마지막 valid frame은 `age > 0.300 s`가 될 때 stale이다. `age == TTL` 경계는 fresh로
 판정하되 사건 순서 변형 시험을 별도로 둔다.
+
+no-frame도 10 Hz sequence와 예정 delivery 시각을 소비한다. 이전 no-frame보다 과거
+delivery 시각의 valid frame은 구조화된 `delivery_time_regressed` reason으로 거부하고,
+거부된 입력은 validator 상태를 전진시키지 않는다.
 
 ## Actor tube
 
@@ -90,6 +108,10 @@ actor_tube_radius = 0.18 + 2·sigma_p + d_accel(tau)
 
 `d_accel`은 임의 방향 속도 변화의 보수 상한을 사용한다. tube API는 특정 controller에
 종속되지 않고 PP, DWA, gate가 같은 결과를 공유한다.
+
+공유 API는 검증된 immutable snapshot을 `ActorPredictionSet`으로 한 번 동결한 뒤,
+`sample_actor_tubes()`가 같은 rollout 시각의 원형 tube들을 반환한다. 이 단계에서는
+어느 controller나 safety gate에도 연결하지 않는다.
 
 ## oracle
 
@@ -117,6 +139,9 @@ actor_tube_radius = 0.18 + 2·sigma_p + d_accel(tau)
 - controller는 ground truth 없이 Actor tube를 계산한다.
 - 모든 invalid/stale 원인이 구조화된 reason code로 반환된다.
 - PP와 DWA는 아직 closed loop로 연결하지 않는다.
+
+위 완료조건은 2026-08-10 기준 충족했다. `2σ`와 reachable bound는 여전히
+`simulation_only` 연구 모델이며 실제 사람의 안전 보장이 아니다.
 
 ## 커밋 경계
 
