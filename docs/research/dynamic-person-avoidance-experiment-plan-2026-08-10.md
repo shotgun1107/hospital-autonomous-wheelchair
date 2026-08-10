@@ -17,6 +17,9 @@ ROS 2 종단 통합, 실차 제동, 사람 탑승 안전성을 증명하지 않�
 현재 결정 상태는
 [조건부 권고 문서](../product/path-planning-conditional-recommendation.md)를 우선한다.
 
+이 동결 요구사항을 코드로 옮기는 전체 구조와 단계별 완료조건은
+[동적 원형 Actor 비교실험 설계 명세](dynamic-actor-experiment/README.md)에서 관리한다.
+
 ---
 
 ## 먼저 할 일: 1시간 컷 1차 작업

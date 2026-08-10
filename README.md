@@ -60,6 +60,7 @@
 
 - [Python 경로 알고리즘 실험실](simulation/path_planning_lab/README.md)
 - [움직이는 원형 Actor 회피 비교실험 v5](docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)
+- [동적 원형 Actor 비교실험 설계·단계별 명세](docs/research/dynamic-actor-experiment/README.md)
 
 두 문서는 `simulation_only` 연구 자료이며 제품 알고리즘 채택이나 경로 분석 7단계 팀
 결정을 수행하지 않는다. 동적 비교실험의 첫 구현 범위는 문서의 `1시간 컷 1차 작업`이다.

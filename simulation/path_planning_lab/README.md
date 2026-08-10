@@ -8,6 +8,9 @@
 움직이는 원형 Actor를 이용한 다음 비교 단계와 1시간 단위 구현 순서는
 [동적 사람 회피 비교실험 v5](../../docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)에
 동결했다.
+전체 모듈 구조와 6단계 입력·출력·시험·완료조건은
+[동적 원형 Actor 비교실험 설계 명세](../../docs/research/dynamic-actor-experiment/README.md)를
+따른다.
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
