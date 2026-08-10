@@ -47,6 +47,16 @@ batch의 golden 2를 쓰는 대신 수동으로 고정한 golden 12를 사용하
 batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용한 회차는 검증·중복
 제거된 과거 후보가 추가되므로 20개보다 많아질 수 있다.
 
+## DYN-STAGE1 — 동적 원형 Actor 시뮬레이션 기반
+
+| ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
+|---|---|---|---|
+| `DYN-ARCH-001` | controller-facing frame은 Actor ground truth와 seed를 포함하지 않는다. | [dynamic_contracts.py](src/hospital_path_lab/dynamic_contracts.py), `tests/test_dynamic_simulation.py::test_controller_frames_do_not_expose_actor_ground_truth_or_seed` | 연결됨, L1. 관측 frame은 2단계 미구현이다. |
+| `DYN-ARCH-002` | 같은 seed는 같은 open-loop Actor scenario, 20 Hz frame, 사건과 SHA-256을 만든다. | [dynamic_actor.py](src/hospital_path_lab/dynamic_actor.py), [simulation.py](src/hospital_path_lab/simulation.py), `tests/test_dynamic_actor.py::test_same_seed_reproduces_scenario_and_world_hash`, `tests/test_dynamic_simulation.py::test_dynamic_trace_is_fully_reproducible_for_same_seed` | 연결됨, L1. 단일 원형 Actor 합성 궤적이다. |
+| `DYN-SIM-001` | Actor는 반지름 `0.18m`, 최대속도 `0.50m/s`의 piecewise-linear open-loop waypoint를 따른다. | [dynamic_actor.py](src/hospital_path_lab/dynamic_actor.py), `tests/test_dynamic_actor.py::test_actor_contracts_reject_invalid_radius_speed_time_and_nonfinite_values`, `::test_piecewise_linear_state_waits_moves_and_stops` | 연결됨, L1. 실제 사람 운동 모델이 아니다. |
+| `DYN-SIM-002` | tick 시각은 누적 덧셈이 아니라 `tick_id × 0.05s`로 만들고 로봇은 1단계에서 정지한다. | [simulation.py](src/hospital_path_lab/simulation.py), `tests/test_dynamic_simulation.py::test_dynamic_simulation_uses_exact_20hz_tick_time_and_stationary_robot` | 연결됨, L1. controller closed loop는 4단계 대상이다. |
+| `DYN-OUTPUT-001` | episode ID·seed 파일명의 결정론적 JSON과 reference·robot·Actor trace PNG를 생성한다. | [experiment_visualization.py](src/hospital_path_lab/experiment_visualization.py), `tests/test_dynamic_simulation.py::test_json_and_png_artifacts_are_deterministic_and_close_figures` | 연결됨, L1. 산출물은 ignored outputs에 저장한다. |
+
 ## PLAB-MAP — 지도·사건·corpus
 
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |

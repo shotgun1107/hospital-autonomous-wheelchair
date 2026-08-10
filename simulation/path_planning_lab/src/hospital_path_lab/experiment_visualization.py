@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import ListedColormap  # noqa: E402
+from matplotlib.patches import Circle  # noqa: E402
 
 from hospital_path_lab.contracts import (  # noqa: E402
     GraphSnapshot,
@@ -18,8 +19,13 @@ from hospital_path_lab.contracts import (  # noqa: E402
     SnapshotMetadata,
     TrajectoryPoint,
 )
+from hospital_path_lab.dynamic_contracts import DynamicTrace  # noqa: E402
 from hospital_path_lab.graph import canonical_edge  # noqa: E402
 from hospital_path_lab.planners import SearchResult, SearchStatus  # noqa: E402
+from hospital_path_lab.simulation import (  # noqa: E402
+    dynamic_artifact_stem,
+    save_dynamic_trace_json,
+)
 
 
 def save_graph_experiment_plot(
@@ -170,6 +176,112 @@ def save_grid_experiment_plot(
     finally:
         plt.close(figure)
     return output
+
+
+def save_dynamic_actor_trace_plot(
+    trace: DynamicTrace,
+    output_path: str | Path,
+    *,
+    title: str = "Dynamic Actor simulation core",
+) -> Path:
+    """Reference, 정지 로봇과 Actor ground-truth trace를 PNG로 저장한다."""
+
+    output = _prepare_output(output_path)
+    figure, axis = plt.subplots(figsize=(9, 5.5))
+    try:
+        _plot_pose_sequence(
+            axis,
+            tuple(trace.reference_path),
+            label="reference path",
+            color="tab:blue",
+            linestyle="--",
+            linewidth=2.0,
+        )
+        robot_poses = tuple(frame.robot_state.pose for frame in trace.ground_truth_frames)
+        _plot_pose_sequence(
+            axis,
+            robot_poses,
+            label="robot trace",
+            color="tab:red",
+            linewidth=1.8,
+            marker=".",
+        )
+
+        actor_histories: dict[str, list[tuple[float, float, float]]] = {}
+        for frame in trace.ground_truth_frames:
+            for actor in frame.actors:
+                actor_histories.setdefault(actor.actor_id, []).append(
+                    (actor.position.x, actor.position.y, actor.radius_m)
+                )
+        colors = ("tab:orange", "tab:green", "tab:purple", "tab:brown")
+        for index, (actor_id, samples) in enumerate(sorted(actor_histories.items())):
+            color = colors[index % len(colors)]
+            xs = [sample[0] for sample in samples]
+            ys = [sample[1] for sample in samples]
+            axis.plot(xs, ys, color=color, linewidth=2.2, label=f"{actor_id} trace")
+            axis.scatter(xs[0], ys[0], color=color, marker="o", s=45, zorder=4)
+            axis.scatter(xs[-1], ys[-1], color=color, marker="X", s=65, zorder=4)
+            axis.add_patch(
+                Circle(
+                    (xs[0], ys[0]),
+                    samples[0][2],
+                    edgecolor=color,
+                    facecolor="none",
+                    linestyle=":",
+                    linewidth=1.2,
+                    zorder=2,
+                )
+            )
+            axis.add_patch(
+                Circle(
+                    (xs[-1], ys[-1]),
+                    samples[-1][2],
+                    edgecolor=color,
+                    facecolor="none",
+                    linestyle=":",
+                    linewidth=1.2,
+                    zorder=2,
+                )
+            )
+
+        all_x = [pose.x for pose in trace.reference_path]
+        all_y = [pose.y for pose in trace.reference_path]
+        all_x.extend(pose.x for pose in robot_poses)
+        all_y.extend(pose.y for pose in robot_poses)
+        for samples in actor_histories.values():
+            all_x.extend(sample[0] for sample in samples)
+            all_y.extend(sample[1] for sample in samples)
+        margin = 0.35
+        axis.set_xlim(min(all_x) - margin, max(all_x) + margin)
+        axis.set_ylim(min(all_y) - margin, max(all_y) + margin)
+        axis.set_title(
+            f"{title}\n"
+            f"episode={trace.metadata.episode_id} | seed={trace.metadata.seed} | "
+            f"world={trace.metadata.world_content_hash[:12]}"
+        )
+        axis.set_xlabel("x [m]")
+        axis.set_ylabel("y [m]")
+        axis.set_aspect("equal", adjustable="box")
+        axis.grid(alpha=0.18)
+        _deduplicated_legend(axis)
+        figure.tight_layout()
+        figure.savefig(output, dpi=160, format="png")
+    finally:
+        plt.close(figure)
+    return output
+
+
+def save_dynamic_actor_artifacts(
+    trace: DynamicTrace,
+    output_dir: str | Path,
+) -> tuple[Path, Path]:
+    """episode ID·seed 파일명으로 JSON과 PNG를 함께 저장한다."""
+
+    output = Path(output_dir)
+    stem = dynamic_artifact_stem(trace)
+    json_path = save_dynamic_trace_json(trace, output / f"{stem}.json")
+    png_path = save_dynamic_actor_trace_plot(trace, output / f"{stem}.png")
+    return json_path, png_path
 
 
 def _prepare_output(output_path: str | Path) -> Path:

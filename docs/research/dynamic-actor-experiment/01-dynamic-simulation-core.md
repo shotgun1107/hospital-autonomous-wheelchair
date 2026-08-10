@@ -1,5 +1,9 @@
 # 1단계 — 동적 시뮬레이션 기반
 
+- 상태: 구현 완료
+- 구현일: 2026-08-10
+- 증거 수준: Python `simulation_only` 단위·회귀시험
+
 ## 목표
 
 controller 구현을 건드리지 않고 움직이는 원형 Actor와 로봇의 결정론적 ground-truth
@@ -117,6 +121,16 @@ tick n의 simulation_time = n · dt
 - JSON과 PNG가 모두 생성된다.
 - 기존 정적 실험실 시험이 깨지지 않는다.
 - 아직 PP·DWA, noise, gate, hidden을 실행하지 않는다.
+
+## 구현 결과
+
+- seed `20260810`: 131 ground-truth frame, 130 command interval
+- trace content hash:
+  `88fd181c70b3ea08d19d7403a391244b57ce69e4f317c18f9c7e7b58c141db81`
+- 전용시험: 10개 통과
+- 장시간 runner 제외 회귀시험: 142개 통과
+- 전체 회귀시험: 153개 통과
+- 생성 산출물은 ignored `simulation/path_planning_lab/outputs/stage1_dynamic_actor/`에 둔다.
 
 ## 커밋 경계
 

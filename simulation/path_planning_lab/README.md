@@ -11,6 +11,9 @@
 전체 모듈 구조와 6단계 입력·출력·시험·완료조건은
 [동적 원형 Actor 비교실험 설계 명세](../../docs/research/dynamic-actor-experiment/README.md)를
 따른다.
+현재는 1단계인 seed 기반 원형 Actor, 20 Hz ground-truth trace, controller 입력 분리와
+결정론적 JSON·PNG 출력까지 구현했다. 관측 열화, Actor tube, 동적 safety gate와
+PP·DWA closed loop는 아직 구현하지 않았다.
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 

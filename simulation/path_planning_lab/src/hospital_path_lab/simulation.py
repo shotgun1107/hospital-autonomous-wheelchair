@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from json import dumps
 from math import cos, hypot, isfinite, pi, sin, sqrt
+from pathlib import Path
 from statistics import fmean
 
 from hospital_path_lab.collision import CollisionChecker
@@ -16,6 +18,18 @@ from hospital_path_lab.contracts import (
     RobotState,
     Twist2D,
 )
+from hospital_path_lab.dynamic_actor import DynamicActorScenario, actor_state_at
+from hospital_path_lab.dynamic_contracts import (
+    DYNAMIC_CONTROL_FREQUENCY_HZ,
+    DYNAMIC_CONTROL_PERIOD_S,
+    DynamicAcceptedCommand,
+    DynamicControllerInputFrame,
+    DynamicGroundTruthFrame,
+    DynamicStateEvent,
+    DynamicTrace,
+    DynamicTraceMetadata,
+)
+from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
 
 
@@ -91,6 +105,124 @@ class DynamicLocalEvidence:
     maximum_tracking_error_m: float
     commands_finite: bool
     metrics_finite: bool
+
+
+def simulate_dynamic_actor_scenario(scenario: DynamicActorScenario) -> DynamicTrace:
+    """20 Hz에서 open-loop Actor와 정지 로봇의 ground-truth trace를 만든다.
+
+    Stage 1에서는 controller를 실행하지 않는다. controller-facing frame에는 로봇과
+    reference path만 복사하며 Actor ground truth를 넣지 않는다.
+    """
+
+    truth_frames: list[DynamicGroundTruthFrame] = []
+    controller_frames: list[DynamicControllerInputFrame] = []
+    for tick_id in range(scenario.tick_count + 1):
+        simulation_time_s = tick_id * DYNAMIC_CONTROL_PERIOD_S
+        truth = DynamicGroundTruthFrame(
+            episode_id=scenario.episode_id,
+            seed=scenario.seed,
+            tick_id=tick_id,
+            simulation_time_s=simulation_time_s,
+            robot_state=scenario.robot_initial_state,
+            actors=(actor_state_at(scenario, simulation_time_s),),
+            map_revision=scenario.map_revision,
+            mission_revision=scenario.mission_revision,
+        )
+        truth_frames.append(truth)
+        controller_frames.append(
+            DynamicControllerInputFrame(
+                tick_id=tick_id,
+                simulation_time_s=simulation_time_s,
+                robot_state=truth.robot_state,
+                reference_path=scenario.reference_path,
+                map_revision=scenario.map_revision,
+                mission_revision=scenario.mission_revision,
+            )
+        )
+
+    accepted_commands = tuple(
+        DynamicAcceptedCommand(
+            source_tick_id=tick_id,
+            applied_tick_id=tick_id + 1,
+            command=Twist2D(),
+        )
+        for tick_id in range(scenario.tick_count)
+    )
+    crossing_y = scenario.reference_path[0].y
+    crossing_tick = next(
+        frame.tick_id for frame in truth_frames if frame.actors[0].position.y >= crossing_y
+    )
+    events = (
+        DynamicStateEvent(0, 0.0, "episode_started", scenario.actor_id),
+        DynamicStateEvent(
+            crossing_tick,
+            crossing_tick * DYNAMIC_CONTROL_PERIOD_S,
+            "actor_crossed_reference",
+            scenario.actor_id,
+        ),
+        DynamicStateEvent(
+            scenario.tick_count,
+            scenario.tick_count * DYNAMIC_CONTROL_PERIOD_S,
+            "episode_finished",
+            scenario.actor_id,
+        ),
+    )
+    return DynamicTrace(
+        metadata=DynamicTraceMetadata(
+            schema_version=scenario.schema_version,
+            generator_version=scenario.generator_version,
+            episode_id=scenario.episode_id,
+            seed=scenario.seed,
+            simulation_only=True,
+            world_content_hash=scenario.content_hash,
+            control_frequency_hz=DYNAMIC_CONTROL_FREQUENCY_HZ,
+            tick_count=scenario.tick_count,
+            map_revision=scenario.map_revision,
+            mission_revision=scenario.mission_revision,
+        ),
+        reference_path=scenario.reference_path,
+        ground_truth_frames=tuple(truth_frames),
+        controller_input_frames=tuple(controller_frames),
+        accepted_commands=accepted_commands,
+        state_events=events,
+    )
+
+
+def dynamic_trace_content_hash(trace: DynamicTrace) -> str:
+    """Wall-clock 값을 포함하지 않는 trace 의미 내용의 SHA-256."""
+
+    return canonical_content_hash(trace)
+
+
+def dynamic_artifact_stem(trace: DynamicTrace) -> str:
+    """episode ID와 seed를 포함한 안전한 산출물 파일 stem을 반환한다."""
+
+    safe_episode_id = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in trace.metadata.episode_id
+    )
+    return f"{safe_episode_id}_seed_{trace.metadata.seed}"
+
+
+def save_dynamic_trace_json(trace: DynamicTrace, output_path: str | Path) -> Path:
+    """Trace와 의미 content hash를 결정론적 UTF-8 JSON으로 저장한다."""
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = asdict(trace)
+    payload["content_hash"] = dynamic_trace_content_hash(trace)
+    output.write_text(
+        dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return output
 
 
 def simulate_follower(
