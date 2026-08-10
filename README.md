@@ -58,6 +58,7 @@
 
 ## 경로 알고리즘 연구
 
+- [회사·집 PC 작업 인수인계](인수인계.md)
 - [Python 경로 알고리즘 실험실](simulation/path_planning_lab/README.md)
 - [움직이는 원형 Actor 회피 비교실험 v5](docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)
 - [동적 원형 Actor 비교실험 설계·단계별 명세](docs/research/dynamic-actor-experiment/README.md)
