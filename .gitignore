@@ -20,9 +20,21 @@
 Thumbs.db
 
 # Build and cache outputs
+.venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.pytest_tmp/
+.pytest_tmp*/
+.test-run-*/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
 node_modules/
 dist/
 build/
 coverage/
+
+# Path-planning research outputs
+/simulation/path_planning_lab/outputs/

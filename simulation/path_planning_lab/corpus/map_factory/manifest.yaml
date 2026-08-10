@@ -1,0 +1,30 @@
+schema_version: "1.1"
+generator_version: map_factory_v2
+description: 병원형 Python 경로 알고리즘 연구용 지도 코퍼스
+simulation_only: true
+vehicle_profile_id: virtual_doll_wheelchair_v0_1
+grid_resolution_m: 0.02
+generated_batch_size: 10
+manual_golden_count: 12
+families: [corridor, intersection, dead_end, u_trap]
+generated_splits:
+  golden: 2
+  development: 4
+  hidden: 2
+  regressions: 2
+event_kinds:
+  - close_edge
+  - open_edge
+  - create_obstacle
+  - move_obstacle
+  - remove_obstacle
+  - move_start
+  - change_goal
+  - invalidate
+freeze_policy:
+  - validator를 통과한 10개 batch만 다음 benchmark 입력으로 동결한다.
+  - 동결 뒤 world/episode 순서와 SHA-256이 하나라도 달라지면 거부한다.
+  - hidden 실패는 새 regression record로만 쓰며 기존 record를 덮어쓰지 않는다.
+evidence_limit: >-
+  Python 논리·합성 기하 시험이며 제품 지도, 실물 주행, 실제 사람 탑승 안전성을
+  입증하지 않는다. G1~G5는 미확정이고 최종 알고리즘을 채택하지 않는다.

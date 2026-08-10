@@ -1,0 +1,19 @@
+schema_version: "1.1"
+generator_version: map_factory_v2
+base_seed: 20260810
+batch_size: 10
+derivation:
+  world_seed: base_seed + index * 7919
+  episode_seed: world_seed XOR 0x5F3759DF
+cases:
+  - {index: 0, family: corridor, split: golden}
+  - {index: 1, family: intersection, split: golden}
+  - {index: 2, family: dead_end, split: development}
+  - {index: 3, family: u_trap, split: development}
+  - {index: 4, family: corridor, split: development}
+  - {index: 5, family: intersection, split: development}
+  - {index: 6, family: dead_end, split: hidden}
+  - {index: 7, family: u_trap, split: hidden}
+  - {index: 8, family: corridor, split: regressions}
+  - {index: 9, family: intersection, split: regressions}
+hidden_policy: 공개 batch와 다른 base_seed로 새 batch를 생성한 뒤 hidden 두 건만 평가한다.

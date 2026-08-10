@@ -1,0 +1,67 @@
+map:
+  directed: false
+  nodes:
+    start: [0.0, 1.0]
+    junction_left: [1.0, 1.0]
+    upper_left: [2.0, 2.0]
+    upper_right: [4.0, 2.0]
+    lower_left: [2.0, 0.0]
+    lower_right: [4.0, 0.0]
+    junction_right: [5.0, 1.0]
+    goal: [6.0, 1.0]
+    waiting_bay: [1.0, 3.0]
+  edges:
+    - {from: start, to: junction_left, cost: 1.0}
+    - {from: junction_left, to: upper_left, cost: 1.4142135624}
+    - {from: upper_left, to: upper_right, cost: 2.0}
+    - {from: upper_right, to: junction_right, cost: 1.4142135624}
+    - {from: junction_left, to: lower_left, cost: 1.4142135624}
+    - {from: lower_left, to: lower_right, cost: 2.0}
+    - {from: lower_right, to: junction_right, cost: 1.4142135624}
+    - {from: junction_right, to: goal, cost: 1.0}
+    - {from: junction_left, to: waiting_bay, cost: 2.2360679775}
+
+cases:
+  - name: normal
+    description: 두 허용 통로가 모두 열려 있다.
+    start: start
+    goal: goal
+    closed_edges: []
+    expected_status: found
+    expected_cost: 6.8284271248
+
+  - name: unrelated_closure
+    description: 목적지 경로와 무관한 대기 구역 연결만 닫힌다.
+    start: start
+    goal: goal
+    closed_edges:
+      - [junction_left, waiting_bay]
+    expected_status: found
+    expected_cost: 6.8284271248
+
+  - name: upper_corridor_blocked
+    description: 위쪽 통로가 막혀 아래쪽 대체 통로를 선택해야 한다.
+    start: start
+    goal: goal
+    closed_edges:
+      - [upper_left, upper_right]
+    expected_status: found
+    expected_cost: 6.8284271248
+
+  - name: all_routes_blocked
+    description: 위·아래 통로가 모두 막혀 안전한 경로가 없다.
+    start: start
+    goal: goal
+    closed_edges:
+      - [upper_left, upper_right]
+      - [lower_left, lower_right]
+    expected_status: no_path
+
+  - name: moved_start_same_goal
+    description: 정지 뒤 시작점이 이동한 상태에서 같은 목적지로 다시 계산한다.
+    start: lower_left
+    goal: goal
+    closed_edges:
+      - [upper_left, upper_right]
+    expected_status: found
+    expected_cost: 4.4142135624

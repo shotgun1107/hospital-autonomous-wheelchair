@@ -1,0 +1,18 @@
+schema_version: "1.1"
+generator_version: map_factory_v2
+corpus_id: generated_20260810
+simulation_only: true
+base_seed: 20260810
+batch_size: 10
+frozen_content_hash: 799a35159d8bcb6ddf50f8005c317af8b57980a80bcfaf8ec0a3e53727c25383
+cases:
+  - {index: 0, world_content_hash: 17394b55c2fdc5ec380e310e6264ef5063e5339fab173e03e6897e14c16ce49b, episode_content_hash: b19becdc88336ecf12cb9fb362a5c6ef1926c7f238fd6af81f93fd85827ae639}
+  - {index: 1, world_content_hash: 97112f939aedb0c710fdb77d2adac6a79a8ccfb79d24fb1a3d6b267652d87889, episode_content_hash: bd58725f178ad6852a11ddc301a95241ea8e3a2b9bb95861572dc4c570b1a3fc}
+  - {index: 2, world_content_hash: d3dfa644914b092871c0bbfdc0136de68506d874b4de48ee253fe10b6dd68d99, episode_content_hash: 055a87f1f69bbdf4b7795e75a496ad8a86abb37c98e9c2e0e16ebd02baca4c62}
+  - {index: 3, world_content_hash: fa79785ac628f9c65be024964296045fe6e973f6d25ee3756d1c8fba1a99a474, episode_content_hash: 94c23c45b021920a8fc1162cfed01f28a4dd35f55ef2093e8af45f84d6fe5ca7}
+  - {index: 4, world_content_hash: 33668398fc22bbe5f62cdae5a7e2556e4bcaa09a611166b0b6d2df2b02eb8952, episode_content_hash: 543afd606bc9847136bd56cc1b5359284bf91acc7c34d5510814759ca4cb23e9}
+  - {index: 5, world_content_hash: 26eaa4fd2669c30d102ca15c0fb046c00a7abecd7ce801cfaaf6382cce544272, episode_content_hash: fda0fe89c1f386f13a550d14d358305a656ee0b945db4198c596f703f0b1cdfb}
+  - {index: 6, world_content_hash: 283d2ca4ff1a1b6b7a4d8a40599a0b0f5db603fa1acdcc1fad3faad8c12ead12, episode_content_hash: 2fc27e2340099d242eb0cdd2c862259ec9854ad68013e6f9edc5b4f3fb0b1b04}
+  - {index: 7, world_content_hash: b619c07a082f4e0b00c92e11ec2be45b478764e21c247d793ba4676eda2b4022, episode_content_hash: 38720f623808678c8bb0cfae80ee222d6625ff2e139adf6ae5ac57d0172cf86e}
+  - {index: 8, world_content_hash: 149968a969a6657840d2304f4a18f4cbab75484732d99e9f52d86c2a4ced2094, episode_content_hash: 377586970a6bb17a595dde5adf63081890d3dda9df9143a677541694fc1cc5fb}
+  - {index: 9, world_content_hash: 539373c5e01140c5c47b21830ec0746b005be6a091ded826e947bba853c4da23, episode_content_hash: 53b1f02ffbe1d8a54198e530f3f31c8905c4e4864aefd3dcaccf5d762256c475}

@@ -1,0 +1,581 @@
+"""공통 가상 차체로 follower와 local controller를 직렬 실행한다."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import cos, hypot, isfinite, pi, sin, sqrt
+from statistics import fmean
+
+from hospital_path_lab.collision import CollisionChecker
+from hospital_path_lab.contracts import (
+    GridSnapshot,
+    LocalPlanner,
+    PathFollower,
+    PlanStatus,
+    Pose2D,
+    RobotState,
+    Twist2D,
+)
+from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationResult:
+    component: str
+    status: PlanStatus
+    goal_reached: bool
+    collision: bool
+    poses: tuple[Pose2D, ...]
+    commands: tuple[Twist2D, ...]
+    elapsed_s: float
+    minimum_clearance_m: float | None
+    mean_tracking_error_m: float
+    maximum_tracking_error_m: float
+    jerk_rms_mps3: float
+    final_goal_distance_m: float
+    failure_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicLocalStepEvidence:
+    """한 스냅샷에서 관측한 local planner의 simulation-only 증거."""
+
+    step_index: int
+    event_kind: str | None
+    map_id: str
+    map_revision: int
+    mission_revision: int
+    observation_revision: int
+    input_content_hash: str
+    planner_status: PlanStatus
+    command: Twist2D
+    pose_before: Pose2D
+    pose_after: Pose2D
+    collision: bool
+    command_rejected: bool
+    safe_stop_observed: bool
+    recovery_observed: bool
+    rejoin_observed: bool
+    minimum_clearance_m: float
+    tracking_error_m: float
+    goal_progress_m: float
+    no_path_streak: int
+    no_progress_streak: int
+    deadlock_observed: bool
+    failure_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicLocalEvidence:
+    """동적 스냅샷 열에 대한 local planner의 집계 증거.
+
+    이 결과는 축소 Python 시뮬레이션의 관측일 뿐 제품 안전성의 근거가 아니다.
+    """
+
+    component: str
+    simulation_only: bool
+    steps: tuple[DynamicLocalStepEvidence, ...]
+    final_state: RobotState
+    collision_count: int
+    rejected_command_count: int
+    safe_stop_count: int
+    no_path_count: int
+    recovery_observed: bool
+    path_deviation_observed: bool
+    rejoin_observed: bool
+    deadlock_observed: bool
+    maximum_no_path_streak: int
+    maximum_no_progress_streak: int
+    minimum_clearance_m: float | None
+    mean_tracking_error_m: float
+    maximum_tracking_error_m: float
+    commands_finite: bool
+    metrics_finite: bool
+
+
+def simulate_follower(
+    follower: PathFollower,
+    path: tuple[Pose2D, ...],
+    snapshot: GridSnapshot,
+    initial_state: RobotState,
+    goal: Pose2D,
+    *,
+    profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    max_time_s: float = 30.0,
+    goal_tolerance_m: float = 0.05,
+) -> SimulationResult:
+    if not path or max_time_s <= 0:
+        return _failed_simulation(
+            follower.name, initial_state.pose, goal, "invalid_simulation_input"
+        )
+
+    state = initial_state
+    collision_checker = CollisionChecker(
+        snapshot.grid,
+        profile,
+        forbidden_cells=snapshot.forbidden_cells,
+    )
+    poses = [state.pose]
+    commands: list[Twist2D] = []
+    clearances = [collision_checker.conservative_clearance(state.pose)]
+    tracking_errors = [_nearest_path_distance(state.pose, path)]
+    step_count = max(1, int(max_time_s / profile.control_period_s))
+    failure_reason: str | None = None
+    collision = clearances[-1] <= 0.0
+
+    for _ in range(step_count):
+        if collision or (
+            _distance(state.pose, goal) <= goal_tolerance_m
+            and _twist_is_stopped(state.twist)
+        ):
+            break
+        output = follower.step(path, state, snapshot.metadata)
+        if output.status is not PlanStatus.FOUND:
+            failure_reason = output.failure_reason or output.status.value
+            break
+        command = _bounded_command(output.command, profile)
+        state = RobotState(
+            pose=_integrate(state.pose, command, profile.control_period_s),
+            twist=command,
+        )
+        commands.append(command)
+        poses.append(state.pose)
+        clearances.append(collision_checker.conservative_clearance(state.pose))
+        tracking_errors.append(_nearest_path_distance(state.pose, path))
+        collision = clearances[-1] <= 0.0
+
+    goal_distance = _distance(state.pose, goal)
+    goal_reached = (
+        goal_distance <= goal_tolerance_m
+        and _twist_is_stopped(state.twist)
+        and not collision
+    )
+    status = PlanStatus.FOUND if goal_reached else PlanStatus.NO_PATH
+    if collision:
+        failure_reason = "collision"
+    elif not goal_reached and failure_reason is None:
+        failure_reason = "goal_not_reached_before_timeout"
+    return SimulationResult(
+        component=follower.name,
+        status=status,
+        goal_reached=goal_reached,
+        collision=collision,
+        poses=tuple(poses),
+        commands=tuple(commands),
+        elapsed_s=len(commands) * profile.control_period_s,
+        minimum_clearance_m=min(clearances) if clearances else None,
+        mean_tracking_error_m=fmean(tracking_errors),
+        maximum_tracking_error_m=max(tracking_errors),
+        jerk_rms_mps3=_jerk_rms(commands, profile.control_period_s),
+        final_goal_distance_m=goal_distance,
+        failure_reason=failure_reason,
+    )
+
+
+def simulate_local_controller(
+    planner: LocalPlanner,
+    reference_path: tuple[Pose2D, ...],
+    snapshot: GridSnapshot,
+    initial_state: RobotState,
+    goal: Pose2D,
+    *,
+    profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    max_time_s: float = 30.0,
+    goal_tolerance_m: float = 0.05,
+) -> SimulationResult:
+    state = initial_state
+    collision_checker = CollisionChecker(
+        snapshot.grid,
+        profile,
+        forbidden_cells=snapshot.forbidden_cells,
+    )
+    poses = [state.pose]
+    commands: list[Twist2D] = []
+    clearances = [collision_checker.conservative_clearance(state.pose)]
+    tracking_errors = [_nearest_path_distance(state.pose, reference_path)]
+    collision = clearances[-1] <= 0.0
+    failure_reason: str | None = None
+    step_count = max(1, int(max_time_s / profile.control_period_s))
+
+    for _ in range(step_count):
+        if collision or (
+            _distance(state.pose, goal) <= goal_tolerance_m
+            and _twist_is_stopped(state.twist)
+        ):
+            break
+        result = planner.plan(snapshot, reference_path, state, goal)
+        if result.status is not PlanStatus.FOUND or len(result.trajectory) < 2:
+            failure_reason = result.failure_reason or "no_safe_local_trajectory"
+            break
+        command = _bounded_command(result.trajectory[1].twist, profile)
+        state = RobotState(
+            pose=_integrate(state.pose, command, profile.control_period_s),
+            twist=command,
+        )
+        commands.append(command)
+        poses.append(state.pose)
+        clearances.append(collision_checker.conservative_clearance(state.pose))
+        tracking_errors.append(_nearest_path_distance(state.pose, reference_path))
+        collision = clearances[-1] <= 0.0
+
+    goal_distance = _distance(state.pose, goal)
+    goal_reached = (
+        goal_distance <= goal_tolerance_m
+        and _twist_is_stopped(state.twist)
+        and not collision
+    )
+    status = PlanStatus.FOUND if goal_reached else PlanStatus.NO_PATH
+    if collision:
+        failure_reason = "collision"
+    elif not goal_reached and failure_reason is None:
+        failure_reason = "goal_not_reached_before_timeout"
+    return SimulationResult(
+        component=planner.name,
+        status=status,
+        goal_reached=goal_reached,
+        collision=collision,
+        poses=tuple(poses),
+        commands=tuple(commands),
+        elapsed_s=len(commands) * profile.control_period_s,
+        minimum_clearance_m=min(clearances) if clearances else None,
+        mean_tracking_error_m=fmean(tracking_errors),
+        maximum_tracking_error_m=max(tracking_errors),
+        jerk_rms_mps3=_jerk_rms(commands, profile.control_period_s),
+        final_goal_distance_m=goal_distance,
+        failure_reason=failure_reason,
+    )
+
+
+def simulate_dynamic_local_evidence(
+    planner: LocalPlanner,
+    reference_path: tuple[Pose2D, ...],
+    snapshots: tuple[GridSnapshot, ...],
+    initial_state: RobotState,
+    goal: Pose2D,
+    *,
+    event_kinds: tuple[str | None, ...] | None = None,
+    profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    deadlock_threshold_steps: int = 3,
+    progress_tolerance_m: float = 1e-6,
+    rejoin_tolerance_m: float = 0.10,
+) -> DynamicLocalEvidence:
+    """상태를 유지하며 순차 grid snapshot마다 local planner를 한 번 실행한다.
+
+    실행할 수 없는 결과나 충돌 가능한 첫 명령은 0속도 명령으로 바꾼다. 장애물
+    제거는 ``event_kinds``의 ``obstacle_remove`` 계열 값 또는 점유 cell 감소로
+    식별한다. 반환값은 오직 ``simulation_only`` 회귀시험 증거다.
+    """
+
+    if not reference_path:
+        raise ValueError("reference_path must not be empty")
+    if not snapshots:
+        raise ValueError("snapshots must not be empty")
+    if event_kinds is not None and len(event_kinds) != len(snapshots):
+        raise ValueError("event_kinds must have the same length as snapshots")
+    if deadlock_threshold_steps <= 0:
+        raise ValueError("deadlock_threshold_steps must be positive")
+    if progress_tolerance_m < 0 or rejoin_tolerance_m < 0:
+        raise ValueError("simulation tolerances must not be negative")
+
+    labels = event_kinds or (None,) * len(snapshots)
+    state = initial_state
+    evidence_steps: list[DynamicLocalStepEvidence] = []
+    no_path_streak = 0
+    no_progress_streak = 0
+    maximum_no_path_streak = 0
+    maximum_no_progress_streak = 0
+    recovery_armed = False
+    removal_seen_after_stop = False
+    recovery_observed = False
+    path_deviation_observed = False
+    rejoin_observed = False
+    previous_occupied_count: int | None = None
+
+    for step_index, (snapshot, event_kind) in enumerate(
+        zip(snapshots, labels, strict=True)
+    ):
+        checker = CollisionChecker(
+            snapshot.grid,
+            profile,
+            forbidden_cells=snapshot.forbidden_cells,
+        )
+        pose_before = state.pose
+        clearance_before = checker.conservative_clearance(pose_before)
+        collision_before = clearance_before <= 0.0
+        goal_distance_before = _distance(pose_before, goal)
+        plan = planner.plan(snapshot, reference_path, state, goal)
+
+        provenance_matches = (
+            plan.map_id == snapshot.metadata.map_id
+            and plan.map_revision == snapshot.metadata.map_revision
+            and plan.mission_revision == snapshot.metadata.mission_revision
+            and plan.observation_revision == snapshot.metadata.observation_revision
+            and plan.input_content_hash == snapshot.metadata.content_hash
+        )
+        command_rejected = not provenance_matches
+        rejection_reason = "planner_result_provenance_mismatch" if command_rejected else None
+        proposed_command = Twist2D()
+        if plan.status is PlanStatus.FOUND and len(plan.trajectory) >= 2:
+            proposed_command = plan.trajectory[1].twist
+        elif plan.status is PlanStatus.FOUND:
+            command_rejected = True
+            rejection_reason = "found_result_has_no_executable_command"
+
+        if not all(
+            isfinite(value) for value in (proposed_command.linear, proposed_command.angular)
+        ):
+            command_rejected = True
+            rejection_reason = "planner_command_non_finite"
+
+        bounded_command = (
+            _bounded_command(proposed_command, profile)
+            if not command_rejected and plan.status is PlanStatus.FOUND
+            else Twist2D()
+        )
+        proposed_pose = _integrate(pose_before, bounded_command, profile.control_period_s)
+        if (
+            collision_before
+            or not checker.conservative_path_is_collision_free(
+                (pose_before, proposed_pose)
+            )
+        ):
+            command_rejected = True
+            rejection_reason = (
+                "initial_pose_in_collision"
+                if collision_before
+                else "planner_command_would_collide"
+            )
+
+        command = (
+            Twist2D()
+            if command_rejected or plan.status is not PlanStatus.FOUND
+            else bounded_command
+        )
+        pose_after = _integrate(pose_before, command, profile.control_period_s)
+        state = RobotState(pose=pose_after, twist=command)
+        clearance_after = checker.conservative_clearance(pose_after)
+        collision = clearance_after <= 0.0
+        tracking_error = _nearest_path_distance(pose_after, reference_path)
+        if tracking_error > rejoin_tolerance_m:
+            path_deviation_observed = True
+        goal_progress = goal_distance_before - _distance(pose_after, goal)
+        made_progress = _distance(pose_before, pose_after) > progress_tolerance_m
+        no_executable_path = plan.status is not PlanStatus.FOUND or command_rejected
+        no_path_streak = no_path_streak + 1 if no_executable_path else 0
+        no_progress_streak = no_progress_streak + 1 if not made_progress else 0
+        maximum_no_path_streak = max(maximum_no_path_streak, no_path_streak)
+        maximum_no_progress_streak = max(maximum_no_progress_streak, no_progress_streak)
+        deadlock = (
+            no_path_streak >= deadlock_threshold_steps
+            or no_progress_streak >= deadlock_threshold_steps
+        )
+        safe_stop = no_executable_path and _twist_is_stopped(command)
+        if safe_stop:
+            recovery_armed = True
+
+        occupied_count = int(snapshot.grid.occupancy.sum()) + len(snapshot.forbidden_cells)
+        normalized_event = (event_kind or "").strip().lower()
+        removal_event = normalized_event in {
+            "obstacle_remove",
+            "remove_obstacle",
+            "obstacle_removed",
+            "remove",
+        }
+        occupancy_decreased = (
+            previous_occupied_count is not None
+            and occupied_count < previous_occupied_count
+        )
+        if recovery_armed and (removal_event or occupancy_decreased):
+            removal_seen_after_stop = True
+        previous_occupied_count = occupied_count
+
+        step_recovery = (
+            recovery_armed
+            and removal_seen_after_stop
+            and not no_executable_path
+            and command.linear > progress_tolerance_m
+        )
+        if step_recovery:
+            recovery_observed = True
+        step_rejoin = (
+            path_deviation_observed
+            and
+            (recovery_observed or step_recovery)
+            and made_progress
+            and tracking_error <= rejoin_tolerance_m
+        )
+        if step_rejoin:
+            rejoin_observed = True
+
+        failure_reason = rejection_reason or plan.failure_reason
+        evidence_steps.append(
+            DynamicLocalStepEvidence(
+                step_index=step_index,
+                event_kind=event_kind,
+                map_id=snapshot.metadata.map_id,
+                map_revision=snapshot.metadata.map_revision,
+                mission_revision=snapshot.metadata.mission_revision,
+                observation_revision=snapshot.metadata.observation_revision,
+                input_content_hash=snapshot.metadata.content_hash,
+                planner_status=plan.status,
+                command=command,
+                pose_before=pose_before,
+                pose_after=pose_after,
+                collision=collision,
+                command_rejected=command_rejected,
+                safe_stop_observed=safe_stop,
+                recovery_observed=step_recovery,
+                rejoin_observed=step_rejoin,
+                minimum_clearance_m=clearance_after,
+                tracking_error_m=tracking_error,
+                goal_progress_m=goal_progress,
+                no_path_streak=no_path_streak,
+                no_progress_streak=no_progress_streak,
+                deadlock_observed=deadlock,
+                failure_reason=failure_reason,
+            )
+        )
+
+    clearances = tuple(step.minimum_clearance_m for step in evidence_steps)
+    tracking_errors = tuple(step.tracking_error_m for step in evidence_steps)
+    commands_finite = all(
+        isfinite(value)
+        for step in evidence_steps
+        for value in (step.command.linear, step.command.angular)
+    )
+    metrics_finite = all(
+        isfinite(value)
+        for step in evidence_steps
+        for value in (
+            step.minimum_clearance_m,
+            step.tracking_error_m,
+            step.goal_progress_m,
+            step.pose_after.x,
+            step.pose_after.y,
+            step.pose_after.yaw,
+        )
+    )
+    return DynamicLocalEvidence(
+        component=planner.name,
+        simulation_only=True,
+        steps=tuple(evidence_steps),
+        final_state=state,
+        collision_count=sum(step.collision for step in evidence_steps),
+        rejected_command_count=sum(step.command_rejected for step in evidence_steps),
+        safe_stop_count=sum(step.safe_stop_observed for step in evidence_steps),
+        no_path_count=sum(
+            step.planner_status is not PlanStatus.FOUND for step in evidence_steps
+        ),
+        recovery_observed=recovery_observed,
+        path_deviation_observed=path_deviation_observed,
+        rejoin_observed=rejoin_observed,
+        deadlock_observed=any(step.deadlock_observed for step in evidence_steps),
+        maximum_no_path_streak=maximum_no_path_streak,
+        maximum_no_progress_streak=maximum_no_progress_streak,
+        minimum_clearance_m=min(clearances) if clearances else None,
+        mean_tracking_error_m=fmean(tracking_errors),
+        maximum_tracking_error_m=max(tracking_errors),
+        commands_finite=commands_finite,
+        metrics_finite=metrics_finite,
+    )
+
+
+def _integrate(pose: Pose2D, command: Twist2D, dt: float) -> Pose2D:
+    yaw = _normalize_angle(pose.yaw + command.angular * dt)
+    return Pose2D(
+        x=pose.x + command.linear * cos(pose.yaw) * dt,
+        y=pose.y + command.linear * sin(pose.yaw) * dt,
+        yaw=yaw,
+    )
+
+
+def _bounded_command(command: Twist2D, profile: VehicleProfile) -> Twist2D:
+    linear = max(
+        -profile.max_reverse_speed_mps,
+        min(profile.max_forward_speed_mps, command.linear),
+    )
+    angular = max(
+        -profile.max_angular_speed_radps,
+        min(profile.max_angular_speed_radps, command.angular),
+    )
+    return Twist2D(
+        linear=0.0 if abs(linear) <= 1e-12 else linear,
+        angular=0.0 if abs(angular) <= 1e-12 else angular,
+    )
+
+
+def _nearest_path_distance(pose: Pose2D, path: tuple[Pose2D, ...]) -> float:
+    if not path:
+        return float("inf")
+    if len(path) == 1:
+        return _distance(pose, path[0])
+    return min(
+        _point_to_segment_distance(pose, source, target)
+        for source, target in zip(path[:-1], path[1:], strict=True)
+    )
+
+
+def _point_to_segment_distance(pose: Pose2D, source: Pose2D, target: Pose2D) -> float:
+    dx = target.x - source.x
+    dy = target.y - source.y
+    length_squared = dx * dx + dy * dy
+    if length_squared <= 1e-18:
+        return _distance(pose, source)
+    fraction = min(
+        1.0,
+        max(
+            0.0,
+            ((pose.x - source.x) * dx + (pose.y - source.y) * dy) / length_squared,
+        ),
+    )
+    closest = Pose2D(source.x + fraction * dx, source.y + fraction * dy)
+    return _distance(pose, closest)
+
+
+def _distance(a: Pose2D, b: Pose2D) -> float:
+    return hypot(a.x - b.x, a.y - b.y)
+
+
+def _normalize_angle(angle: float) -> float:
+    return (angle + pi) % (2 * pi) - pi
+
+
+def _twist_is_stopped(twist: Twist2D, *, tolerance: float = 1e-9) -> bool:
+    return abs(twist.linear) <= tolerance and abs(twist.angular) <= tolerance
+
+
+def _jerk_rms(commands: list[Twist2D], dt: float) -> float:
+    if len(commands) < 3:
+        return 0.0
+    accelerations = [
+        (current.linear - previous.linear) / dt
+        for previous, current in zip(commands, commands[1:], strict=False)
+    ]
+    jerks = [
+        (current - previous) / dt
+        for previous, current in zip(accelerations, accelerations[1:], strict=False)
+    ]
+    return sqrt(fmean(value * value for value in jerks)) if jerks else 0.0
+
+
+def _failed_simulation(
+    component: str,
+    start: Pose2D,
+    goal: Pose2D,
+    reason: str,
+) -> SimulationResult:
+    return SimulationResult(
+        component=component,
+        status=PlanStatus.INVALID_INPUT,
+        goal_reached=False,
+        collision=False,
+        poses=(start,),
+        commands=(),
+        elapsed_s=0.0,
+        minimum_clearance_m=None,
+        mean_tracking_error_m=0.0,
+        maximum_tracking_error_m=0.0,
+        jerk_rms_mps3=0.0,
+        final_goal_distance_m=_distance(start, goal),
+        failure_reason=reason,
+    )

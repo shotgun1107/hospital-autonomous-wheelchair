@@ -1,0 +1,57 @@
+schema_version: "1.1"
+generator_version: map_factory_v2
+description: 사람이 의도와 기하를 명시적으로 고정한 필수 회귀 12개
+simulation_only: true
+decision_boundary:
+  g1_g5: unconfirmed
+  final_algorithm_selected: false
+  stage_7_started: false
+cases:
+  - scenario_id: single_route
+    intent: 대체 통로가 없는 단일 연결
+    world_content_hash: 5ed6025f0aa7530442261f947e6a84273f430a422f8fc887700a6391a0eb16a3
+    episode_content_hash: 0c13b111949ed24a175056fa1973b953c5966e9a146ce0fcb2003a8f160408da
+  - scenario_id: alternate_route
+    intent: 물리 점유와 구분된 비승인 상단 경로 및 하단 대체 경로
+    world_content_hash: c48e75457dedf412144dabd7d493356beaaccc08d6bd3308f78f6c369b6ebcbd
+    episode_content_hash: ccd72ec691a3eaaa6892ef786d1dba328be7af5c934c6301b58922329715d7b8
+  - scenario_id: equal_cost
+    intent: 좌표 jitter가 없고 두 분기의 비용이 정확히 같은 동률 사례
+    world_content_hash: 26730a89513cadfaa2745a159ba505d8605efee545bf52a8c4b123a7ef03794d
+    episode_content_hash: ffcea59818f56601f12255f4ea9e1f6eef41f3d76d1acf2e0f258006820bc77e
+  - scenario_id: dead_end
+    intent: 목적지로 이어지지 않는 가지
+    world_content_hash: 15740cf4450c6264ad39585a3a14d3f33fc943a56cb7dd06ed04c765d13e300d
+    episode_content_hash: f5241e249a5d572a29f01e82d5a9f1dd53787f433f9ce90b3180ea4a1d203105
+  - scenario_id: isolated_goal
+    intent: 시작 영역과 완전히 분리된 목적지
+    world_content_hash: 6dff45fca908c95f5148f42fbddaa14a73421261ae3ef249cfe6b706765d2086
+    episode_content_hash: adc998dc81884dabdb4741b8136f75ab7b279c343b2c5b6604fb3870934c66de
+  - scenario_id: wide_corridor
+    intent: footprint 구성공간에서도 여유가 큰 통로
+    world_content_hash: 8893b57f3e9925a5746ca08e0b978407987db1a0944fad8d2477bec0fe4b243d
+    episode_content_hash: d81cbdff5de43035adf5e58e1edc501fd79e99fd6d24a6a6ebca24590027ead8
+  - scenario_id: narrow_door
+    intent: footprint와 최소 여유 팽창 후에도 한정적으로 통과 가능한 문
+    world_content_hash: 2b7504b8e37c83e0a42c16612c51f49638661d5516b48ac1938d3e47d40b5380
+    episode_content_hash: 2f309113a73b997dd77dc6f2e38247c12393ffdb1ed17f0f644fd8f0e64f1fc2
+  - scenario_id: partial_occupancy
+    intent: 통로 일부를 점유하지만 우회 여유가 남는 동적 장애물
+    world_content_hash: 3de1921e7a370e21c40084e7b7b8088084bb19c5425f13088b5f6106cbfc0872
+    episode_content_hash: fdeada661f2ddc6a6694283aaf59606fd637a7fb3432dc6281199e01aaecff95
+  - scenario_id: full_block
+    intent: graph 통로는 열려 있지만 grid 자유공간은 완전히 차단됨
+    world_content_hash: afdd4875fb93c5cf08e58a09f311ce37a61148d5d36a4d42cb774881446cc01f
+    episode_content_hash: c93e8babad74fab72d75182209ba382c38c9000a85035f1e38eaa1ea378b42a5
+  - scenario_id: u_trap
+    intent: 내측 막다른 통로와 외측 통로 사이 벽을 보존해 grid 지름길을 금지
+    world_content_hash: 164b34241c44c83260b02821403524ec0e221ba714a27677245bf9b8e18838d0
+    episode_content_hash: 03e9c0417c6d1f481df4921ab42bb548fd712476951166c67d29b8885515925f
+  - scenario_id: sequential_close_open
+    intent: 같은 통로의 폐쇄·해제를 두 번 반복하는 revision 전이
+    world_content_hash: 6168b6f961bd6f2dda7b449bfa98d5d6bc00b0467bd711d25c33f8b552beee87
+    episode_content_hash: f7d13f54eef0a148b1be9a88d35684d69b97c7c0e816c02cd38eadb27b7ccf80
+  - scenario_id: stale_invalid_judgment
+    intent: mission revision 변경 뒤 observation 무효화를 명시하는 판단 불충분 사례
+    world_content_hash: 47ea78992420bfd14d5d2ae988444c6f5445df5c539a4304739c1529d04d43cb
+    episode_content_hash: fb67741e25c4db486b0fde3de511cef56f3199456563cc65022a6bb805a47a85
