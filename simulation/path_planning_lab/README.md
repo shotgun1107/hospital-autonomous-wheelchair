@@ -5,6 +5,9 @@
 제품 코드·실물 주행·실제 사람 탑승 안전성의 증거가 아니다.
 
 구현과 시험의 연결 및 현재 한계는 [TRACEABILITY.md](TRACEABILITY.md)에서 추적한다.
+움직이는 원형 Actor를 이용한 다음 비교 단계와 1시간 단위 구현 순서는
+[동적 사람 회피 비교실험 v5](../../docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)에
+동결했다.
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 

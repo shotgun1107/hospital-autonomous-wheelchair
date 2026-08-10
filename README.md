@@ -55,3 +55,11 @@
 ## 상태
 
 현재는 프로젝트의 큰 틀과 팀 합의 항목을 정리하는 단계다. 운영 예외, 지도 표현, 위치 추정, 경로 계산 알고리즘, 센서, 제어 보드와 안전 임계값은 아직 확정하지 않았다. 미결정 사항은 `docs/product/open-questions.md`에서 관리한다.
+
+## 경로 알고리즘 연구
+
+- [Python 경로 알고리즘 실험실](simulation/path_planning_lab/README.md)
+- [움직이는 원형 Actor 회피 비교실험 v5](docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)
+
+두 문서는 `simulation_only` 연구 자료이며 제품 알고리즘 채택이나 경로 분석 7단계 팀
+결정을 수행하지 않는다. 동적 비교실험의 첫 구현 범위는 문서의 `1시간 컷 1차 작업`이다.
