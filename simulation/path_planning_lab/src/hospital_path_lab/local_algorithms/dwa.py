@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, copysign, cos, hypot, isfinite, pi, sin
+from math import atan2, copysign, cos, hypot, inf, isfinite, pi, sin
 from time import perf_counter_ns
 
-from hospital_path_lab.collision import CollisionChecker
+from hospital_path_lab.collision import (
+    CollisionChecker,
+    oriented_footprint_circle_surface_distance,
+)
 from hospital_path_lab.contracts import (
     GridSnapshot,
     LocalPlanResult,
@@ -15,6 +18,17 @@ from hospital_path_lab.contracts import (
     RobotState,
     TrajectoryPoint,
     Twist2D,
+)
+from hospital_path_lab.dynamic_contracts import (
+    DYNAMIC_COMMAND_APPLY_LATENCY_S,
+    ControllerCommandResult,
+    ControllerSnapshot,
+    DynamicCommandProposal,
+)
+from hospital_path_lab.dynamic_prediction import sample_actor_tubes
+from hospital_path_lab.dynamic_safety import (
+    DYNAMIC_ANGULAR_DECELERATION_RADPS2,
+    evaluate_dynamic_trajectory_safety,
 )
 from hospital_path_lab.grid import GridMap
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
@@ -361,6 +375,510 @@ class DynamicWindowPlanner:
             input_content_hash=metadata.content_hash,
             failure_reason=failure_reason,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _DynamicCandidate:
+    command: Twist2D
+    trajectory: tuple[TrajectoryPoint, ...]
+    progress: float
+    minimum_clearance: float
+    progress_cost: float
+    reference_path_cost: float
+    heading_cost: float
+    clearance_cost: float
+    speed_cost: float
+    oscillation_cost: float
+    score: float
+
+    @property
+    def rank(self) -> tuple[float, ...]:
+        return (
+            self.score,
+            -self.minimum_clearance,
+            -self.progress,
+            self.reference_path_cost,
+            self.heading_cost,
+            self.oscillation_cost,
+            abs(self.command.angular),
+            -self.command.linear,
+            self.command.angular,
+        )
+
+
+class DynamicDwaController:
+    """v5 고정 비용식과 Actor tube를 사용하는 동적 DWA adapter."""
+
+    name = "dynamic_dwa"
+    horizon_s = 2.0
+    integration_dt_s = 0.05
+    linear_sample_count = 7
+    angular_sample_count = 31
+    max_angular_acceleration_radps2 = 1.60
+    goal_tolerance_m = 0.05
+
+    def __init__(
+        self,
+        vehicle: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    ) -> None:
+        if not vehicle.simulation_only:
+            raise ValueError("dynamic DWA requires a simulation-only vehicle profile")
+        self.vehicle = vehicle
+
+    def step(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
+        started_at = perf_counter_ns()
+        invalid_reason = self._invalid_reason(snapshot)
+        if invalid_reason is not None:
+            return _dynamic_controller_result(
+                self.name,
+                snapshot,
+                started_at,
+                status=PlanStatus.INVALID_INPUT,
+                failure_reason=invalid_reason,
+                controller_requested_stop=True,
+            )
+
+        if (
+            _distance(snapshot.robot_state.pose, snapshot.goal_pose)
+            <= self.goal_tolerance_m
+            and _twist_is_stopped(snapshot.robot_state.twist)
+        ):
+            apply_end = _integrate_pose(
+                snapshot.robot_state.pose,
+                snapshot.robot_state.twist,
+                DYNAMIC_COMMAND_APPLY_LATENCY_S,
+            )
+            trajectory = _dynamic_constant_rollout(
+                apply_end,
+                Twist2D(),
+                horizon_s=self.horizon_s,
+                step_s=self.integration_dt_s,
+            )
+            return _dynamic_controller_result(
+                self.name,
+                snapshot,
+                started_at,
+                status=PlanStatus.FOUND,
+                predicted_trajectory=trajectory,
+                decision_trace=("goal_reached=true", "sampled_candidates=0"),
+            )
+
+        linear_values, angular_values = self._dynamic_window(snapshot.robot_state)
+        sampled_candidates = len(linear_values) * len(angular_values)
+        apply_end = _integrate_pose(
+            snapshot.robot_state.pose,
+            snapshot.robot_state.twist,
+            DYNAMIC_COMMAND_APPLY_LATENCY_S,
+        )
+        physical_checker = CollisionChecker(
+            snapshot.static_grid_snapshot.grid,
+            self.vehicle,
+        )
+        combined_checker = CollisionChecker(
+            snapshot.static_grid_snapshot.grid,
+            self.vehicle,
+            forbidden_cells=snapshot.static_grid_snapshot.forbidden_cells,
+        )
+        candidates: list[_DynamicCandidate] = []
+        for linear in linear_values:
+            for angular in angular_values:
+                if linear <= 1e-12:
+                    continue
+                command = Twist2D(linear=linear, angular=angular)
+                trajectory = _dynamic_constant_rollout(
+                    apply_end,
+                    command,
+                    horizon_s=self.horizon_s,
+                    step_s=self.integration_dt_s,
+                )
+                minimum_clearance = _coarse_dynamic_candidate_clearance(
+                    trajectory,
+                    snapshot=snapshot,
+                    physical_checker=physical_checker,
+                    combined_checker=combined_checker,
+                    vehicle=self.vehicle,
+                )
+                if minimum_clearance is None:
+                    continue
+                candidates.append(
+                    _dynamic_candidate(
+                        command,
+                        trajectory,
+                        start=snapshot.robot_state.pose,
+                        goal=snapshot.goal_pose,
+                        reference_path=snapshot.reference_path,
+                        minimum_clearance=minimum_clearance,
+                        previous_angular=snapshot.robot_state.twist.angular,
+                    )
+                )
+
+        candidates.sort(key=lambda candidate: candidate.rank)
+        selected: _DynamicCandidate | None = None
+        for candidate in candidates:
+            proposal = _dynamic_proposal(snapshot, candidate.command, candidate.trajectory)
+            evidence = evaluate_dynamic_trajectory_safety(
+                proposal,
+                robot_state=snapshot.robot_state,
+                grid_snapshot=snapshot.static_grid_snapshot,
+                prediction_set=snapshot.actor_tubes,
+                profile=self.vehicle,
+            )
+            if evidence.safe:
+                selected = candidate
+                break
+
+        if selected is None:
+            return _dynamic_controller_result(
+                self.name,
+                snapshot,
+                started_at,
+                status=PlanStatus.NO_PATH,
+                failure_reason="no_safe_candidate",
+                decision_trace=(
+                    f"sampled_candidates={sampled_candidates}",
+                    f"coarse_admissible_candidates={len(candidates)}",
+                ),
+                controller_requested_stop=True,
+                no_safe_candidate=True,
+            )
+
+        trace = (
+            f"sampled_candidates={sampled_candidates}",
+            f"coarse_admissible_candidates={len(candidates)}",
+            "pose_samples=41",
+            f"score={selected.score:.12g}",
+            f"progress_cost={selected.progress_cost:.12g}",
+            f"reference_path_cost={selected.reference_path_cost:.12g}",
+            f"heading_cost={selected.heading_cost:.12g}",
+            f"clearance_cost={selected.clearance_cost:.12g}",
+            f"speed_cost={selected.speed_cost:.12g}",
+            f"oscillation_cost={selected.oscillation_cost:.12g}",
+            f"minimum_clearance_m={selected.minimum_clearance:.12g}",
+        )
+        return _dynamic_controller_result(
+            self.name,
+            snapshot,
+            started_at,
+            status=PlanStatus.FOUND,
+            requested_twist=selected.command,
+            predicted_trajectory=selected.trajectory,
+            decision_trace=trace,
+        )
+
+    def _invalid_reason(self, snapshot: ControllerSnapshot) -> str | None:
+        if snapshot.vehicle_profile != self.vehicle:
+            return "vehicle_profile_mismatch"
+        if not snapshot.static_grid_snapshot.input_valid:
+            return "grid_snapshot_invalid"
+        if snapshot.actor_tubes is None:
+            return "actor_prediction_missing"
+        twist = snapshot.robot_state.twist
+        if not (0.0 <= twist.linear <= self.vehicle.nominal_speed_mps):
+            return "dynamic_dwa_linear_state_outside_frozen_range"
+        if abs(twist.angular) > self.vehicle.max_angular_speed_radps:
+            return "dynamic_dwa_angular_state_outside_vehicle_limits"
+        return None
+
+    def _dynamic_window(
+        self,
+        robot_state: RobotState,
+    ) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        period = self.vehicle.control_period_s
+        linear_min = max(
+            0.0,
+            robot_state.twist.linear - self.vehicle.max_deceleration_mps2 * period,
+        )
+        linear_max = min(
+            self.vehicle.nominal_speed_mps,
+            robot_state.twist.linear + self.vehicle.max_acceleration_mps2 * period,
+        )
+        angular_delta = self.max_angular_acceleration_radps2 * period
+        angular_min = max(
+            -self.vehicle.max_angular_speed_radps,
+            robot_state.twist.angular - angular_delta,
+        )
+        angular_max = min(
+            self.vehicle.max_angular_speed_radps,
+            robot_state.twist.angular + angular_delta,
+        )
+        return (
+            _samples_with_zero(linear_min, linear_max, self.linear_sample_count),
+            _samples_with_zero(angular_min, angular_max, self.angular_sample_count),
+        )
+
+
+def _dynamic_controller_result(
+    controller_name: str,
+    snapshot: ControllerSnapshot,
+    started_at: int,
+    *,
+    status: PlanStatus,
+    requested_twist: Twist2D | None = None,
+    predicted_trajectory: tuple[TrajectoryPoint, ...] = (),
+    failure_reason: str | None = None,
+    decision_trace: tuple[str, ...] = (),
+    controller_requested_stop: bool = False,
+    no_safe_candidate: bool = False,
+) -> ControllerCommandResult:
+    metadata = snapshot.static_grid_snapshot.metadata
+    return ControllerCommandResult(
+        controller_name=controller_name,
+        source_tick_id=snapshot.tick_id,
+        status=status,
+        requested_twist=requested_twist if requested_twist is not None else Twist2D(),
+        predicted_trajectory=predicted_trajectory,
+        failure_reason=failure_reason,
+        decision_trace=decision_trace,
+        mission_id=snapshot.mission_id,
+        map_id=snapshot.map_id,
+        map_revision=snapshot.map_revision,
+        mission_revision=snapshot.mission_revision,
+        observation_revision=snapshot.observation_revision,
+        grid_content_hash=metadata.content_hash,
+        observation_content_hash=snapshot.observation_content_hash,
+        input_content_hash=snapshot.input_content_hash,
+        elapsed_ns=perf_counter_ns() - started_at,
+        controller_requested_stop=controller_requested_stop,
+        no_safe_candidate=no_safe_candidate,
+    )
+
+
+def _dynamic_proposal(
+    snapshot: ControllerSnapshot,
+    command: Twist2D,
+    trajectory: tuple[TrajectoryPoint, ...],
+) -> DynamicCommandProposal:
+    metadata = snapshot.static_grid_snapshot.metadata
+    return DynamicCommandProposal(
+        source_tick_id=snapshot.tick_id,
+        command=command,
+        computation_time_s=0.0,
+        mission_id=snapshot.mission_id,
+        map_id=snapshot.map_id,
+        map_revision=snapshot.map_revision,
+        mission_revision=snapshot.mission_revision,
+        observation_revision=snapshot.observation_revision,
+        grid_content_hash=metadata.content_hash,
+        observation_content_hash=snapshot.observation_content_hash,
+        trajectory=trajectory,
+    )
+
+
+def _dynamic_candidate(
+    command: Twist2D,
+    trajectory: tuple[TrajectoryPoint, ...],
+    *,
+    start: Pose2D,
+    goal: Pose2D,
+    reference_path: tuple[Pose2D, ...],
+    minimum_clearance: float,
+    previous_angular: float,
+) -> _DynamicCandidate:
+    progress = _distance(start, goal) - _distance(trajectory[-1].pose, goal)
+    progress_cost = 1.0 - _clip(progress / 0.40, 0.0, 1.0)
+    reference_distance = _mean_polyline_distance(
+        tuple(point.pose for point in trajectory),
+        reference_path,
+    )
+    reference_path_cost = _clip(reference_distance / 0.50, 0.0, 1.0)
+    heading_cost = _clip(_heading_error(trajectory[-1].pose, goal) / pi, 0.0, 1.0)
+    clearance_cost = (
+        0.0
+        if minimum_clearance == inf
+        else 1.0 - _clip((minimum_clearance - 0.08) / (0.50 - 0.08), 0.0, 1.0)
+    )
+    speed_cost = _clip((0.20 - command.linear) / 0.20, 0.0, 1.0)
+    oscillation_cost = float(
+        abs(previous_angular) > 0.05
+        and abs(command.angular) > 0.05
+        and previous_angular * command.angular < 0.0
+    )
+    score = (
+        progress_cost
+        + reference_path_cost
+        + 0.5 * heading_cost
+        + 1.5 * clearance_cost
+        + 0.2 * speed_cost
+        + 0.3 * oscillation_cost
+    )
+    return _DynamicCandidate(
+        command=command,
+        trajectory=trajectory,
+        progress=progress,
+        minimum_clearance=minimum_clearance,
+        progress_cost=progress_cost,
+        reference_path_cost=reference_path_cost,
+        heading_cost=heading_cost,
+        clearance_cost=clearance_cost,
+        speed_cost=speed_cost,
+        oscillation_cost=oscillation_cost,
+        score=score,
+    )
+
+
+def _coarse_dynamic_candidate_clearance(
+    trajectory: tuple[TrajectoryPoint, ...],
+    *,
+    snapshot: ControllerSnapshot,
+    physical_checker: CollisionChecker,
+    combined_checker: CollisionChecker,
+    vehicle: VehicleProfile,
+) -> float | None:
+    """50 ms DWA sampling prefilter; 선택 후보는 공통 5 ms gate로 다시 검사한다."""
+
+    if snapshot.actor_tubes is None:
+        return None
+    minimum_clearance = inf
+    terminal = _dynamic_terminal_rollout(
+        trajectory[-1],
+        linear_deceleration_mps2=vehicle.max_deceleration_mps2,
+        angular_deceleration_radps2=DYNAMIC_ANGULAR_DECELERATION_RADPS2,
+        step_s=0.05,
+    )
+    timed_points = tuple(trajectory) + tuple(
+        TrajectoryPoint(
+            time_s=trajectory[-1].time_s + point.time_s,
+            pose=point.pose,
+            twist=point.twist,
+        )
+        for point in terminal[1:]
+    )
+    configuration_grid = combined_checker.configuration_grid
+    for point in timed_points:
+        configuration_cell = configuration_grid.world_to_cell(point.pose)
+        if configuration_grid.is_occupied(configuration_cell):
+            return None
+        static_clearance = min(
+            physical_checker.clearance(point.pose),
+            combined_checker.clearance(point.pose),
+        )
+        if (
+            static_clearance < vehicle.minimum_clearance_m - 1e-12
+            or combined_checker.pose_enters_forbidden(point.pose)
+        ):
+            return None
+        minimum_clearance = min(minimum_clearance, static_clearance)
+        try:
+            actor_circles = sample_actor_tubes(
+                snapshot.actor_tubes,
+                rollout_time_s=point.time_s,
+            )
+        except ValueError:
+            return None
+        for circle in actor_circles:
+            actor_clearance = oriented_footprint_circle_surface_distance(
+                point.pose,
+                circle_center=(circle.center.x, circle.center.y),
+                circle_radius_m=circle.radius_m,
+                profile=vehicle,
+            )
+            if actor_clearance < vehicle.minimum_clearance_m - 1e-12:
+                return None
+            minimum_clearance = min(minimum_clearance, actor_clearance)
+    return minimum_clearance
+
+
+def _dynamic_constant_rollout(
+    start: Pose2D,
+    command: Twist2D,
+    *,
+    horizon_s: float,
+    step_s: float,
+) -> tuple[TrajectoryPoint, ...]:
+    steps = int(round(horizon_s / step_s))
+    pose = start
+    points = [TrajectoryPoint(0.0, pose, command)]
+    for step in range(1, steps + 1):
+        pose = _integrate_pose(pose, command, step_s)
+        points.append(TrajectoryPoint(step * step_s, pose, command))
+    return tuple(points)
+
+
+def _dynamic_terminal_rollout(
+    start: TrajectoryPoint,
+    *,
+    linear_deceleration_mps2: float,
+    angular_deceleration_radps2: float,
+    step_s: float,
+) -> tuple[TrajectoryPoint, ...]:
+    pose = start.pose
+    twist = start.twist
+    elapsed_s = 0.0
+    points = [TrajectoryPoint(0.0, pose, twist)]
+    while abs(twist.linear) > 1e-12 or abs(twist.angular) > 1e-12:
+        pose = _integrate_pose(pose, twist, step_s)
+        twist = Twist2D(
+            linear=_toward_zero(twist.linear, linear_deceleration_mps2 * step_s),
+            angular=_toward_zero(twist.angular, angular_deceleration_radps2 * step_s),
+        )
+        elapsed_s += step_s
+        points.append(TrajectoryPoint(elapsed_s, pose, twist))
+    return tuple(points)
+
+
+def _integrate_pose(pose: Pose2D, command: Twist2D, dt_s: float) -> Pose2D:
+    if abs(command.angular) <= 1e-12:
+        return Pose2D(
+            x=pose.x + command.linear * cos(pose.yaw) * dt_s,
+            y=pose.y + command.linear * sin(pose.yaw) * dt_s,
+            yaw=pose.yaw,
+        )
+    next_yaw = pose.yaw + command.angular * dt_s
+    radius = command.linear / command.angular
+    return Pose2D(
+        x=pose.x + radius * (sin(next_yaw) - sin(pose.yaw)),
+        y=pose.y - radius * (cos(next_yaw) - cos(pose.yaw)),
+        yaw=_normalize_angle(next_yaw),
+    )
+
+
+def _toward_zero(value: float, delta: float) -> float:
+    if value > 0.0:
+        return max(0.0, value - delta)
+    if value < 0.0:
+        return min(0.0, value + delta)
+    return 0.0
+
+
+def _samples_with_zero(start: float, stop: float, count: int) -> tuple[float, ...]:
+    samples = list(_linspace(start, stop, count))
+    if start <= 0.0 <= stop:
+        closest = min(range(len(samples)), key=lambda index: (abs(samples[index]), index))
+        samples[closest] = 0.0
+        samples.sort()
+    return tuple(samples)
+
+
+def _mean_polyline_distance(
+    path: tuple[Pose2D, ...],
+    reference_path: tuple[Pose2D, ...],
+) -> float:
+    return sum(
+        min(
+            _point_to_segment_distance(pose, source, target)
+            for source, target in zip(reference_path, reference_path[1:], strict=False)
+        )
+        for pose in path
+    ) / len(path)
+
+
+def _point_to_segment_distance(point: Pose2D, source: Pose2D, target: Pose2D) -> float:
+    dx = target.x - source.x
+    dy = target.y - source.y
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 1e-15:
+        return _distance(point, source)
+    fraction = _clip(
+        ((point.x - source.x) * dx + (point.y - source.y) * dy) / length_sq,
+        0.0,
+        1.0,
+    )
+    projection = Pose2D(source.x + fraction * dx, source.y + fraction * dy)
+    return _distance(point, projection)
+
+
+def _clip(value: float, lower: float, upper: float) -> float:
+    return min(max(value, lower), upper)
 
 
 def _invalid_input_reason(

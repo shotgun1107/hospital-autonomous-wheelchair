@@ -6,9 +6,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from hospital_path_lab.contracts import LocalPlanner, PathFollower
-from hospital_path_lab.followers import PurePursuitFollower, RegulatedPurePursuitFollower
+from hospital_path_lab.dynamic_contracts import DynamicController
+from hospital_path_lab.followers import (
+    DynamicPurePursuitController,
+    PurePursuitFollower,
+    RegulatedPurePursuitFollower,
+)
 from hospital_path_lab.global_algorithms import DStarLitePlanner
-from hospital_path_lab.local_algorithms import BoundedGridAStarPlanner, DynamicWindowPlanner
+from hospital_path_lab.local_algorithms import (
+    BoundedGridAStarPlanner,
+    DynamicDwaController,
+    DynamicWindowPlanner,
+)
 from hospital_path_lab.planners import AStarPlanner, DijkstraPlanner, Planner
 
 
@@ -35,6 +44,10 @@ PATH_FOLLOWERS: dict[str, Callable[[], PathFollower]] = {
     "pure_pursuit": PurePursuitFollower,
     "rpp": RegulatedPurePursuitFollower,
 }
+DYNAMIC_CONTROLLERS: dict[str, Callable[[], DynamicController]] = {
+    "dynamic_pure_pursuit": DynamicPurePursuitController,
+    "dynamic_dwa": DynamicDwaController,
+}
 
 
 IMPLEMENTED_ALGORITHMS = (
@@ -45,6 +58,18 @@ IMPLEMENTED_ALGORITHMS = (
     AlgorithmDescriptor("dwa", "local_trajectory", "implemented", DynamicWindowPlanner),
     AlgorithmDescriptor("pure_pursuit", "path_follower", "implemented", PurePursuitFollower),
     AlgorithmDescriptor("rpp", "path_follower", "implemented", RegulatedPurePursuitFollower),
+    AlgorithmDescriptor(
+        "dynamic_pure_pursuit",
+        "dynamic_controller",
+        "implemented",
+        DynamicPurePursuitController,
+    ),
+    AlgorithmDescriptor(
+        "dynamic_dwa",
+        "dynamic_controller",
+        "implemented",
+        DynamicDwaController,
+    ),
 )
 
 DEFERRED_ALGORITHMS = (

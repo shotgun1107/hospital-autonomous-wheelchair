@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_list_algorithms()
     if args.command == "experiment":
         return _run_experiment(args)
+    if args.command == "dynamic-experiment":
+        return _run_dynamic_experiment(args)
     parser.error("알 수 없는 명령입니다.")
     return 2
 
@@ -61,6 +63,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="승격할 검증된 회귀 후보 수 상한",
     )
     experiment.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT / "experiment")
+    dynamic = subparsers.add_parser(
+        "dynamic-experiment",
+        help="동결된 원형 Actor PP·DWA paired 비교실험 실행",
+    )
+    dynamic.add_argument("--base-seed", type=int, default=20_260_811)
+    dynamic.add_argument("--hidden-seed", type=int, required=True)
+    dynamic.add_argument("--hidden-commitment", type=str, required=True)
+    dynamic.add_argument(
+        "--simulation-workers",
+        type=int,
+        default=None,
+        help="episode×profile process worker 수(기본: 논리 CPU 기준 최대 6)",
+    )
+    dynamic.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT / "dynamic-experiment",
+    )
     return parser
 
 
@@ -137,6 +157,32 @@ def _run_experiment(args: argparse.Namespace) -> int:
     print(f"pareto={result.pareto_path}")
     print(f"summary={result.summary_path}")
     return 1 if result.hard_failures else 0
+
+
+def _run_dynamic_experiment(args: argparse.Namespace) -> int:
+    from hospital_path_lab.dynamic_runner import (
+        DynamicExperimentConfig,
+        run_dynamic_experiment,
+    )
+
+    result = run_dynamic_experiment(
+        args.output_dir,
+        DynamicExperimentConfig(
+            base_seed=args.base_seed,
+            hidden_seed=args.hidden_seed,
+            hidden_seed_commitment=args.hidden_commitment,
+            simulation_workers=args.simulation_workers,
+        ),
+    )
+    print(
+        f"public_runs={result.public_run_count}, hidden_runs={result.hidden_run_count}, "
+        f"hard_failures={result.hard_failure_count}"
+    )
+    print(f"promoted_dwa={result.promoted_dwa}")
+    print(f"simulation_workers={result.simulation_worker_count}")
+    print(f"manifest={result.manifest_path}")
+    print(f"summary={result.summary_path}")
+    return 1 if result.hard_failure_count else 0
 
 
 if __name__ == "__main__":

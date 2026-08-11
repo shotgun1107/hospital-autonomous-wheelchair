@@ -20,6 +20,24 @@ from hospital_path_lab.map_factory import (
 
 
 @dataclass(frozen=True, slots=True)
+class DynamicRegressionRecord:
+    schema_version: str
+    generator_version: str
+    record_id: str
+    source_split: str
+    episode_id: str
+    episode_content_hash: str
+    episode_seed: int
+    expectation_category: str
+    observation_profile: str
+    controller_name: str
+    failing_tick: int
+    reason: str
+    minimal_evidence: dict[str, Any]
+    record_content_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class RegressionRecord:
     schema_version: str
     generator_version: str
@@ -37,6 +55,94 @@ class RegressionRecord:
     reason: str
     minimal_evidence: dict[str, Any]
     record_content_hash: str
+
+
+def preserve_dynamic_hidden_failure(
+    episode: object,
+    *,
+    observation_profile: str,
+    controller_name: str,
+    failing_tick: int,
+    reason: str,
+    output_directory: str | Path,
+    minimal_evidence: dict[str, Any] | None = None,
+) -> Path:
+    """동적 hidden 실패를 기존 파일을 덮어쓰지 않고 보존한다."""
+
+    from hospital_path_lab.dynamic_corpus import (
+        DYNAMIC_CORPUS_GENERATOR_VERSION,
+        DYNAMIC_CORPUS_SCHEMA_VERSION,
+        DynamicCorpusEpisode,
+        DynamicCorpusSplit,
+    )
+
+    if not isinstance(episode, DynamicCorpusEpisode):
+        raise TypeError("dynamic regression source must be a DynamicCorpusEpisode")
+    if episode.split is not DynamicCorpusSplit.HIDDEN:
+        raise ValueError("dynamic regression source must be hidden")
+    if not observation_profile or not controller_name or not reason.strip():
+        raise ValueError("dynamic regression identity and reason must not be empty")
+    if failing_tick < 0 or failing_tick > episode.tick_count:
+        raise ValueError("dynamic failing_tick is outside the episode")
+    payload: dict[str, Any] = {
+        "schema_version": DYNAMIC_CORPUS_SCHEMA_VERSION,
+        "generator_version": DYNAMIC_CORPUS_GENERATOR_VERSION,
+        "record_id": (
+            f"dynamic_{episode.content_hash[:12]}_{observation_profile}_"
+            f"{controller_name}_tick_{failing_tick:04d}"
+        ),
+        "source_split": DynamicCorpusSplit.HIDDEN.value,
+        "episode_id": episode.episode_id,
+        "episode_content_hash": episode.content_hash,
+        "episode_seed": episode.seed,
+        "expectation_category": episode.expectation_category.value,
+        "observation_profile": observation_profile,
+        "controller_name": controller_name,
+        "failing_tick": failing_tick,
+        "reason": reason,
+        "minimal_evidence": dict(minimal_evidence or {}),
+    }
+    payload["record_content_hash"] = canonical_content_hash(payload)
+    record = DynamicRegressionRecord(**payload)
+    destination = Path(output_directory)
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / f"{record.record_id}.json"
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(
+            dumps(
+                asdict(record),
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+                allow_nan=False,
+            )
+        )
+        stream.write("\n")
+    return path
+
+
+def load_dynamic_regression_record(path: str | Path) -> DynamicRegressionRecord:
+    from hospital_path_lab.dynamic_corpus import (
+        DYNAMIC_CORPUS_GENERATOR_VERSION,
+        DYNAMIC_CORPUS_SCHEMA_VERSION,
+        DynamicCorpusSplit,
+    )
+
+    raw = loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("dynamic regression record must be an object")
+    recorded_hash = raw.pop("record_content_hash", None)
+    if not isinstance(recorded_hash, str) or canonical_content_hash(raw) != recorded_hash:
+        raise ValueError("dynamic regression record content hash mismatch")
+    raw["record_content_hash"] = recorded_hash
+    record = DynamicRegressionRecord(**raw)
+    if (
+        record.schema_version != DYNAMIC_CORPUS_SCHEMA_VERSION
+        or record.generator_version != DYNAMIC_CORPUS_GENERATOR_VERSION
+        or record.source_split != DynamicCorpusSplit.HIDDEN.value
+    ):
+        raise ValueError("dynamic regression provenance is invalid")
+    return record
 
 
 def preserve_hidden_failure(

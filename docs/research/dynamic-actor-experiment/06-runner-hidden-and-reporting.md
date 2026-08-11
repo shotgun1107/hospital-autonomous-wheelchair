@@ -1,5 +1,42 @@
 # 6단계 — runner, hidden, 통계와 보고
 
+## 구현 상태
+
+- 상태: runner·CLI·hidden lifecycle·통계·산출물 구현 및 full hidden 실행 완료
+- 공개 corpus hard-safety와 contract-fault 자격 실패 시 hidden 생성 전에 중단한다.
+- manifest를 먼저 기록한 뒤 hidden 30개를 생성하고, 해시가 붙은 소비 영수증을
+  무덮어쓰기로 남긴다.
+- `evaluation_tick_limit`은 전용시험용 축소 실행에만 사용하며 이 값이 있으면 full frozen
+  run 또는 DWA 승격으로 판정하지 않는다.
+- 최종 full hidden 실행 전에는 코드·파라미터를 고정하며, 실행 뒤 변경 시 같은 commitment를
+  재사용하지 않는다.
+- 독립적인 `episode × observation profile`을 process worker로 병렬 실행한다. 같은 job
+  안에서는 PP와 DWA를 같은 입력으로 순서대로 실행하고, 부모가 corpus·profile·controller
+  순서로 결과를 재정렬한다.
+- 기본 worker 수는 실제 process affinity의 논리 CPU 수를 기준으로 `min(6, logical/4)`로
+  제한한다. 현재 회사 PC는 논리 CPU 28개이므로 기본값은 6이다.
+- worker 내부 경과시간은 contention의 영향을 받으므로 `nonqualification` 진단값으로만
+  기록한다. 50 ms wall-clock qualification은 모든 worker가 종료된 뒤 부모 프로세스에서
+  단독 직렬 실행한다.
+
+## 2026-08-11 full 실행 결과
+
+- output: `simulation/path_planning_lab/outputs/dynamic-experiment-20260811-final-v4`
+- worker: 14개, 28 logical CPU의 약 50%; 결과 계산만 병렬화
+- 실행량: 공개 144 runs, hidden 120 runs
+- hard-safety: 전체 `264/264`, hidden `120/120` 통과
+- contract-fault: `25/25` 통과
+- hidden Normal 기능 자격: PP `27/30`, DWA `16/30`
+- hidden Stress 기능 자격: PP `5/30`, DWA `5/30`
+- DWA feasible detour·rejoin: `0%`, 최대 기준경로 이탈 약 `0.00585 m`
+- 직렬 timing: PP deadline miss `0/400`, DWA `324/400`
+- 통계: DWA hold median 개선 `25.17%`, paired delta 95% CI
+  `[-1.75 s, -1.60 s]`; 완료시간은 `6.31%` 악화
+- 판정: 승격 조건 3·4·5·10 미달, DWA 승격 안 함, `PP + shared gate` 유지
+
+결과를 보고 DWA·Actor tube·기준을 수정하지 않았다. 이후 DWA를 변경하면 이 hidden은
+regression으로만 사용하고 새 commitment와 새 hidden으로 다시 평가한다.
+
 ## 목표
 
 development 튜닝을 종료하고 code·parameter·corpus를 동결한 뒤 새 hidden paired corpus를
@@ -29,8 +66,10 @@ tests/test_dynamic_hidden_lifecycle.py
 ```powershell
 hospital-path-lab dynamic-experiment `
   --base-seed <public-seed> `
-  --hidden-commitment <commitment> `
-  --output <output-dir>
+  --hidden-seed <hidden-seed> `
+  --hidden-commitment <sha256-commitment> `
+  --simulation-workers 6 `
+  --output-dir <output-dir>
 ```
 
 실제 옵션 이름은 CLI 구현 시 고정하며 `--help`와 README를 함께 갱신한다.
@@ -119,6 +158,8 @@ runner는 다음을 개별 boolean과 근거 수치로 저장한다.
 
 ## wall-clock qualification
 
+- episode 결과 계산용 process pool을 완전히 종료한 뒤 실행한다.
+- qualification 자체는 병렬화하지 않는다.
 - 고정 machine ID와 CPU affinity
 - numeric thread 1
 - snapshot별 warm-up 30회, 측정 100회
@@ -130,6 +171,8 @@ runner는 다음을 개별 boolean과 근거 수치로 저장한다.
 
 ```text
 experiment_manifest.json
+hidden_consumption_receipt.json
+public_prequalification.json
 qualification_results.json
 hard_safety_results.json
 contract_fault_results.json

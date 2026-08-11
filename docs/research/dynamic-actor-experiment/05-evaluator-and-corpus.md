@@ -1,5 +1,15 @@
 # 5단계 — ground-truth 평가기와 corpus
 
+## 구현 상태
+
+- 상태: **구현·전용시험·전체 회귀 완료**
+- 완료일: 2026-08-11
+- 5단계 전용시험: `15 passed`
+- 1~5단계 동적 영향권: `133 passed`
+- 실험실 전체 회귀: `264 passed`
+- 선행 단계: 1~4단계 완료
+- 다음 단계 선행 구현: 없음
+
 ## 목표
 
 controller 입력과 독립된 200 Hz evaluator를 만들고, 기대 행동 범주·관측 fault·권한
@@ -29,6 +39,11 @@ tests/test_dynamic_contract_faults.py
 - 이동량이 큰 경우 oriented swept footprint 또는 adaptive subdivision을 사용한다.
 - Actor ground truth도 같은 evaluator 시각으로 보간한다.
 - 두 sample 사이 충돌을 놓치지 않는 보수성 시험을 둔다.
+
+구현은 20 Hz 각 구간을 5 ms 간격으로 다시 적분한다. sample 사이에서는 로봇 선속도,
+회전에 따른 footprint 꼭짓점 속도와 Actor 실제 속도의 반 구간 이동 상한을 surface
+clearance에서 빼 보수 판정한다. 이 방식은 controller prediction tube와 독립이며 evaluator
+전용 Actor ground truth만 사용한다.
 
 ## hard safety 판정
 
@@ -141,6 +156,23 @@ hidden 30개는 6단계의 동결 뒤 생성한다.
 - contract-fault 전체가 보수적으로 거부된다.
 - hard safety false-pass 회귀시험이 존재한다.
 - hidden seed는 아직 runner에 공개하지 않는다.
+
+2026-08-11 기준 다음 범위로 완료했다.
+
+- 범주별 golden 1개와 development 5개, 총 `6 + 30` episode를 seed 기반으로 생성하고
+  동일 seed의 map·Normal/Stress observation hash 재현을 검증했다.
+- expectation category, split과 oracle이 `DynamicControllerCorpusInput` 및
+  `ControllerSnapshot`에 포함되지 않음을 검사했다.
+- golden 6개의 첫 유효 paired snapshot을 PP와 DWA에 실제 재생해 동일 input/observation
+  hash를 보존함을 확인했다. 36개 whole-episode 반복 실행과 통계 집계는 6단계 runner
+  책임이며 이 단계에서 수행하지 않았다.
+- observation·authority·deadline fault 25종을 별도 catalog로 고정했다. Stage 2·3의 실제
+  validator/gate 시험과 Stage 5 boundary·dropout 회귀를 함께 자격 근거로 사용한다.
+- evaluator는 actual collision·`0.08m` clearance·forbidden·stale/invalid propulsion·
+  unauthorized resume·late application·provenance를 hard failure로 분류한다.
+- hold와 planner deadlock, 실제 이탈 뒤 rejoin, reference 투영 순서 변화 기반 overtaking,
+  path·deviation·jerk·각운동·TTC 지표를 구현했다.
+- hidden seed 생성, 전체 paired 실행, 통계와 승격 판정은 시작하지 않았다.
 
 ## 커밋 경계
 

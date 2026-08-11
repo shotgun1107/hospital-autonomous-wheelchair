@@ -31,14 +31,18 @@
 |---|---|
 | 1. 동적 시뮬레이션 기반 | 구현·전용시험·전체 회귀 완료 |
 | 2. 관측과 Actor 예측 | 구현·전용시험·전체 회귀 완료 |
-| 3. 안전·권한·시간 | 미구현 |
-| 4. PP·DWA 통합 | 미구현 |
-| 5. 평가기와 corpus | 미구현 |
-| 6. runner·hidden·판정 | 미구현 |
+| 3. 안전·권한·시간 | 구현·전용시험·전체 회귀 완료 |
+| 4. PP·DWA 통합 | 구현·전용시험·전체 회귀 완료 |
+| 5. 평가기와 corpus | 구현·전용시험·전체 회귀 완료 |
+| 6. runner·hidden·판정 | 구현·전용시험·full hidden 실행 완료 |
 
-2단계 완료 시점의 근거는 관측·예측 전용시험 `43 passed`, 1·2단계 동적 영향권
-`53 passed`, 실험실 전체 회귀 `197 passed`다. 이 수치는 Python 합성환경의 L1 시험
-결과이며 동적 safety gate, PP·DWA closed loop 또는 실제 사람 안전성의 증거가 아니다.
+6단계 runner는 manifest/source hash, public hard-safety 사전자격, hidden commitment와
+소비 영수증, paired Normal·Stress 실행, 통계·Pareto·10개 승격 조건, PNG와 실패 회귀
+후보 보존을 구현했다. 전체 회귀 `274 passed` 뒤 14-worker 결과 계산과 직렬 timing
+qualification으로 `public 144 + hidden 120` runs를 실행했다. hard-safety는 `264/264`,
+공통 fault 25개는 모두 통과했지만 기능·50 ms·우회·gate override 조건이 미달해 DWA를
+승격하지 않고 `PP + shared gate` 연구 기준선을 유지한다. 이 수치는 Python 합성환경의
+L1/L2 연구 증거이며 실제 사람 안전성의 증거가 아니다.
 
 목표는 PP 경로추종+공통 safety gate와 사용자 정의 DWA 국소 우회+동일 gate를 같은
 조건에서 비교할 수 있는 재현 가능한 시험환경을 만드는 것이다.

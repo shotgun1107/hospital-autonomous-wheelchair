@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 from json import dumps
 from math import cos, hypot, isfinite, pi, sin, sqrt
 from pathlib import Path
@@ -22,13 +23,20 @@ from hospital_path_lab.dynamic_actor import DynamicActorScenario, actor_state_at
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_CONTROL_FREQUENCY_HZ,
     DYNAMIC_CONTROL_PERIOD_S,
+    ControllerCommandResult,
     DynamicAcceptedCommand,
+    DynamicController,
     DynamicControllerInputFrame,
     DynamicGroundTruthFrame,
+    DynamicMotionState,
+    DynamicSafetyDecision,
     DynamicStateEvent,
     DynamicTrace,
     DynamicTraceMetadata,
+    build_controller_snapshot,
+    controller_result_to_proposal,
 )
+from hospital_path_lab.dynamic_safety import DynamicSafetyContext, DynamicSafetyGate
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
 
@@ -105,6 +113,36 @@ class DynamicLocalEvidence:
     maximum_tracking_error_m: float
     commands_finite: bool
     metrics_finite: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicControllerPipelineStep:
+    tick_id: int
+    simulation_time_s: float
+    controller_result: ControllerCommandResult
+    safety_decision: DynamicSafetyDecision
+    robot_state_before: RobotState
+    robot_state_after: RobotState
+    gate_overrode_controller: bool
+    static_collision: bool
+    forbidden_entry: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicControllerPipelineResult:
+    controller_name: str
+    simulation_only: bool
+    status: PlanStatus
+    completed: bool
+    expected_hold_reached: bool
+    final_state: RobotState
+    steps: tuple[DynamicControllerPipelineStep, ...]
+    static_collision_count: int
+    forbidden_entry_count: int
+    gate_override_count: int
+    controller_stop_request_count: int
+    no_safe_candidate_count: int
+    failure_reason: str | None = None
 
 
 def simulate_dynamic_actor_scenario(scenario: DynamicActorScenario) -> DynamicTrace:
@@ -223,6 +261,141 @@ def save_dynamic_trace_json(trace: DynamicTrace, output_path: str | Path) -> Pat
         encoding="utf-8",
     )
     return output
+
+
+def simulate_dynamic_controller_pipeline(
+    controller: DynamicController,
+    *,
+    initial_state: RobotState,
+    reference_path: tuple[Pose2D, ...],
+    goal: Pose2D,
+    context_factory: Callable[
+        [int, float, RobotState, DynamicSafetyGate],
+        DynamicSafetyContext,
+    ],
+    profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    max_ticks: int = 600,
+    simulated_computation_time_s: float = 0.001,
+    stop_when_holding: bool = False,
+    goal_tolerance_m: float = 0.05,
+) -> DynamicControllerPipelineResult:
+    """동일 gate·20 Hz 적분기로 PP 또는 DWA의 Stage 4 폐루프를 실행한다."""
+
+    if max_ticks <= 0 or not reference_path:
+        raise ValueError("dynamic pipeline requires positive ticks and a reference path")
+    if not profile.simulation_only:
+        raise ValueError("dynamic pipeline requires a simulation-only vehicle profile")
+    if not 0.0 <= simulated_computation_time_s <= 0.050:
+        raise ValueError("deterministic computation time must be inside the 50 ms deadline")
+
+    gate = DynamicSafetyGate(profile=profile)
+    state = initial_state
+    steps: list[DynamicControllerPipelineStep] = []
+    static_collision_count = 0
+    forbidden_entry_count = 0
+    no_safe_candidate_count = 0
+    expected_hold_reached = False
+
+    for tick_id in range(max_ticks):
+        simulation_time_s = tick_id * profile.control_period_s
+        context = context_factory(tick_id, simulation_time_s, state, gate)
+        if context.tick_id != tick_id or not isfinite(context.simulation_time_s):
+            raise ValueError("context factory returned a mismatched tick")
+        if abs(context.simulation_time_s - simulation_time_s) > 1e-12:
+            raise ValueError("context factory returned a mismatched simulation time")
+        goal_reached = _distance(state.pose, goal) <= goal_tolerance_m
+        if goal_reached and not context.goal_reached:
+            context = replace(context, goal_reached=True)
+
+        controller_snapshot = build_controller_snapshot(
+            tick_id=tick_id,
+            simulation_time_s=simulation_time_s,
+            mission_id=context.mission_id,
+            robot_state=state,
+            goal_pose=goal,
+            reference_path=reference_path,
+            static_grid_snapshot=context.grid_snapshot,
+            validated_observation=context.observation_snapshot,
+            actor_tubes=context.prediction_set,
+            vehicle_profile=profile,
+        )
+        controller_result = controller.step(controller_snapshot)
+        if controller_result.source_tick_id != tick_id:
+            raise ValueError("controller returned a result for a different tick")
+        proposal = controller_result_to_proposal(
+            controller_result,
+            computation_time_s=simulated_computation_time_s,
+        )
+        decision = gate.step(proposal, robot_state=state, context=context)
+
+        # Stage 3 current-motion sweep와 동일하게 현재 twist로 한 tick의 pose를 적분한 뒤
+        # gate 출력을 다음 tick의 twist로 저장한다.
+        next_pose = _integrate(state.pose, state.twist, profile.control_period_s)
+        next_state = RobotState(next_pose, decision.command)
+        checker = CollisionChecker(
+            context.grid_snapshot.grid,
+            profile,
+            forbidden_cells=context.grid_snapshot.forbidden_cells,
+        )
+        static_collision = checker.clearance(next_pose) <= 0.0
+        forbidden_entry = checker.pose_enters_forbidden(next_pose)
+        static_collision_count += int(static_collision)
+        forbidden_entry_count += int(forbidden_entry)
+        no_safe_candidate_count += int(controller_result.no_safe_candidate)
+        gate_overrode = decision.command != controller_result.requested_twist
+        steps.append(
+            DynamicControllerPipelineStep(
+                tick_id=tick_id,
+                simulation_time_s=simulation_time_s,
+                controller_result=controller_result,
+                safety_decision=decision,
+                robot_state_before=state,
+                robot_state_after=next_state,
+                gate_overrode_controller=gate_overrode,
+                static_collision=static_collision,
+                forbidden_entry=forbidden_entry,
+            )
+        )
+        state = next_state
+
+        if static_collision or forbidden_entry:
+            break
+        if decision.motion_state is DynamicMotionState.COMPLETED:
+            break
+        if stop_when_holding and decision.motion_state is DynamicMotionState.HOLDING:
+            expected_hold_reached = True
+            break
+
+    completed = bool(
+        steps and steps[-1].safety_decision.motion_state is DynamicMotionState.COMPLETED
+    )
+    if static_collision_count:
+        failure_reason = "static_collision"
+    elif forbidden_entry_count:
+        failure_reason = "forbidden_entry"
+    elif completed or expected_hold_reached:
+        failure_reason = None
+    else:
+        failure_reason = "pipeline_timeout"
+    return DynamicControllerPipelineResult(
+        controller_name=controller.name,
+        simulation_only=True,
+        status=(
+            PlanStatus.FOUND
+            if completed
+            else PlanStatus.NO_PATH
+        ),
+        completed=completed,
+        expected_hold_reached=expected_hold_reached,
+        final_state=state,
+        steps=tuple(steps),
+        static_collision_count=static_collision_count,
+        forbidden_entry_count=forbidden_entry_count,
+        gate_override_count=gate.counters.gate_overrides,
+        controller_stop_request_count=gate.counters.controller_stop_requests,
+        no_safe_candidate_count=no_safe_candidate_count,
+        failure_reason=failure_reason,
+    )
 
 
 def simulate_follower(

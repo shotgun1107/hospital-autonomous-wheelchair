@@ -12,9 +12,17 @@
 [동적 원형 Actor 비교실험 설계 명세](../../docs/research/dynamic-actor-experiment/README.md)를
 따른다.
 현재는 1단계의 seed 기반 원형 Actor·20 Hz ground-truth trace·controller 입력 분리·
-결정론적 JSON/PNG와, 2단계의 10 Hz 열화 관측·source validation·공통 Actor prediction
-tube까지 구현했다. 동적 safety gate, `stop_epoch`, 200 Hz evaluator와 PP·DWA 동적
-closed loop는 아직 구현하지 않았다.
+결정론적 JSON/PNG, 2단계의 10 Hz 열화 관측·source validation·공통 Actor prediction
+tube, 3단계의 공통 동적 safety gate·제한 감속·`stop_epoch`·재개 권한·deadline
+폐기, 4단계의 PP·DWA adapter·동일 gate·20 Hz 동적 closed loop, 5단계의 controller와
+독립된 200 Hz ground-truth evaluator·golden 6개·development 30개·contract-fault
+catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG·회귀 후보 보존을
+구현했다. 독립 episode·profile 결과는 process 기반으로 병렬 계산하되 PP·DWA pair는
+같은 worker에서 실행하고, 50 ms wall-clock qualification은 worker pool 종료 뒤 직렬로
+분리한다. 최종 full hidden 실행은 코드와 manifest를 동결한 고유 output에서 한 번 수행한다.
+2026-08-11 `final-v4`에서는 공개 144·hidden 120 runs와 hard-safety `264/264`를
+완료했다. DWA는 기능·50 ms·실제 detour/rejoin·gate override 조건이 미달해 승격하지
+않았고, 이 합성 실험의 연구 기준선은 `PP + shared gate`로 유지한다.
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
@@ -33,6 +41,7 @@ seed 기반 지도 생성 → graph/grid·step 사건 검증 → 역할별 알�
 | 제한 영역 local 경로 | Grid A* | footprint가 반영된 구성공간의 최적 경로 |
 | local 속도 궤적 | DWA | 가상 differential-drive의 2초 후보 궤적 |
 | 경로 추종 | Pure Pursuit, RPP | 같은 차체 적분기에서 폐루프 추종 비교 |
+| 동적 controller | Dynamic PP, Dynamic DWA | 동일 관측·prediction tube·gate의 stop/hold 대 local detour |
 
 TEB, MPPI, State Lattice, Hybrid A*는 registry에 `deferred`로만 기록한다. 구현 또는
 채택된 후보가 아니다.
@@ -128,6 +137,24 @@ py -3.12 -m venv .venv
 ```powershell
 .\.venv\Scripts\hospital-path-lab.exe list-algorithms
 ```
+
+동적 Actor full 비교실험은 hidden seed의 commitment를 먼저 계산한 뒤 새 output에서
+실행한다. 이미 소비된 commitment와 기존 manifest가 있는 output은 거부한다.
+
+```powershell
+$hiddenSeed = 81260811
+$commitment = .\.venv\Scripts\python.exe -c "from hospital_path_lab.dynamic_corpus import hidden_seed_commitment; print(hidden_seed_commitment(81260811))"
+$runId = Get-Date -Format "yyyyMMdd-HHmmss"
+$outputDir = ".\simulation\path_planning_lab\outputs\dynamic-experiment-$runId"
+.\.venv\Scripts\hospital-path-lab.exe dynamic-experiment --base-seed 20260811 --hidden-seed $hiddenSeed --hidden-commitment $commitment --simulation-workers 6 --output-dir $outputDir
+```
+
+출력은 `experiment_manifest.json`, `hidden_consumption_receipt.json`, public 사전자격,
+qualification, paired 결과·통계·Pareto·승격 판정·요약, hidden PNG와 실패 회귀 후보를
+포함한다. DWA 조건 미달은 명령 실패가 아니라 `promotion_decision.json`의 연구 판정이며,
+hard-safety 실패만 프로세스 실패로 반환한다.
+worker 내부 경과시간은 병렬 contention이 섞인 `worker_elapsed_ns_nonqualification`이고,
+성능 판정에는 별도 `qualification_results.json`의 직렬 측정값만 사용한다.
 
 기본 20개 corpus 직렬 평가. 이전 산출물을 덮지 않도록 실행별 output 디렉터리를
 권장한다.

@@ -1,5 +1,15 @@
 # 4단계 — PP·DWA closed-loop 통합
 
+## 구현 상태
+
+- 상태: **구현·전용시험·전체 회귀 완료**
+- 완료일: 2026-08-11
+- 전용시험: PP·DWA·공통 pipeline 합계 `16 passed`
+- 동적 controller 영향권 시험: `177 passed`
+- 전체 회귀: `249 passed`
+- 선행 단계: 1~3단계 완료
+- 다음 단계 선행 구현: 없음
+
 ## 목표
 
 같은 reference path와 `ControllerSnapshot`을 PP와 DWA에 제공하고, 두 결과를 같은
@@ -29,6 +39,7 @@ tests/test_dynamic_controller_parity.py
 ControllerSnapshot
 - tick_id
 - simulation_time_s
+- mission_id
 - robot_state
 - goal_pose
 - reference_path
@@ -54,6 +65,18 @@ ControllerCommandResult
 
 두 controller는 expectation category, ground truth Actor, evaluator 결과를 받지 않는다.
 
+`ControllerSnapshot.input_content_hash`는 tick·mission·map/mission/observation revision,
+grid content hash와 observation content hash를 canonical JSON으로 직렬화한 SHA-256이다.
+snapshot의 명시 필드와 grid·observation·prediction provenance가 다르면 controller 입력은
+`INVALID_INPUT`이다. 관측이 stale·invalid이거나 prediction이 없을 때도 임의의 빈 Actor
+관측으로 바꾸지 않는다. PP가 경로 명령을 계산할 수 있더라도 최종 gate가 해당 source
+상태를 거부한다.
+
+`ControllerCommandResult`는 snapshot의 mission·map·세 revision·grid/observation hash와
+`input_content_hash`를 그대로 복사한다. gate용 proposal 변환에서는 이 provenance를
+다시 계산하거나 현재값으로 덮어쓰지 않는다. 따라서 계산 도중 입력이 바뀐 결과는
+3단계 gate에서 거부된다.
+
 ## PP 기준선
 
 - 기존 Pure Pursuit polyline projection을 재사용한다.
@@ -62,6 +85,11 @@ ControllerCommandResult
 - PP는 Actor를 피해 reference에서 이탈하는 경로를 만들지 않는다.
 - PP가 낸 추종 명령을 gate가 위험하면 braking/hold로 바꾼다.
 
+PP의 `predicted_trajectory`는 현재 chassis twist로 50 ms 진행한 post-apply pose를
+`time_s=0`으로 두고, PP가 요청한 `(v,w)`를 2.0초 동안 유지한 0.05초 간격 41 pose다.
+이는 PP가 2초 동안 명령을 고정한다는 제품 주장이 아니라 공통 gate가 현재 명령의
+보수적 결과를 검사하기 위한 Stage 4 adapter 계약이다.
+
 PP adapter는 controller 명령과 gate override를 구분해 기록해야 한다.
 
 ## DWA 비교군
@@ -69,10 +97,19 @@ PP adapter는 controller 명령과 gate override를 구분해 기록해야 한�
 - 최대 217개 `(v,w)` 후보
 - 후보당 2.0초, 0.05초 간격 40구간, 41 pose
 - reverse 비활성
+- `v=0` 후보는 정지 fallback 판정에만 사용하고 local detour 후보로 선택하지 않는다.
+  양의 선속도를 가진 admissible 후보가 없으면 제자리 회전으로 시간을 끌지 않고
+  `NO_SAFE_CANDIDATE`를 반환한다.
 - 각 후보 뒤 terminal stopping sweep
 - v5의 여섯 비용과 가중치, tie-break를 그대로 사용
 - 같은 collision checker와 Actor tube를 사용
 - admissible 후보가 없으면 정지 명령과 `NO_SAFE_CANDIDATE`를 반환
+
+DWA의 동적 adapter는 기존 정적 planner의 후보 상대 정규화를 재사용하지 않고 v5의
+절대 비용식·가중치·동률 규칙을 사용한다. 후보 pose 41개는 PP와 마찬가지로 post-apply
+pose의 `time_s=0`부터 시작한다. 각 후보의 rollout과 terminal stopping은 3단계 gate가
+사용하는 동일한 static·forbidden·Actor tube 안전평가 함수를 통과해야 한다. DWA 내부
+후진 후보만 비활성화하며 기존 정적 DWA 연구시험의 reverse 동작은 변경하지 않는다.
 
 최적화 때문에 후보 순서나 tie-break 결과가 바뀌면 안 된다. caching은 입력 provenance를
 key에 포함하고 결정론 시험으로 검증한다.
@@ -92,6 +129,24 @@ reference path
 
 두 pipeline의 chassis integration과 goal 판정 코드는 공유한다.
 
+tick의 물리·명령 순서는 다음으로 고정한다.
+
+```text
+tick t의 RobotState snapshot
+→ controller와 gate 계산
+→ 현재 state.twist로 [t,t+0.05] pose 적분
+→ gate command를 t+1의 chassis twist로 저장
+```
+
+즉 현재 tick에서 계산한 새 명령으로 같은 50 ms 구간을 다시 적분하지 않는다. 이는
+3단계의 current-motion apply sweep와 일치한다. controller 계산시간은 Stage 4 결정론
+lane에서 고정 주입하고 실제 wall-clock qualification은 6단계로 남긴다.
+
+Stage 4의 closed-loop trace에는 controller 요청, gate 적용 명령, gate override 여부,
+motion state, primary hold reason, robot state before/after와 입력 provenance를 모두 남긴다.
+이 단계의 `collision=0`은 static grid·forbidden cell과 online Actor prediction tube 계약에
+대한 L1 증거다. ground-truth Actor의 200 Hz swept 판정은 5단계 대상이다.
+
 ## mechanism golden
 
 최소한 다음을 고정한다.
@@ -104,6 +159,9 @@ reference path
 6. 우회 중 새 Actor 위험: 양쪽 모두 gate 재정지
 
 이 단계에서는 noise profile을 최소화한 golden으로 기능을 먼저 검증한다.
+`끝까지 실행`은 progressable 사례에서는 goal 도착과 실제 정지 완료, 의도적으로 진행할
+수 없는 사례에서는 예상된 `HOLDING/NO_SAFE_CANDIDATE` 도달을 뜻한다. 후자의 정지를
+goal 완료로 집계하지 않는다.
 
 ## 시험
 
@@ -126,6 +184,11 @@ reference path
 - PP stop과 gate override, DWA no-candidate와 gate rejection을 구분한다.
 - 같은 seed의 command·state·event sequence가 동일하다.
 - 아직 hidden 통계로 승자를 결정하지 않는다.
+
+위 완료조건은 2026-08-11 기준 충족했다. 넓은 공간 golden에서 DWA의 제한적 이탈과
+reference 복귀를 확인했고, 좁은 차단·terminal stop 불가 사례에서는
+`NO_SAFE_CANDIDATE`와 보수적 hold를 확인했다. 이는 합성 prediction tube와 static
+grid를 사용한 L1 결과이며 실제 Actor ground truth의 200 Hz hard 판정은 아니다.
 
 ## 커밋 경계
 

@@ -20,12 +20,108 @@ from hospital_path_lab.contracts import (  # noqa: E402
     TrajectoryPoint,
 )
 from hospital_path_lab.dynamic_contracts import DynamicTrace  # noqa: E402
+from hospital_path_lab.dynamic_corpus import DynamicCorpusEpisode  # noqa: E402
 from hospital_path_lab.graph import canonical_edge  # noqa: E402
 from hospital_path_lab.planners import SearchResult, SearchStatus  # noqa: E402
 from hospital_path_lab.simulation import (  # noqa: E402
+    DynamicControllerPipelineResult,
     dynamic_artifact_stem,
     save_dynamic_trace_json,
 )
+
+
+def save_dynamic_pipeline_plot(
+    episode: DynamicCorpusEpisode,
+    pipeline: DynamicControllerPipelineResult,
+    output_path: str | Path,
+    *,
+    title: str | None = None,
+) -> Path:
+    """reference, actual robot trace와 evaluator 전용 Actor 궤적을 저장한다."""
+
+    output = _prepare_output(output_path)
+    figure, axis = plt.subplots(figsize=(9, 6))
+    try:
+        _plot_pose_sequence(
+            axis,
+            episode.reference_path,
+            label="reference",
+            color="tab:blue",
+            linestyle="--",
+            linewidth=1.8,
+        )
+        robot_trace = tuple(step.robot_state_before.pose for step in pipeline.steps)
+        if pipeline.steps:
+            robot_trace += (pipeline.steps[-1].robot_state_after.pose,)
+        _plot_pose_sequence(
+            axis,
+            robot_trace,
+            label=pipeline.controller_name,
+            color="tab:orange",
+            linestyle="-",
+            linewidth=2.2,
+        )
+        for actor in episode.actors:
+            sample_count = max(
+                1,
+                round((actor.active_until_s - actor.active_from_s) / 0.10),
+            )
+            actor_points = tuple(
+                actor.state_at(
+                    actor.active_from_s
+                    + (actor.active_until_s - actor.active_from_s) * index / sample_count
+                )
+                for index in range(sample_count + 1)
+            )
+            axis.plot(
+                [state.position.x for state in actor_points if state is not None],
+                [state.position.y for state in actor_points if state is not None],
+                color="tab:red",
+                linewidth=1.6,
+                label=f"actor:{actor.actor_id}",
+            )
+            start = actor_points[0]
+            if start is not None:
+                axis.add_patch(
+                    Circle(
+                        (start.position.x, start.position.y),
+                        actor.radius_m,
+                        edgecolor="tab:red",
+                        facecolor="none",
+                        linewidth=1.0,
+                    )
+                )
+        holding = tuple(
+            step.robot_state_after.pose
+            for step in pipeline.steps
+            if step.safety_decision.motion_state.value == "holding"
+        )
+        if holding:
+            axis.scatter(
+                [pose.x for pose in holding],
+                [pose.y for pose in holding],
+                marker="x",
+                s=20,
+                color="tab:purple",
+                label="holding",
+                zorder=5,
+            )
+        axis.set_xlim(0.0, episode.map_length_m)
+        axis.set_ylim(0.0, episode.corridor_width_m)
+        axis.set_aspect("equal", adjustable="box")
+        axis.grid(alpha=0.2)
+        axis.set_xlabel("x [m]")
+        axis.set_ylabel("y [m]")
+        axis.set_title(
+            title
+            or f"{episode.episode_id}\n{pipeline.controller_name} / simulation_only"
+        )
+        _deduplicated_legend(axis)
+        figure.tight_layout()
+        figure.savefig(output, dpi=160, format="png")
+    finally:
+        plt.close(figure)
+    return output
 
 
 def save_graph_experiment_plot(
