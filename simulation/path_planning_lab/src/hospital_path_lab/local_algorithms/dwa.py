@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from hashlib import sha256
+from json import dumps
 from math import atan2, copysign, cos, hypot, inf, isfinite, pi, sin
 from time import perf_counter_ns
 
@@ -25,7 +29,11 @@ from hospital_path_lab.dynamic_contracts import (
     ControllerSnapshot,
     DynamicCommandProposal,
 )
-from hospital_path_lab.dynamic_prediction import sample_actor_tubes
+from hospital_path_lab.dynamic_prediction import (
+    ActorPredictionSet,
+    ActorTubeCircle,
+    sample_actor_tubes,
+)
 from hospital_path_lab.dynamic_safety import (
     DYNAMIC_ANGULAR_DECELERATION_RADPS2,
     evaluate_dynamic_trajectory_safety,
@@ -390,6 +398,7 @@ class _DynamicCandidate:
     speed_cost: float
     oscillation_cost: float
     score: float
+    sample_index: int = -1
 
     @property
     def rank(self) -> tuple[float, ...]:
@@ -406,6 +415,140 @@ class _DynamicCandidate:
         )
 
 
+class DynamicDwaCandidatePhase(StrEnum):
+    """v6 candidate 판정 단계. exact 내부 구간은 shared API 한계로 합친다."""
+
+    INPUT = "INPUT"
+    COARSE_ROLLOUT = "COARSE_ROLLOUT"
+    COARSE_TERMINAL = "COARSE_TERMINAL"
+    EXACT_SHARED_GATE = "EXACT_SHARED_GATE"
+    RANKING = "RANKING"
+
+
+class DynamicDwaCandidateCause(StrEnum):
+    """v6 DWA 후보 결과 taxonomy."""
+
+    STATIC_OCCUPANCY = "STATIC_OCCUPANCY"
+    STATIC_CLEARANCE = "STATIC_CLEARANCE"
+    FORBIDDEN_ZONE = "FORBIDDEN_ZONE"
+    ACTOR_TUBE = "ACTOR_TUBE"
+    PREDICTION_INVALID = "PREDICTION_INVALID"
+    TERMINAL_STOPPING = "TERMINAL_STOPPING"
+    SHARED_GATE = "SHARED_GATE"
+    ADMISSIBLE_NOT_SELECTED = "ADMISSIBLE_NOT_SELECTED"
+    NOT_EVALUATED_AFTER_SELECTION = "NOT_EVALUATED_AFTER_SELECTION"
+    SELECTED = "SELECTED"
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDwaCandidateDiagnostic:
+    """IPC에 싣기 전에 제한하는 결정론적 후보 진단 한 건."""
+
+    sample_index: int
+    command: Twist2D
+    phase: DynamicDwaCandidatePhase
+    cause: DynamicDwaCandidateCause
+    failure_time_s: float | None = None
+    minimum_static_clearance_m: float | None = None
+    minimum_actor_clearance_m: float | None = None
+    shared_gate_failures: tuple[str, ...] = ()
+    underlying_terminal_cause: DynamicDwaCandidateCause | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDwaDiagnosticSummary:
+    """한 step의 고정 순서 집계와 제한된 detail."""
+
+    schema_version: str
+    sampled_candidates: int
+    moving_candidates: int
+    coarse_admissible_candidates: int
+    nonmoving_samples: int
+    ordered_counts: tuple[tuple[str, str, int], ...]
+    selected_sample_index: int | None
+    selected_rank: int | None
+    selected_score: float | None
+    selected_rank_key: tuple[float, ...] | None
+    details: tuple[DynamicDwaCandidateDiagnostic, ...]
+    exact_phase_granularity: str
+    semantic_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CoarseCandidateEvaluation:
+    minimum_clearance_m: float | None
+    failure_phase: DynamicDwaCandidatePhase | None = None
+    failure_cause: DynamicDwaCandidateCause | None = None
+    failure_time_s: float | None = None
+    minimum_static_clearance_m: float | None = None
+    minimum_actor_clearance_m: float | None = None
+    underlying_terminal_cause: DynamicDwaCandidateCause | None = None
+    used_certified_actor_dominance: bool = False
+
+    @property
+    def accepted(self) -> bool:
+        return self.failure_cause is None
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDwaWorkspaceMetrics:
+    """Non-semantic counters proving step-local work reduction."""
+
+    coarse_candidates: int = 0
+    certified_actor_dominated_candidates: int = 0
+    reference_geometry_candidates: int = 0
+
+
+class _StepActorTubeSampler:
+    """한 DWA step 안에서 동일 rollout 시각의 immutable tube만 재사용한다."""
+
+    def __init__(self, prediction_set: ActorPredictionSet, *, enabled: bool) -> None:
+        self._prediction_set = prediction_set
+        self._enabled = enabled
+        self._samples: dict[float, tuple[ActorTubeCircle, ...]] = {}
+
+    def sample(self, rollout_time_s: float) -> tuple[ActorTubeCircle, ...]:
+        if not self._enabled:
+            return sample_actor_tubes(
+                self._prediction_set,
+                rollout_time_s=rollout_time_s,
+            )
+        cached = self._samples.get(rollout_time_s)
+        if cached is None:
+            cached = sample_actor_tubes(
+                self._prediction_set,
+                rollout_time_s=rollout_time_s,
+            )
+            self._samples[rollout_time_s] = cached
+        return cached
+
+
+_DWA_DIAGNOSTIC_SCHEMA = "dynamic-dwa-candidate-v6"
+_DWA_DIAGNOSTIC_DETAIL_LIMIT = 8
+_DWA_SEMANTIC_DIGEST_TRACE_PREFIX = "dwa_controller_semantic_digest="
+_DWA_COUNT_ORDER = (
+    (DynamicDwaCandidatePhase.INPUT, DynamicDwaCandidateCause.PREDICTION_INVALID),
+    (DynamicDwaCandidatePhase.INPUT, DynamicDwaCandidateCause.SHARED_GATE),
+    (DynamicDwaCandidatePhase.COARSE_ROLLOUT, DynamicDwaCandidateCause.STATIC_OCCUPANCY),
+    (DynamicDwaCandidatePhase.COARSE_ROLLOUT, DynamicDwaCandidateCause.STATIC_CLEARANCE),
+    (DynamicDwaCandidatePhase.COARSE_ROLLOUT, DynamicDwaCandidateCause.FORBIDDEN_ZONE),
+    (DynamicDwaCandidatePhase.COARSE_ROLLOUT, DynamicDwaCandidateCause.ACTOR_TUBE),
+    (DynamicDwaCandidatePhase.COARSE_ROLLOUT, DynamicDwaCandidateCause.PREDICTION_INVALID),
+    (DynamicDwaCandidatePhase.COARSE_TERMINAL, DynamicDwaCandidateCause.TERMINAL_STOPPING),
+    (DynamicDwaCandidatePhase.EXACT_SHARED_GATE, DynamicDwaCandidateCause.STATIC_CLEARANCE),
+    (DynamicDwaCandidatePhase.EXACT_SHARED_GATE, DynamicDwaCandidateCause.FORBIDDEN_ZONE),
+    (DynamicDwaCandidatePhase.EXACT_SHARED_GATE, DynamicDwaCandidateCause.ACTOR_TUBE),
+    (DynamicDwaCandidatePhase.EXACT_SHARED_GATE, DynamicDwaCandidateCause.PREDICTION_INVALID),
+    (DynamicDwaCandidatePhase.EXACT_SHARED_GATE, DynamicDwaCandidateCause.SHARED_GATE),
+    (DynamicDwaCandidatePhase.RANKING, DynamicDwaCandidateCause.ADMISSIBLE_NOT_SELECTED),
+    (
+        DynamicDwaCandidatePhase.RANKING,
+        DynamicDwaCandidateCause.NOT_EVALUATED_AFTER_SELECTION,
+    ),
+    (DynamicDwaCandidatePhase.RANKING, DynamicDwaCandidateCause.SELECTED),
+)
+
+
 class DynamicDwaController:
     """v5 고정 비용식과 Actor tube를 사용하는 동적 DWA adapter."""
 
@@ -420,21 +563,51 @@ class DynamicDwaController:
     def __init__(
         self,
         vehicle: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+        *,
+        use_step_local_workspace: bool = True,
+        verify_all_ranked_candidates: bool = False,
     ) -> None:
         if not vehicle.simulation_only:
             raise ValueError("dynamic DWA requires a simulation-only vehicle profile")
         self.vehicle = vehicle
+        self.use_step_local_workspace = use_step_local_workspace
+        self.verify_all_ranked_candidates = verify_all_ranked_candidates
+        self.last_diagnostics: DynamicDwaDiagnosticSummary | None = None
+        self.last_workspace_metrics = DynamicDwaWorkspaceMetrics()
 
     def step(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
         started_at = perf_counter_ns()
+        self.last_diagnostics = None
+        self.last_workspace_metrics = DynamicDwaWorkspaceMetrics()
         invalid_reason = self._invalid_reason(snapshot)
         if invalid_reason is not None:
+            input_cause = _input_failure_cause(invalid_reason)
+            diagnostics = _dynamic_dwa_diagnostic_summary(
+                sampled_candidates=0,
+                moving_candidates=0,
+                coarse_admissible_candidates=0,
+                nonmoving_samples=0,
+                counts=Counter({(DynamicDwaCandidatePhase.INPUT, input_cause): 1}),
+                selected=None,
+                selected_rank=None,
+                details=[
+                    DynamicDwaCandidateDiagnostic(
+                        sample_index=-1,
+                        command=Twist2D(),
+                        phase=DynamicDwaCandidatePhase.INPUT,
+                        cause=input_cause,
+                        shared_gate_failures=(invalid_reason,),
+                    )
+                ],
+            )
+            self.last_diagnostics = diagnostics
             return _dynamic_controller_result(
                 self.name,
                 snapshot,
                 started_at,
                 status=PlanStatus.INVALID_INPUT,
                 failure_reason=invalid_reason,
+                decision_trace=_dynamic_dwa_diagnostic_trace(diagnostics),
                 controller_requested_stop=True,
             )
 
@@ -454,13 +627,28 @@ class DynamicDwaController:
                 horizon_s=self.horizon_s,
                 step_s=self.integration_dt_s,
             )
+            diagnostics = _dynamic_dwa_diagnostic_summary(
+                sampled_candidates=0,
+                moving_candidates=0,
+                coarse_admissible_candidates=0,
+                nonmoving_samples=0,
+                counts=Counter(),
+                selected=None,
+                selected_rank=None,
+                details=[],
+            )
+            self.last_diagnostics = diagnostics
             return _dynamic_controller_result(
                 self.name,
                 snapshot,
                 started_at,
                 status=PlanStatus.FOUND,
                 predicted_trajectory=trajectory,
-                decision_trace=("goal_reached=true", "sampled_candidates=0"),
+                decision_trace=(
+                    "goal_reached=true",
+                    "sampled_candidates=0",
+                    *_dynamic_dwa_diagnostic_trace(diagnostics),
+                ),
             )
 
         linear_values, angular_values = self._dynamic_window(snapshot.robot_state)
@@ -473,16 +661,40 @@ class DynamicDwaController:
         physical_checker = CollisionChecker(
             snapshot.static_grid_snapshot.grid,
             self.vehicle,
+            use_optimized_geometry=self.use_step_local_workspace,
         )
-        combined_checker = CollisionChecker(
-            snapshot.static_grid_snapshot.grid,
-            self.vehicle,
-            forbidden_cells=snapshot.static_grid_snapshot.forbidden_cells,
+        combined_checker = (
+            CollisionChecker(
+                snapshot.static_grid_snapshot.grid,
+                self.vehicle,
+                forbidden_cells=snapshot.static_grid_snapshot.forbidden_cells,
+                use_optimized_geometry=self.use_step_local_workspace,
+            )
+            if snapshot.static_grid_snapshot.forbidden_cells
+            else physical_checker
         )
+        if snapshot.actor_tubes is None:  # pragma: no cover - _invalid_reason owns this
+            raise RuntimeError("validated Actor prediction unexpectedly disappeared")
+        actor_sampler = _StepActorTubeSampler(
+            snapshot.actor_tubes,
+            enabled=self.use_step_local_workspace,
+        )
+        reference_segments = _prepare_reference_segments(
+            snapshot.reference_path
+        )
+        start_goal_distance = _distance(snapshot.robot_state.pose, snapshot.goal_pose)
+        counts: Counter[tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]] = Counter()
+        details: list[DynamicDwaCandidateDiagnostic] = []
+        nonmoving_samples = 0
         candidates: list[_DynamicCandidate] = []
+        coarse_candidates = 0
+        certified_actor_dominated_candidates = 0
+        sample_index = -1
         for linear in linear_values:
             for angular in angular_values:
+                sample_index += 1
                 if linear <= 1e-12:
+                    nonmoving_samples += 1
                     continue
                 command = Twist2D(linear=linear, angular=angular)
                 trajectory = _dynamic_constant_rollout(
@@ -491,15 +703,42 @@ class DynamicDwaController:
                     horizon_s=self.horizon_s,
                     step_s=self.integration_dt_s,
                 )
-                minimum_clearance = _coarse_dynamic_candidate_clearance(
+                coarse = _coarse_dynamic_candidate_clearance(
                     trajectory,
                     snapshot=snapshot,
                     physical_checker=physical_checker,
                     combined_checker=combined_checker,
                     vehicle=self.vehicle,
+                    actor_sampler=actor_sampler,
+                    use_certified_actor_dominance=self.use_step_local_workspace,
+                    preserve_rejection_detail=(
+                        len(details) < _DWA_DIAGNOSTIC_DETAIL_LIMIT
+                    ),
                 )
-                if minimum_clearance is None:
+                coarse_candidates += 1
+                certified_actor_dominated_candidates += int(
+                    coarse.used_certified_actor_dominance
+                )
+                if not coarse.accepted:
+                    if coarse.failure_phase is None or coarse.failure_cause is None:
+                        raise RuntimeError("coarse rejection must have a structured reason")
+                    counts[(coarse.failure_phase, coarse.failure_cause)] += 1
+                    _append_diagnostic_detail(
+                        details,
+                        DynamicDwaCandidateDiagnostic(
+                            sample_index=sample_index,
+                            command=command,
+                            phase=coarse.failure_phase,
+                            cause=coarse.failure_cause,
+                            failure_time_s=coarse.failure_time_s,
+                            minimum_static_clearance_m=(coarse.minimum_static_clearance_m),
+                            minimum_actor_clearance_m=coarse.minimum_actor_clearance_m,
+                            underlying_terminal_cause=(coarse.underlying_terminal_cause),
+                        ),
+                    )
                     continue
+                if coarse.minimum_clearance_m is None:  # pragma: no cover - invariant
+                    raise RuntimeError("accepted coarse candidate must have clearance")
                 candidates.append(
                     _dynamic_candidate(
                         command,
@@ -507,14 +746,28 @@ class DynamicDwaController:
                         start=snapshot.robot_state.pose,
                         goal=snapshot.goal_pose,
                         reference_path=snapshot.reference_path,
-                        minimum_clearance=minimum_clearance,
+                        minimum_clearance=coarse.minimum_clearance_m,
                         previous_angular=snapshot.robot_state.twist.angular,
+                        sample_index=sample_index,
+                        start_goal_distance=start_goal_distance,
+                        reference_segments=reference_segments,
                     )
                 )
 
+        self.last_workspace_metrics = DynamicDwaWorkspaceMetrics(
+            coarse_candidates=coarse_candidates,
+            certified_actor_dominated_candidates=(
+                certified_actor_dominated_candidates
+            ),
+            reference_geometry_candidates=(
+                coarse_candidates - certified_actor_dominated_candidates
+            ),
+        )
+
         candidates.sort(key=lambda candidate: candidate.rank)
         selected: _DynamicCandidate | None = None
-        for candidate in candidates:
+        selected_rank: int | None = None
+        for rank, candidate in enumerate(candidates):
             proposal = _dynamic_proposal(snapshot, candidate.command, candidate.trajectory)
             evidence = evaluate_dynamic_trajectory_safety(
                 proposal,
@@ -524,8 +777,70 @@ class DynamicDwaController:
                 profile=self.vehicle,
             )
             if evidence.safe:
-                selected = candidate
-                break
+                if selected is None:
+                    selected = candidate
+                    selected_rank = rank
+                    counts[
+                        (
+                            DynamicDwaCandidatePhase.RANKING,
+                            DynamicDwaCandidateCause.SELECTED,
+                        )
+                    ] += 1
+                    if not self.verify_all_ranked_candidates:
+                        remaining = len(candidates) - rank - 1
+                        counts[
+                            (
+                                DynamicDwaCandidatePhase.RANKING,
+                                DynamicDwaCandidateCause.NOT_EVALUATED_AFTER_SELECTION,
+                            )
+                        ] += remaining
+                        break
+                else:
+                    counts[
+                        (
+                            DynamicDwaCandidatePhase.RANKING,
+                            DynamicDwaCandidateCause.ADMISSIBLE_NOT_SELECTED,
+                        )
+                    ] += 1
+                    _append_diagnostic_detail(
+                        details,
+                        DynamicDwaCandidateDiagnostic(
+                            sample_index=candidate.sample_index,
+                            command=candidate.command,
+                            phase=DynamicDwaCandidatePhase.RANKING,
+                            cause=DynamicDwaCandidateCause.ADMISSIBLE_NOT_SELECTED,
+                            minimum_static_clearance_m=evidence.minimum_static_clearance_m,
+                            minimum_actor_clearance_m=evidence.minimum_actor_clearance_m,
+                        ),
+                    )
+                continue
+            exact_cause = _shared_gate_failure_cause(evidence.failures)
+            counts[(DynamicDwaCandidatePhase.EXACT_SHARED_GATE, exact_cause)] += 1
+            _append_diagnostic_detail(
+                details,
+                DynamicDwaCandidateDiagnostic(
+                    sample_index=candidate.sample_index,
+                    command=candidate.command,
+                    phase=DynamicDwaCandidatePhase.EXACT_SHARED_GATE,
+                    cause=exact_cause,
+                    minimum_static_clearance_m=evidence.minimum_static_clearance_m,
+                    minimum_actor_clearance_m=evidence.minimum_actor_clearance_m,
+                    shared_gate_failures=evidence.failures,
+                ),
+            )
+
+        diagnostics = _dynamic_dwa_diagnostic_summary(
+            sampled_candidates=sampled_candidates,
+            moving_candidates=sampled_candidates - nonmoving_samples,
+            coarse_admissible_candidates=len(candidates),
+            nonmoving_samples=nonmoving_samples,
+            counts=counts,
+            selected=selected,
+            selected_rank=selected_rank,
+            details=details,
+        )
+        self.last_diagnostics = diagnostics
+        diagnostic_trace = _dynamic_dwa_diagnostic_trace(diagnostics)
 
         if selected is None:
             return _dynamic_controller_result(
@@ -537,6 +852,7 @@ class DynamicDwaController:
                 decision_trace=(
                     f"sampled_candidates={sampled_candidates}",
                     f"coarse_admissible_candidates={len(candidates)}",
+                    *diagnostic_trace,
                 ),
                 controller_requested_stop=True,
                 no_safe_candidate=True,
@@ -554,6 +870,7 @@ class DynamicDwaController:
             f"speed_cost={selected.speed_cost:.12g}",
             f"oscillation_cost={selected.oscillation_cost:.12g}",
             f"minimum_clearance_m={selected.minimum_clearance:.12g}",
+            *diagnostic_trace,
         )
         return _dynamic_controller_result(
             self.name,
@@ -621,7 +938,7 @@ def _dynamic_controller_result(
     no_safe_candidate: bool = False,
 ) -> ControllerCommandResult:
     metadata = snapshot.static_grid_snapshot.metadata
-    return ControllerCommandResult(
+    result = ControllerCommandResult(
         controller_name=controller_name,
         source_tick_id=snapshot.tick_id,
         status=status,
@@ -641,6 +958,58 @@ def _dynamic_controller_result(
         controller_requested_stop=controller_requested_stop,
         no_safe_candidate=no_safe_candidate,
     )
+    semantic_digest = dynamic_dwa_controller_semantic_digest(result)
+    return replace(
+        result,
+        elapsed_ns=perf_counter_ns() - started_at,
+        decision_trace=(
+            *result.decision_trace,
+            f"{_DWA_SEMANTIC_DIGEST_TRACE_PREFIX}{semantic_digest}",
+        ),
+    )
+
+
+def dynamic_dwa_controller_semantic_digest(result: ControllerCommandResult) -> str:
+    """elapsed를 제외한 DWA controller 결과 전체의 결정론적 digest."""
+
+    payload = {
+        "controller_name": result.controller_name,
+        "source_tick_id": result.source_tick_id,
+        "status": result.status.value,
+        "requested_twist": _twist_payload(result.requested_twist),
+        "predicted_trajectory": [
+            {
+                "time_s": _float_token(point.time_s),
+                "pose": _pose_payload(point.pose),
+                "twist": _twist_payload(point.twist),
+            }
+            for point in result.predicted_trajectory
+        ],
+        "failure_reason": result.failure_reason,
+        "decision_trace": [
+            item
+            for item in result.decision_trace
+            if not item.startswith(_DWA_SEMANTIC_DIGEST_TRACE_PREFIX)
+        ],
+        "mission_id": result.mission_id,
+        "map_id": result.map_id,
+        "map_revision": result.map_revision,
+        "mission_revision": result.mission_revision,
+        "observation_revision": result.observation_revision,
+        "grid_content_hash": result.grid_content_hash,
+        "observation_content_hash": result.observation_content_hash,
+        "input_content_hash": result.input_content_hash,
+        "controller_requested_stop": result.controller_requested_stop,
+        "no_safe_candidate": result.no_safe_candidate,
+    }
+    return sha256(
+        dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _dynamic_proposal(
@@ -673,12 +1042,22 @@ def _dynamic_candidate(
     reference_path: tuple[Pose2D, ...],
     minimum_clearance: float,
     previous_angular: float,
+    sample_index: int = -1,
+    start_goal_distance: float | None = None,
+    reference_segments: tuple[
+        tuple[Pose2D, Pose2D, float, float, float], ...
+    ]
+    | None = None,
 ) -> _DynamicCandidate:
-    progress = _distance(start, goal) - _distance(trajectory[-1].pose, goal)
+    if start_goal_distance is None:
+        start_goal_distance = _distance(start, goal)
+    progress = start_goal_distance - _distance(trajectory[-1].pose, goal)
     progress_cost = 1.0 - _clip(progress / 0.40, 0.0, 1.0)
-    reference_distance = _mean_polyline_distance(
-        tuple(point.pose for point in trajectory),
-        reference_path,
+    if reference_segments is None:
+        reference_segments = _prepare_reference_segments(reference_path)
+    reference_distance = _mean_trajectory_polyline_distance(
+        trajectory,
+        reference_segments,
     )
     reference_path_cost = _clip(reference_distance / 0.50, 0.0, 1.0)
     heading_cost = _clip(_heading_error(trajectory[-1].pose, goal) / pi, 0.0, 1.0)
@@ -713,6 +1092,7 @@ def _dynamic_candidate(
         speed_cost=speed_cost,
         oscillation_cost=oscillation_cost,
         score=score,
+        sample_index=sample_index,
     )
 
 
@@ -723,59 +1103,349 @@ def _coarse_dynamic_candidate_clearance(
     physical_checker: CollisionChecker,
     combined_checker: CollisionChecker,
     vehicle: VehicleProfile,
-) -> float | None:
+    actor_sampler: _StepActorTubeSampler | None = None,
+    use_certified_actor_dominance: bool = False,
+    preserve_rejection_detail: bool = False,
+) -> _CoarseCandidateEvaluation:
     """50 ms DWA sampling prefilter; 선택 후보는 공통 5 ms gate로 다시 검사한다."""
 
     if snapshot.actor_tubes is None:
-        return None
+        return _CoarseCandidateEvaluation(
+            None,
+            failure_phase=DynamicDwaCandidatePhase.COARSE_ROLLOUT,
+            failure_cause=DynamicDwaCandidateCause.PREDICTION_INVALID,
+            failure_time_s=0.0,
+        )
+    if actor_sampler is None:
+        actor_sampler = _StepActorTubeSampler(snapshot.actor_tubes, enabled=False)
+    if use_certified_actor_dominance:
+        actor_dominated = _certified_actor_dominated_clearance(
+            trajectory,
+            combined_checker=combined_checker,
+            vehicle=vehicle,
+            actor_sampler=actor_sampler,
+            preserve_rejection_detail=preserve_rejection_detail,
+        )
+        if actor_dominated is not None:
+            return actor_dominated
     minimum_clearance = inf
-    terminal = _dynamic_terminal_rollout(
-        trajectory[-1],
-        linear_deceleration_mps2=vehicle.max_deceleration_mps2,
-        angular_deceleration_radps2=DYNAMIC_ANGULAR_DECELERATION_RADPS2,
-        step_s=0.05,
-    )
-    timed_points = tuple(trajectory) + tuple(
-        TrajectoryPoint(
-            time_s=trajectory[-1].time_s + point.time_s,
-            pose=point.pose,
-            twist=point.twist,
-        )
-        for point in terminal[1:]
-    )
+    minimum_static_clearance = inf
+    minimum_actor_clearance = inf
     configuration_grid = combined_checker.configuration_grid
-    for point in timed_points:
-        configuration_cell = configuration_grid.world_to_cell(point.pose)
-        if configuration_grid.is_occupied(configuration_cell):
-            return None
-        static_clearance = min(
-            physical_checker.clearance(point.pose),
-            combined_checker.clearance(point.pose),
+    for phase in (
+        DynamicDwaCandidatePhase.COARSE_ROLLOUT,
+        DynamicDwaCandidatePhase.COARSE_TERMINAL,
+    ):
+        if phase is DynamicDwaCandidatePhase.COARSE_ROLLOUT:
+            points = trajectory
+        else:
+            terminal = _dynamic_terminal_rollout(
+                trajectory[-1],
+                linear_deceleration_mps2=vehicle.max_deceleration_mps2,
+                angular_deceleration_radps2=DYNAMIC_ANGULAR_DECELERATION_RADPS2,
+                step_s=0.05,
+            )
+            points = tuple(
+                TrajectoryPoint(
+                    time_s=trajectory[-1].time_s + point.time_s,
+                    pose=point.pose,
+                    twist=point.twist,
+                )
+                for point in terminal[1:]
+            )
+        for point in points:
+            failure_cause, static_clearance, actor_clearance = _coarse_point_outcome(
+                point,
+                configuration_grid=configuration_grid,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                vehicle=vehicle,
+                actor_sampler=actor_sampler,
+            )
+            if static_clearance is not None:
+                minimum_static_clearance = min(minimum_static_clearance, static_clearance)
+                minimum_clearance = min(minimum_clearance, static_clearance)
+            if actor_clearance is not None:
+                minimum_actor_clearance = min(
+                    minimum_actor_clearance,
+                    actor_clearance,
+                )
+                minimum_clearance = min(minimum_clearance, actor_clearance)
+            if failure_cause is not None:
+                terminal_cause = (
+                    failure_cause if phase is DynamicDwaCandidatePhase.COARSE_TERMINAL else None
+                )
+                return _CoarseCandidateEvaluation(
+                    None,
+                    failure_phase=phase,
+                    failure_cause=(
+                        DynamicDwaCandidateCause.TERMINAL_STOPPING
+                        if phase is DynamicDwaCandidatePhase.COARSE_TERMINAL
+                        else failure_cause
+                    ),
+                    failure_time_s=point.time_s,
+                    minimum_static_clearance_m=(
+                        None if minimum_static_clearance == inf else minimum_static_clearance
+                    ),
+                    minimum_actor_clearance_m=(
+                        None if minimum_actor_clearance == inf else minimum_actor_clearance
+                    ),
+                    underlying_terminal_cause=terminal_cause,
+                )
+    return _CoarseCandidateEvaluation(
+        minimum_clearance,
+        minimum_static_clearance_m=(
+            None if minimum_static_clearance == inf else minimum_static_clearance
+        ),
+        minimum_actor_clearance_m=(
+            None if minimum_actor_clearance == inf else minimum_actor_clearance
+        ),
+    )
+
+
+def _coarse_point_outcome(
+    point: TrajectoryPoint,
+    *,
+    configuration_grid: GridMap,
+    physical_checker: CollisionChecker,
+    combined_checker: CollisionChecker,
+    vehicle: VehicleProfile,
+    actor_sampler: _StepActorTubeSampler,
+) -> tuple[DynamicDwaCandidateCause | None, float | None, float | None]:
+    configuration_cell = configuration_grid.world_to_cell(point.pose)
+    if configuration_grid.is_occupied(configuration_cell):
+        physical_collision_grid = physical_checker.collision_grid
+        physical_collision = physical_collision_grid.is_occupied(
+            physical_collision_grid.world_to_cell(point.pose)
         )
-        if (
-            static_clearance < vehicle.minimum_clearance_m - 1e-12
-            or combined_checker.pose_enters_forbidden(point.pose)
-        ):
-            return None
-        minimum_clearance = min(minimum_clearance, static_clearance)
-        try:
-            actor_circles = sample_actor_tubes(
-                snapshot.actor_tubes,
-                rollout_time_s=point.time_s,
+        combined_collision = False
+        if combined_checker is not physical_checker:
+            combined_collision_grid = combined_checker.collision_grid
+            combined_collision = combined_collision_grid.is_occupied(
+                combined_collision_grid.world_to_cell(point.pose)
             )
-        except ValueError:
-            return None
-        for circle in actor_circles:
-            actor_clearance = oriented_footprint_circle_surface_distance(
-                point.pose,
-                circle_center=(circle.center.x, circle.center.y),
-                circle_radius_m=circle.radius_m,
-                profile=vehicle,
-            )
-            if actor_clearance < vehicle.minimum_clearance_m - 1e-12:
-                return None
-            minimum_clearance = min(minimum_clearance, actor_clearance)
-    return minimum_clearance
+        if combined_collision and not physical_collision:
+            cause = DynamicDwaCandidateCause.FORBIDDEN_ZONE
+        elif physical_collision:
+            cause = DynamicDwaCandidateCause.STATIC_OCCUPANCY
+        else:
+            cause = DynamicDwaCandidateCause.STATIC_CLEARANCE
+        return cause, None, None
+
+    physical_clearance = physical_checker.clearance(point.pose)
+    combined_clearance = (
+        physical_clearance
+        if combined_checker is physical_checker
+        else combined_checker.clearance(point.pose)
+    )
+    static_clearance = min(physical_clearance, combined_clearance)
+    forbidden_entry = combined_checker.pose_enters_forbidden(point.pose)
+    if static_clearance < vehicle.minimum_clearance_m - 1e-12:
+        cause = (
+            DynamicDwaCandidateCause.STATIC_OCCUPANCY
+            if physical_clearance <= 1e-12
+            else DynamicDwaCandidateCause.STATIC_CLEARANCE
+        )
+        return cause, static_clearance, None
+    if forbidden_entry:
+        return DynamicDwaCandidateCause.FORBIDDEN_ZONE, static_clearance, None
+
+    try:
+        actor_circles = actor_sampler.sample(point.time_s)
+    except ValueError:
+        return DynamicDwaCandidateCause.PREDICTION_INVALID, static_clearance, None
+    minimum_actor_clearance: float | None = None
+    for circle in actor_circles:
+        actor_clearance = oriented_footprint_circle_surface_distance(
+            point.pose,
+            circle_center=(circle.center.x, circle.center.y),
+            circle_radius_m=circle.radius_m,
+            profile=vehicle,
+            inputs_validated=True,
+        )
+        minimum_actor_clearance = (
+            actor_clearance
+            if minimum_actor_clearance is None
+            else min(minimum_actor_clearance, actor_clearance)
+        )
+    if minimum_actor_clearance is not None and minimum_actor_clearance < (
+        vehicle.minimum_clearance_m - 1e-12
+    ):
+        return (
+            DynamicDwaCandidateCause.ACTOR_TUBE,
+            static_clearance,
+            minimum_actor_clearance,
+        )
+    return None, static_clearance, minimum_actor_clearance
+
+
+def _append_diagnostic_detail(
+    details: list[DynamicDwaCandidateDiagnostic],
+    detail: DynamicDwaCandidateDiagnostic,
+) -> None:
+    if len(details) < _DWA_DIAGNOSTIC_DETAIL_LIMIT:
+        details.append(detail)
+
+
+def _shared_gate_failure_cause(
+    failures: tuple[str, ...],
+) -> DynamicDwaCandidateCause:
+    for failure in failures:
+        if failure == "forbidden_zone_entry":
+            return DynamicDwaCandidateCause.FORBIDDEN_ZONE
+        if failure == "static_clearance_below_minimum":
+            return DynamicDwaCandidateCause.STATIC_CLEARANCE
+        if failure == "actor_clearance_below_minimum":
+            return DynamicDwaCandidateCause.ACTOR_TUBE
+        if "prediction" in failure or "trajectory_invalid" in failure or "non_finite" in failure:
+            return DynamicDwaCandidateCause.PREDICTION_INVALID
+    return DynamicDwaCandidateCause.SHARED_GATE
+
+
+def _input_failure_cause(invalid_reason: str) -> DynamicDwaCandidateCause:
+    if invalid_reason == "actor_prediction_missing":
+        return DynamicDwaCandidateCause.PREDICTION_INVALID
+    return DynamicDwaCandidateCause.SHARED_GATE
+
+
+def _dynamic_dwa_diagnostic_summary(
+    *,
+    sampled_candidates: int,
+    moving_candidates: int,
+    coarse_admissible_candidates: int,
+    nonmoving_samples: int,
+    counts: Counter[tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]],
+    selected: _DynamicCandidate | None,
+    selected_rank: int | None,
+    details: list[DynamicDwaCandidateDiagnostic],
+) -> DynamicDwaDiagnosticSummary:
+    ordered_counts = tuple(
+        (phase.value, cause.value, counts[(phase, cause)]) for phase, cause in _DWA_COUNT_ORDER
+    )
+    selected_rank_key = selected.rank if selected is not None else None
+    payload = {
+        "schema_version": _DWA_DIAGNOSTIC_SCHEMA,
+        "sampled_candidates": sampled_candidates,
+        "moving_candidates": moving_candidates,
+        "coarse_admissible_candidates": coarse_admissible_candidates,
+        "nonmoving_samples": nonmoving_samples,
+        "ordered_counts": ordered_counts,
+        "selected": (
+            None
+            if selected is None
+            else {
+                "sample_index": selected.sample_index,
+                "command": _twist_payload(selected.command),
+                "trajectory": [
+                    {
+                        "time_s": _float_token(point.time_s),
+                        "pose": _pose_payload(point.pose),
+                        "twist": _twist_payload(point.twist),
+                    }
+                    for point in selected.trajectory
+                ],
+                "score": _float_token(selected.score),
+                "rank": tuple(_float_token(value) for value in selected.rank),
+                "costs": {
+                    "progress": _float_token(selected.progress_cost),
+                    "reference_path": _float_token(selected.reference_path_cost),
+                    "heading": _float_token(selected.heading_cost),
+                    "clearance": _float_token(selected.clearance_cost),
+                    "speed": _float_token(selected.speed_cost),
+                    "oscillation": _float_token(selected.oscillation_cost),
+                },
+            }
+        ),
+        "selected_rank": selected_rank,
+        "details": [_diagnostic_detail_payload(detail) for detail in details],
+        "exact_phase_granularity": "shared_gate_public_api",
+    }
+    semantic_digest = sha256(
+        dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return DynamicDwaDiagnosticSummary(
+        schema_version=_DWA_DIAGNOSTIC_SCHEMA,
+        sampled_candidates=sampled_candidates,
+        moving_candidates=moving_candidates,
+        coarse_admissible_candidates=coarse_admissible_candidates,
+        nonmoving_samples=nonmoving_samples,
+        ordered_counts=ordered_counts,
+        selected_sample_index=(selected.sample_index if selected is not None else None),
+        selected_rank=selected_rank,
+        selected_score=selected.score if selected is not None else None,
+        selected_rank_key=selected_rank_key,
+        details=tuple(details),
+        exact_phase_granularity="shared_gate_public_api",
+        semantic_digest=semantic_digest,
+    )
+
+
+def _dynamic_dwa_diagnostic_trace(
+    summary: DynamicDwaDiagnosticSummary,
+) -> tuple[str, ...]:
+    counts = ",".join(f"{phase}.{cause}:{count}" for phase, cause, count in summary.ordered_counts)
+    selected_sample = (
+        "none" if summary.selected_sample_index is None else str(summary.selected_sample_index)
+    )
+    selected_rank = "none" if summary.selected_rank is None else str(summary.selected_rank)
+    return (
+        f"diagnostic_schema={summary.schema_version}",
+        f"exact_phase_granularity={summary.exact_phase_granularity}",
+        "ranking_admissibility_scope=exact_checked_only",
+        f"moving_candidates={summary.moving_candidates}",
+        f"nonmoving_samples={summary.nonmoving_samples}",
+        f"candidate_taxonomy_counts={counts}",
+        f"selected_sample_index={selected_sample}",
+        f"selected_rank={selected_rank}",
+        f"candidate_diagnostic_digest={summary.semantic_digest}",
+    )
+
+
+def _diagnostic_detail_payload(
+    detail: DynamicDwaCandidateDiagnostic,
+) -> dict[str, object]:
+    return {
+        "sample_index": detail.sample_index,
+        "command": _twist_payload(detail.command),
+        "phase": detail.phase.value,
+        "cause": detail.cause.value,
+        "failure_time_s": (
+            None if detail.failure_time_s is None else _float_token(detail.failure_time_s)
+        ),
+        "minimum_static_clearance_m": (
+            None
+            if detail.minimum_static_clearance_m is None
+            else _float_token(detail.minimum_static_clearance_m)
+        ),
+        "minimum_actor_clearance_m": (
+            None
+            if detail.minimum_actor_clearance_m is None
+            else _float_token(detail.minimum_actor_clearance_m)
+        ),
+        "shared_gate_failures": detail.shared_gate_failures,
+        "underlying_terminal_cause": (
+            None
+            if detail.underlying_terminal_cause is None
+            else detail.underlying_terminal_cause.value
+        ),
+    }
+
+
+def _float_token(value: float) -> str:
+    return value.hex()
+
+
+def _pose_payload(pose: Pose2D) -> tuple[str, str, str]:
+    return (_float_token(pose.x), _float_token(pose.y), _float_token(pose.yaw))
+
+
+def _twist_payload(twist: Twist2D) -> tuple[str, str]:
+    return (_float_token(twist.linear), _float_token(twist.angular))
 
 
 def _dynamic_constant_rollout(
@@ -788,8 +1458,27 @@ def _dynamic_constant_rollout(
     steps = int(round(horizon_s / step_s))
     pose = start
     points = [TrajectoryPoint(0.0, pose, command)]
+    if abs(command.angular) <= 1e-12:
+        delta_x = command.linear * cos(pose.yaw) * step_s
+        delta_y = command.linear * sin(pose.yaw) * step_s
+        for step in range(1, steps + 1):
+            pose = Pose2D(
+                x=pose.x + delta_x,
+                y=pose.y + delta_y,
+                yaw=pose.yaw,
+            )
+            points.append(TrajectoryPoint(step * step_s, pose, command))
+        return tuple(points)
+
+    delta_yaw = command.angular * step_s
+    radius = command.linear / command.angular
     for step in range(1, steps + 1):
-        pose = _integrate_pose(pose, command, step_s)
+        next_yaw = pose.yaw + delta_yaw
+        pose = Pose2D(
+            x=pose.x + radius * (sin(next_yaw) - sin(pose.yaw)),
+            y=pose.y - radius * (cos(next_yaw) - cos(pose.yaw)),
+            yaw=_normalize_angle(next_yaw),
+        )
         points.append(TrajectoryPoint(step * step_s, pose, command))
     return tuple(points)
 
@@ -849,17 +1538,51 @@ def _samples_with_zero(start: float, stop: float, count: int) -> tuple[float, ..
     return tuple(samples)
 
 
-def _mean_polyline_distance(
-    path: tuple[Pose2D, ...],
-    reference_path: tuple[Pose2D, ...],
+def _mean_trajectory_polyline_distance(
+    trajectory: tuple[TrajectoryPoint, ...],
+    reference_segments: tuple[tuple[Pose2D, Pose2D, float, float, float], ...],
 ) -> float:
+    if len(reference_segments) == 1:
+        segment = reference_segments[0]
+        return sum(
+            _point_to_prepared_segment_distance(point.pose, segment)
+            for point in trajectory
+        ) / len(trajectory)
     return sum(
         min(
-            _point_to_segment_distance(pose, source, target)
-            for source, target in zip(reference_path, reference_path[1:], strict=False)
+            _point_to_prepared_segment_distance(point.pose, segment)
+            for segment in reference_segments
         )
-        for pose in path
-    ) / len(path)
+        for point in trajectory
+    ) / len(trajectory)
+
+
+def _prepare_reference_segments(
+    reference_path: tuple[Pose2D, ...],
+) -> tuple[tuple[Pose2D, Pose2D, float, float, float], ...]:
+    prepared: list[tuple[Pose2D, Pose2D, float, float, float]] = []
+    for source, target in zip(reference_path, reference_path[1:], strict=False):
+        dx = target.x - source.x
+        dy = target.y - source.y
+        prepared.append((source, target, dx, dy, dx * dx + dy * dy))
+    return tuple(prepared)
+
+
+def _point_to_prepared_segment_distance(
+    point: Pose2D,
+    segment: tuple[Pose2D, Pose2D, float, float, float],
+) -> float:
+    source, _target, dx, dy, length_sq = segment
+    if length_sq <= 1e-15:
+        return _distance(point, source)
+    fraction = _clip(
+        ((point.x - source.x) * dx + (point.y - source.y) * dy) / length_sq,
+        0.0,
+        1.0,
+    )
+    projection_x = source.x + fraction * dx
+    projection_y = source.y + fraction * dy
+    return hypot(point.x - projection_x, point.y - projection_y)
 
 
 def _point_to_segment_distance(point: Pose2D, source: Pose2D, target: Pose2D) -> float:
@@ -873,8 +1596,9 @@ def _point_to_segment_distance(point: Pose2D, source: Pose2D, target: Pose2D) ->
         0.0,
         1.0,
     )
-    projection = Pose2D(source.x + fraction * dx, source.y + fraction * dy)
-    return _distance(point, projection)
+    projection_x = source.x + fraction * dx
+    projection_y = source.y + fraction * dy
+    return hypot(point.x - projection_x, point.y - projection_y)
 
 
 def _clip(value: float, lower: float, upper: float) -> float:
@@ -950,6 +1674,208 @@ def _mean_reference_distance(
         min(_distance(pose, reference) for reference in reference_path) for pose in path
     )
     return sum(distances) / len(path)
+
+
+def _certified_actor_dominated_clearance(
+    trajectory: tuple[TrajectoryPoint, ...],
+    *,
+    combined_checker: CollisionChecker,
+    vehicle: VehicleProfile,
+    actor_sampler: _StepActorTubeSampler,
+    preserve_rejection_detail: bool,
+) -> _CoarseCandidateEvaluation | None:
+    """Skip exact static geometry only when a proof-safe lower bound dominates.
+
+    This is step-local screening, not a cached controller result.  If the
+    conservative proof is insufficient, the caller runs the historical exact
+    path unchanged.  Bounded rejection details deliberately use that exact
+    path so their semantic digest remains stable.
+    """
+
+    minimum_actor_clearance = inf
+    minimum_actor_witnesses: list[tuple[Pose2D, ActorTubeCircle]] = []
+    evaluated_poses: list[Pose2D] = []
+    half_length = vehicle.collision_length_m / 2.0
+    half_width = vehicle.collision_width_m / 2.0
+    terminal = _dynamic_terminal_rollout(
+        trajectory[-1],
+        linear_deceleration_mps2=vehicle.max_deceleration_mps2,
+        angular_deceleration_radps2=DYNAMIC_ANGULAR_DECELERATION_RADPS2,
+        step_s=0.05,
+    )
+    terminal_points = tuple(
+        TrajectoryPoint(
+            time_s=trajectory[-1].time_s + point.time_s,
+            pose=point.pose,
+            twist=point.twist,
+        )
+        for point in terminal[1:]
+    )
+    phased_points = (
+        (DynamicDwaCandidatePhase.COARSE_ROLLOUT, trajectory),
+        (DynamicDwaCandidatePhase.COARSE_TERMINAL, terminal_points),
+    )
+
+    # The historical configuration-grid occupancy check owns precedence over
+    # Actor-tube screening.  Inspect the complete rollout and stopping tail
+    # before using the shortcut so a later boundary/static/forbidden hit falls
+    # back to the unchanged exact path instead of being masked by an earlier
+    # Actor encounter.
+    configuration_grid = combined_checker.configuration_grid
+    if any(
+        configuration_grid.is_occupied(
+            configuration_grid.world_to_cell(point.pose)
+        )
+        for _phase, points in phased_points
+        for point in points
+    ):
+        return None
+
+    for phase, points in phased_points:
+        for point in points:
+            evaluated_poses.append(point.pose)
+            try:
+                actor_circles = actor_sampler.sample(point.time_s)
+            except ValueError:
+                minimum_static_lower_bound = (
+                    combined_checker.certified_minimum_clearance_lower_bound(
+                        tuple(evaluated_poses)
+                    )
+                )
+                if minimum_static_lower_bound < vehicle.minimum_clearance_m:
+                    return None
+                if preserve_rejection_detail:
+                    return None
+                return _CoarseCandidateEvaluation(
+                    None,
+                    failure_phase=phase,
+                    failure_cause=(
+                        DynamicDwaCandidateCause.TERMINAL_STOPPING
+                        if phase is DynamicDwaCandidatePhase.COARSE_TERMINAL
+                        else DynamicDwaCandidateCause.PREDICTION_INVALID
+                    ),
+                    failure_time_s=point.time_s,
+                    minimum_actor_clearance_m=(
+                        None
+                        if minimum_actor_clearance == inf
+                        else minimum_actor_clearance
+                    ),
+                    underlying_terminal_cause=(
+                        DynamicDwaCandidateCause.PREDICTION_INVALID
+                        if phase is DynamicDwaCandidatePhase.COARSE_TERMINAL
+                        else None
+                    ),
+                    used_certified_actor_dominance=True,
+                )
+            point_actor_clearance = inf
+            point_actor_circles: list[ActorTubeCircle] = []
+            threshold_guard = 0.0
+            for circle in actor_circles:
+                delta_x = circle.center.x - point.pose.x
+                delta_y = circle.center.y - point.pose.y
+                cosine = cos(point.pose.yaw)
+                sine = sin(point.pose.yaw)
+                local_x = cosine * delta_x + sine * delta_y
+                local_y = -sine * delta_x + cosine * delta_y
+                outside_x = max(abs(local_x) - half_length, 0.0)
+                outside_y = max(abs(local_y) - half_width, 0.0)
+                actor_clearance = (
+                    -circle.radius_m
+                    if outside_x == 0.0 and outside_y == 0.0
+                    else hypot(outside_x, outside_y) - circle.radius_m
+                )
+                witness_tolerance = 1e-9 * max(
+                    1.0,
+                    abs(point.pose.x),
+                    abs(point.pose.y),
+                    abs(circle.center.x),
+                    abs(circle.center.y),
+                    circle.radius_m,
+                )
+                threshold_guard = max(threshold_guard, witness_tolerance)
+                if actor_clearance < point_actor_clearance - witness_tolerance:
+                    point_actor_clearance = actor_clearance
+                    point_actor_circles = [circle]
+                elif actor_clearance <= point_actor_clearance + witness_tolerance:
+                    point_actor_circles.append(circle)
+
+                if actor_clearance < minimum_actor_clearance - witness_tolerance:
+                    minimum_actor_clearance = actor_clearance
+                    minimum_actor_witnesses = [(point.pose, circle)]
+                elif actor_clearance <= minimum_actor_clearance + witness_tolerance:
+                    minimum_actor_witnesses.append((point.pose, circle))
+
+            actor_threshold = vehicle.minimum_clearance_m - 1e-12
+            if point_actor_circles and (
+                abs(point_actor_clearance - actor_threshold) <= threshold_guard
+            ):
+                point_actor_clearance = min(
+                    oriented_footprint_circle_surface_distance(
+                        point.pose,
+                        circle_center=(circle.center.x, circle.center.y),
+                        circle_radius_m=circle.radius_m,
+                        profile=vehicle,
+                        inputs_validated=True,
+                    )
+                    for circle in actor_circles
+                )
+            if point_actor_clearance < vehicle.minimum_clearance_m - 1e-12:
+                minimum_static_lower_bound = (
+                    combined_checker.certified_minimum_clearance_lower_bound(
+                        tuple(evaluated_poses)
+                    )
+                )
+                if minimum_static_lower_bound < vehicle.minimum_clearance_m:
+                    return None
+                if preserve_rejection_detail:
+                    return None
+                return _CoarseCandidateEvaluation(
+                    None,
+                    failure_phase=phase,
+                    failure_cause=(
+                        DynamicDwaCandidateCause.TERMINAL_STOPPING
+                        if phase is DynamicDwaCandidatePhase.COARSE_TERMINAL
+                        else DynamicDwaCandidateCause.ACTOR_TUBE
+                    ),
+                    failure_time_s=point.time_s,
+                    minimum_actor_clearance_m=minimum_actor_clearance,
+                    underlying_terminal_cause=(
+                        DynamicDwaCandidateCause.ACTOR_TUBE
+                        if phase is DynamicDwaCandidatePhase.COARSE_TERMINAL
+                        else None
+                    ),
+                    used_certified_actor_dominance=True,
+                )
+
+    if minimum_actor_clearance == inf:
+        return None
+    minimum_actor_clearance = inf
+    for pose, circle in minimum_actor_witnesses:
+        exact_actor_clearance = oriented_footprint_circle_surface_distance(
+            pose,
+            circle_center=(circle.center.x, circle.center.y),
+            circle_radius_m=circle.radius_m,
+            profile=vehicle,
+            inputs_validated=True,
+        )
+        if exact_actor_clearance < minimum_actor_clearance:
+            minimum_actor_clearance = exact_actor_clearance
+    minimum_static_lower_bound = (
+        combined_checker.certified_minimum_clearance_lower_bound(
+            tuple(evaluated_poses)
+        )
+    )
+    # A strict numeric margin keeps the proof on the conservative side of any
+    # last-bit equality in the lower-bound construction.
+    if minimum_static_lower_bound < minimum_actor_clearance + 1e-12:
+        return None
+    return _CoarseCandidateEvaluation(
+        minimum_actor_clearance,
+        minimum_actor_clearance_m=minimum_actor_clearance,
+        used_certified_actor_dominance=True,
+    )
+
+
 
 
 def _heading_error(pose: Pose2D, goal: Pose2D) -> float:

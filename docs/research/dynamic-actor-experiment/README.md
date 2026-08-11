@@ -36,6 +36,30 @@
 | 5. 평가기와 corpus | 구현·전용시험·전체 회귀 완료 |
 | 6. runner·hidden·판정 | 구현·전용시험·full hidden 실행 완료 |
 
+### v6 보정 상태 — 2026-08-11
+
+[v6 보정·재자격 명세](v6-correction-and-requalification.md)에 따라 4~6단계의
+연구 구현을 다시 검증하고 있다. 이는 위 표의 v5 구현 이력을 삭제하는 작업이 아니다.
+
+- legacy-v1 공개 36개와 고정 corpus hash는 회귀 lane으로 유지한다.
+- 방향·코너·교차로·세로 경로·다중 Actor를 포함한 v6 공개 13개를 별도 lane으로
+  추가했다.
+- controller에는 평가 범주·split·family·variant·oracle과 이를 드러내는 식별자를
+  전달하지 않는다. v6 source·map·Actor 식별자는 semantic world에서 분리한 불투명 ID다.
+- category oracle은 지속 rejoin, 같은 방향 추월, 위험 구간별 서로 다른 보호정지
+  epoch를 검사한다.
+- DWA에는 후보 탈락 진단과 동작 보존형 계산 재사용을 추가했다. 98개 공개 대표
+  snapshot의 최적화 전후 semantic digest는 일치했지만, 직렬 500회에서 DWA가
+  `100`회 50 ms를 초과해 자격을 통과하지 못했다(PP `0/500`).
+- v5의 public+hidden 일괄 실행 진입점은 v6 재자격이 끝날 때까지 차단한다. 축소·부분
+  공개 실행은 정식 qualification receipt를 만들 수 없으며 새 hidden은 생성하지 않는다.
+- 회사 PC의 `final-v4`는 현재 실패 구현의 regression 자료다. 집 PC에는 해당 ignored
+  output이 없으므로 `final-v4` 전체 동작 보존을 검증했다고 주장하지 않는다.
+
+v6 보정은 제품 알고리즘 채택, `G1~G5` 결정 또는 경로 분석 7단계가 아니다.
+현재 코드 회귀는 동적 `187`개와 기존 실험실 `148`개, 합계 `335 passed`이며 정식
+expanded-public receipt와 새 hidden은 없다.
+
 6단계 runner는 manifest/source hash, public hard-safety 사전자격, hidden commitment와
 소비 영수증, paired Normal·Stress 실행, 통계·Pareto·10개 승격 조건, PNG와 실패 회귀
 후보 보존을 구현했다. 전체 회귀 `274 passed` 뒤 14-worker 결과 계산과 직렬 timing

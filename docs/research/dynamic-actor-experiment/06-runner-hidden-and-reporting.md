@@ -19,6 +19,33 @@
   기록한다. 50 ms wall-clock qualification은 모든 worker가 종료된 뒤 부모 프로세스에서
   단독 직렬 실행한다.
 
+### v6 public-only 재자격 상태 — 2026-08-11
+
+아래 `final-v4`는 v5 실행 이력이며 v6 자격으로 재사용하지 않는다. v6에서는 기존
+public+hidden 일괄 진입점을 fail-closed로 차단하고 public-only 자격 단계를 분리한다.
+
+- 전체 legacy+v6 공개 corpus, Normal+Stress, 실제 contract 시험, 동결된 30 warm-up·100
+  repeat를 모두 사용한 실행만 정식 receipt 봉인 대상이다.
+- episode·tick·profile 축소, 주입된 contract 증거 또는 비표준 반복 수를 사용한 실행은
+  진단 report만 만들며 receipt나 `hidden_generation_allowed`를 만들지 않는다.
+- receipt는 비결정적인 worker PID·elapsed를 제외한 전체 공개 record set, scenario/oracle
+  matrix, contract·hard-safety·기능·qualification 증거와 source freeze를 함께 봉인한다.
+- source freeze는 공개 실행 전후, receipt 봉인 직전과 실제 exclusive write 직전에 다시
+  확인한다.
+- episode×profile×controller 조합의 누락·중복·예상 밖 결과, 서로 다른 worker/stream,
+  90° rigid pair 결과 불일치와 stale component hash는 모두 fail-closed다.
+- 공개 hard safety·fault·category 기능·직렬 50 ms 중 하나라도 실패하면 새 hidden seed,
+  commitment, corpus와 소비 영수증을 만들지 않는다.
+- 현재 집 PC에는 회사 PC의 ignored `final-v4` output이 없으므로 해당 전체 artifact와의
+  동작 동일성은 미검증 상태다.
+
+v6 public-only 실행이 통과하고 별도 승인된 hidden 단계가 생기기 전까지 이 문서 아래의
+legacy hidden 명령은 실행 절차가 아니라 과거 계약·회귀 설명으로만 읽는다.
+
+현재 standalone 5-case×100 직렬 측정은 PP miss `0/500`, DWA miss `100/500`이므로
+public gate의 50 ms 조건을 만족하지 않는다. 정식 expanded-public 실행·receipt 봉인과
+새 hidden 생성은 수행하지 않았다.
+
 ## 2026-08-11 full 실행 결과
 
 - output: `simulation/path_planning_lab/outputs/dynamic-experiment-20260811-final-v4`
@@ -61,18 +88,17 @@ tests/test_dynamic_statistics.py
 tests/test_dynamic_hidden_lifecycle.py
 ```
 
-## 실행 명령 후보
+## v6 공개 재자격 실행 명령
 
 ```powershell
-hospital-path-lab dynamic-experiment `
-  --base-seed <public-seed> `
-  --hidden-seed <hidden-seed> `
-  --hidden-commitment <sha256-commitment> `
+hospital-path-lab dynamic-public-qualification `
+  --base-seed 20260811 `
   --simulation-workers 6 `
   --output-dir <output-dir>
 ```
 
-실제 옵션 이름은 CLI 구현 시 고정하며 `--help`와 README를 함께 갱신한다.
+output은 반드시 새 경로여야 한다. v5의 `dynamic-experiment` 명령은 v6 CLI에서 제거됐고,
+새 hidden 단계는 공개 자격 통과와 별도 승인 전까지 만들지 않는다.
 
 ## 동결 manifest
 

@@ -9,14 +9,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from math import cos, hypot, isfinite, pi, sin, sqrt
+from math import atan2, cos, hypot, isfinite, pi, sin, sqrt
 from statistics import fmean
+from typing import TYPE_CHECKING
 
 from hospital_path_lab.collision import (
     CollisionChecker,
     oriented_footprint_circle_surface_distance,
 )
-from hospital_path_lab.contracts import GridSnapshot, Pose2D, Twist2D
+from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_CONTROL_PERIOD_S,
     ActorState,
@@ -29,10 +30,15 @@ from hospital_path_lab.simulation import (
 )
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
 
+if TYPE_CHECKING:
+    from hospital_path_lab.dynamic_corpus import DynamicOracleSpec
+
 EVALUATOR_FREQUENCY_HZ = 200.0
 EVALUATOR_PERIOD_S = 1.0 / EVALUATOR_FREQUENCY_HZ
 _GEOMETRY_TOLERANCE_M = 1e-9
 _REJOIN_TOLERANCE_M = 0.10
+_REJOIN_HEADING_TOLERANCE_RAD = 10.0 * pi / 180.0
+_REJOIN_HOLD_S = 0.50
 _DEADLOCK_WINDOW_S = 3.0
 _DEADLOCK_PROGRESS_M = 0.02
 
@@ -75,7 +81,14 @@ class DynamicEvaluationMetrics:
     minimum_surface_clearance_m: float | None
     minimum_ttc_s: float | None
     rejoin_observed: bool
+    maximum_rejoin_sustained_duration_s: float
     overtaking_observed: bool
+    same_direction_overtaking_actor_ids: tuple[str, ...]
+    protective_stop_epoch_count: int
+    hazard_interval_stop_epoch_ids: tuple[tuple[int, ...], ...]
+    resume_after_hold_count: int
+    authorized_resume_stop_epochs: tuple[int, ...]
+    authorized_resume_times_s: tuple[float, ...]
     planner_deadlock: bool
 
 
@@ -90,6 +103,8 @@ class DynamicEvaluationResult:
     metrics: DynamicEvaluationMetrics
     functional_qualified: bool
     functional_failures: tuple[str, ...]
+    category_oracle_applied: bool
+    category_oracle_failures: tuple[str, ...]
 
 
 def evaluate_dynamic_pipeline(
@@ -105,6 +120,7 @@ def evaluate_dynamic_pipeline(
     blocking_cleared_at_s: float | None = None,
     completion_deadline_after_clear_s: float = 30.0,
     profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    oracle_spec: DynamicOracleSpec | None = None,
 ) -> DynamicEvaluationResult:
     """Stage 4 pipeline trace를 독립 ground truth로 평가한다."""
 
@@ -116,6 +132,11 @@ def evaluate_dynamic_pipeline(
         raise ValueError("completion deadline must be positive")
     if not profile.simulation_only or not pipeline.simulation_only:
         raise ValueError("dynamic evaluator is simulation-only")
+    if (
+        oracle_spec is not None
+        and oracle_spec.expectation_category.value != expectation_category
+    ):
+        raise ValueError("evaluation category and oracle category must match")
 
     collision_count = 0
     clearance_violation_count = 0
@@ -128,9 +149,13 @@ def evaluate_dynamic_pipeline(
     minimum_ttc: float | None = None
     evaluator_poses: list[Pose2D] = []
     evaluator_times: list[float] = []
-    overtaking_observed = False
+    overtaken_actor_ids: set[str] = set()
+    actor_overtake_times_s: dict[str, float] = {}
     actor_order: dict[str, float] = {}
+    actor_longitudinal_overlap: set[str] = set()
     previous_motion_state: DynamicMotionState | None = None
+    previous_decision_stop_epoch: int | None = None
+    previous_robot_state_after: RobotState | None = None
     first_failure_time_s: float | None = None
 
     half_diagonal = hypot(
@@ -142,12 +167,25 @@ def evaluate_dynamic_pipeline(
         raise AssertionError("200 Hz evaluator must divide the 20 Hz control period")
 
     for expected_tick, step in enumerate(pipeline.steps):
+        expected_simulation_time_s = expected_tick * DYNAMIC_CONTROL_PERIOD_S
         if (
             step.tick_id != expected_tick
+            or abs(step.simulation_time_s - expected_simulation_time_s) > 1e-12
             or step.controller_result.source_tick_id != step.tick_id
             or step.safety_decision.tick_id != step.tick_id
             or step.safety_decision.source_tick_id != step.tick_id
             or not step.controller_result.input_content_hash
+            or (
+                previous_robot_state_after is not None
+                and not _robot_states_close(
+                    previous_robot_state_after,
+                    step.robot_state_before,
+                )
+            )
+            or not _twists_close(
+                step.robot_state_after.twist,
+                step.safety_decision.command,
+            )
         ):
             provenance_failure_count += 1
             if first_failure_time_s is None:
@@ -193,15 +231,33 @@ def evaluate_dynamic_pipeline(
             late_command_applied_count += 1
             if first_failure_time_s is None:
                 first_failure_time_s = step.simulation_time_s
-        if (
-            previous_motion_state is DynamicMotionState.HOLDING
+        returning_to_motion = (
+            previous_motion_state
+            in {DynamicMotionState.BRAKING, DynamicMotionState.HOLDING}
             and step.safety_decision.motion_state is DynamicMotionState.MOVING
-            and not step.safety_decision.resume_allowed
+        )
+        if returning_to_motion and (
+            previous_motion_state is not DynamicMotionState.HOLDING
+            or not step.safety_decision.resume_allowed
+            or previous_decision_stop_epoch is None
+            or previous_decision_stop_epoch <= 0
+            or step.safety_decision.stop_epoch != previous_decision_stop_epoch
         ):
             unauthorized_resume_count += 1
             if first_failure_time_s is None:
                 first_failure_time_s = step.simulation_time_s
+        if previous_decision_stop_epoch is not None:
+            epoch_delta = step.safety_decision.stop_epoch - previous_decision_stop_epoch
+            epoch_transition_valid = epoch_delta in {0, 1} and (
+                epoch_delta == 0
+                or step.safety_decision.motion_state is DynamicMotionState.HOLDING
+            )
+            if not epoch_transition_valid:
+                provenance_failure_count += 1
+                if first_failure_time_s is None:
+                    first_failure_time_s = step.simulation_time_s
         previous_motion_state = step.safety_decision.motion_state
+        previous_decision_stop_epoch = step.safety_decision.stop_epoch
 
         checker = CollisionChecker(
             context_grid.grid,
@@ -212,7 +268,7 @@ def evaluate_dynamic_pipeline(
         for substep in range(start_index, subdivisions + 1):
             offset_s = substep * EVALUATOR_PERIOD_S
             evaluation_time_s = step.simulation_time_s + offset_s
-            pose = _integrate(
+            pose = _integrate_simulation_tick(
                 step.robot_state_before.pose,
                 step.robot_state_before.twist,
                 offset_s,
@@ -250,8 +306,11 @@ def evaluate_dynamic_pipeline(
                 if ttc is not None:
                     minimum_ttc = ttc if minimum_ttc is None else min(minimum_ttc, ttc)
 
-                robot_arc, _ = _project_to_path(pose, reference_path)
-                actor_arc, actor_deviation = _project_point_to_path(
+                robot_arc, _, path_heading = _project_to_path_with_heading(
+                    pose,
+                    reference_path,
+                )
+                actor_arc, actor_deviation, _ = _project_point_to_path_with_heading(
                     actor.position.x,
                     actor.position.y,
                     reference_path,
@@ -261,11 +320,30 @@ def evaluate_dynamic_pipeline(
                     + profile.collision_width_m / 2.0
                     + profile.minimum_clearance_m
                 )
-                if actor_deviation <= relevant_lateral_distance:
+                eligible_overtake_actor = (
+                    oracle_spec is None
+                    or actor.actor_id in oracle_spec.same_direction_actor_ids
+                )
+                if actor_deviation <= relevant_lateral_distance and eligible_overtake_actor:
                     order = actor_arc - robot_arc
+                    yaw_delta = _normalize_angle(pose.yaw - path_heading)
+                    robot_longitudinal_extent = (
+                        profile.collision_length_m / 2.0 * abs(cos(yaw_delta))
+                        + profile.collision_width_m / 2.0 * abs(sin(yaw_delta))
+                    )
+                    if abs(order) <= robot_longitudinal_extent + actor.radius_m:
+                        actor_longitudinal_overlap.add(actor.actor_id)
                     previous_order = actor_order.get(actor.actor_id)
-                    if previous_order is not None and previous_order > 0.0 >= order:
-                        overtaking_observed = True
+                    if (
+                        previous_order is not None
+                        and previous_order > 0.0 >= order
+                        and actor.actor_id in actor_longitudinal_overlap
+                    ):
+                        overtaken_actor_ids.add(actor.actor_id)
+                        actor_overtake_times_s.setdefault(
+                            actor.actor_id,
+                            evaluation_time_s,
+                        )
                     actor_order[actor.actor_id] = order
 
             sample_clearance = min(
@@ -305,6 +383,15 @@ def evaluate_dynamic_pipeline(
             provenance_failure_count += 1
             if first_failure_time_s is None:
                 first_failure_time_s = step.simulation_time_s
+        previous_robot_state_after = step.robot_state_after
+
+    if pipeline.steps and not _robot_states_close(
+        pipeline.steps[-1].robot_state_after,
+        pipeline.final_state,
+    ):
+        provenance_failure_count += 1
+        if first_failure_time_s is None:
+            first_failure_time_s = pipeline.steps[-1].simulation_time_s
 
     failures: list[str] = []
     for count, name in (
@@ -338,29 +425,161 @@ def evaluate_dynamic_pipeline(
     twists = [step.robot_state_before.twist for step in pipeline.steps]
     if pipeline.steps:
         twists.append(pipeline.steps[-1].robot_state_after.twist)
-    deviations = tuple(
-        _project_to_path(pose, reference_path)[1] for pose in evaluator_poses
+    projections = tuple(
+        _project_to_path_with_heading(pose, reference_path)
+        for pose in evaluator_poses
+    )
+    deviations = tuple(projection[1] for projection in projections)
+    heading_errors = tuple(
+        abs(_normalize_angle(pose.yaw - projection[2]))
+        for pose, projection in zip(evaluator_poses, projections, strict=True)
+    )
+    departure_threshold_m = (
+        oracle_spec.departure_threshold_m
+        if oracle_spec is not None
+        else _REJOIN_TOLERANCE_M
+    )
+    rejoin_distance_m = (
+        oracle_spec.rejoin_distance_m
+        if oracle_spec is not None
+        else _REJOIN_TOLERANCE_M
+    )
+    rejoin_heading_tolerance_rad = (
+        oracle_spec.rejoin_heading_tolerance_deg * pi / 180.0
+        if oracle_spec is not None
+        else _REJOIN_HEADING_TOLERANCE_RAD
+    )
+    rejoin_hold_s = (
+        oracle_spec.rejoin_hold_s if oracle_spec is not None else _REJOIN_HOLD_S
     )
     departed = False
+    departure_time_s: float | None = None
     rejoin_observed = False
-    for deviation in deviations:
-        if deviation > _REJOIN_TOLERANCE_M:
+    current_rejoin_duration_s = 0.0
+    maximum_rejoin_duration_s = 0.0
+    for time_s, deviation, heading_error in zip(
+        evaluator_times,
+        deviations,
+        heading_errors,
+        strict=True,
+    ):
+        if deviation > departure_threshold_m:
             departed = True
-        elif departed and deviation <= _REJOIN_TOLERANCE_M:
-            rejoin_observed = True
-            break
+            if departure_time_s is None:
+                departure_time_s = time_s
+            current_rejoin_duration_s = 0.0
+        elif (
+            departed
+            and deviation <= rejoin_distance_m
+            and heading_error <= rejoin_heading_tolerance_rad
+        ):
+            current_rejoin_duration_s += EVALUATOR_PERIOD_S
+            maximum_rejoin_duration_s = max(
+                maximum_rejoin_duration_s,
+                current_rejoin_duration_s,
+            )
+            if current_rejoin_duration_s + 1e-12 >= rejoin_hold_s:
+                rejoin_observed = True
+        elif departed:
+            current_rejoin_duration_s = 0.0
+
+    expected_overtake_actor_ids = (
+        frozenset(oracle_spec.same_direction_actor_ids)
+        if oracle_spec is not None
+        else frozenset()
+    )
+    ordered_detour_observed = False
+    if expected_overtake_actor_ids and expected_overtake_actor_ids.issubset(
+        actor_overtake_times_s
+    ):
+        earliest_overtake_s = min(
+            actor_overtake_times_s[actor_id]
+            for actor_id in expected_overtake_actor_ids
+        )
+        latest_overtake_s = max(
+            actor_overtake_times_s[actor_id]
+            for actor_id in expected_overtake_actor_ids
+        )
+        ordered_rejoin_at_s = _sustained_rejoin_completion_time(
+            evaluator_times,
+            deviations,
+            heading_errors,
+            start_time_s=latest_overtake_s,
+            distance_m=rejoin_distance_m,
+            heading_tolerance_rad=rejoin_heading_tolerance_rad,
+            hold_s=rejoin_hold_s,
+        )
+        ordered_detour_observed = all(
+            (
+                departure_time_s is not None,
+                departure_time_s is not None
+                and departure_time_s < earliest_overtake_s,
+                ordered_rejoin_at_s is not None,
+                all(
+                    actor_order.get(actor_id, float("inf")) <= 0.0
+                    for actor_id in expected_overtake_actor_ids
+                ),
+            )
+        )
 
     hold_durations: dict[str, float] = {}
     hold_duration_s = 0.0
+    protective_stop_epochs: set[int] = set()
+    hazard_stop_epochs = (
+        [set() for _ in oracle_spec.hazard_intervals_s]
+        if oracle_spec is not None
+        else []
+    )
+    pending_hazard_intervals: set[int] = set()
+    previous_stop_epoch = 0
+    stop_epoch_confirmed_at_s: dict[int, float] = {}
+    authorized_resume_events: list[tuple[int, float]] = []
+    previous_motion_state = None
     for step in pipeline.steps:
-        if step.safety_decision.motion_state in {
+        protective_stop = step.safety_decision.motion_state in {
             DynamicMotionState.BRAKING,
             DynamicMotionState.HOLDING,
-        }:
+        }
+        if protective_stop:
             hold_duration_s += DYNAMIC_CONTROL_PERIOD_S
             reason = step.safety_decision.primary_hold_reason
             key = reason.value if reason is not None else "unspecified"
             hold_durations[key] = hold_durations.get(key, 0.0) + DYNAMIC_CONTROL_PERIOD_S
+            if reason in {
+                DynamicHoldReason.TRAFFIC,
+                DynamicHoldReason.NO_SAFE_CANDIDATE,
+            }:
+                for index, (start_s, end_s) in enumerate(
+                    oracle_spec.hazard_intervals_s if oracle_spec is not None else ()
+                ):
+                    if start_s <= step.simulation_time_s <= end_s:
+                        pending_hazard_intervals.add(index)
+            if step.safety_decision.stop_epoch > 0:
+                protective_stop_epochs.add(step.safety_decision.stop_epoch)
+            if step.safety_decision.stop_epoch == previous_stop_epoch + 1:
+                stop_epoch_confirmed_at_s[step.safety_decision.stop_epoch] = (
+                    step.simulation_time_s
+                )
+                for index in pending_hazard_intervals:
+                    hazard_stop_epochs[index].add(step.safety_decision.stop_epoch)
+                pending_hazard_intervals.clear()
+        elif (
+            previous_motion_state is DynamicMotionState.HOLDING
+            and step.safety_decision.motion_state is DynamicMotionState.MOVING
+            and step.safety_decision.resume_allowed
+            and previous_stop_epoch > 0
+            and step.safety_decision.stop_epoch == previous_stop_epoch
+        ):
+            authorized_resume_events.append(
+                (step.safety_decision.stop_epoch, step.simulation_time_s)
+            )
+            pending_hazard_intervals.clear()
+        if step.safety_decision.stop_epoch in {
+            previous_stop_epoch,
+            previous_stop_epoch + 1,
+        }:
+            previous_stop_epoch = step.safety_decision.stop_epoch
+        previous_motion_state = step.safety_decision.motion_state
 
     path_length_m = sum(
         hypot(target.x - source.x, target.y - source.y)
@@ -398,6 +617,23 @@ def evaluate_dynamic_pipeline(
     ) > 0.05 + _GEOMETRY_TOLERANCE_M:
         functional_failures.append("completed_outside_goal_tolerance")
 
+    category_oracle_failures = _category_oracle_failures(
+        pipeline,
+        expectation_category=expectation_category,
+        oracle_spec=oracle_spec,
+        maximum_reference_deviation_m=max(deviations, default=0.0),
+        rejoin_observed=rejoin_observed,
+        overtaken_actor_ids=frozenset(overtaken_actor_ids),
+        ordered_detour_observed=ordered_detour_observed,
+        protective_stop_epoch_count=len(protective_stop_epochs),
+        hazard_interval_stop_epoch_ids=tuple(
+            tuple(sorted(epochs)) for epochs in hazard_stop_epochs
+        ),
+        authorized_resume_events=tuple(authorized_resume_events),
+        stop_epoch_confirmed_at_s=stop_epoch_confirmed_at_s,
+    )
+    functional_failures.extend(category_oracle_failures)
+
     metrics = DynamicEvaluationMetrics(
         completion_time_s=completion_time_s,
         safety_hold_duration_s=hold_duration_s,
@@ -429,7 +665,20 @@ def evaluate_dynamic_pipeline(
         minimum_surface_clearance_m=minimum_clearance,
         minimum_ttc_s=minimum_ttc,
         rejoin_observed=rejoin_observed,
-        overtaking_observed=overtaking_observed,
+        maximum_rejoin_sustained_duration_s=maximum_rejoin_duration_s,
+        overtaking_observed=bool(overtaken_actor_ids),
+        same_direction_overtaking_actor_ids=tuple(sorted(overtaken_actor_ids)),
+        protective_stop_epoch_count=len(protective_stop_epochs),
+        hazard_interval_stop_epoch_ids=tuple(
+            tuple(sorted(epochs)) for epochs in hazard_stop_epochs
+        ),
+        resume_after_hold_count=len(authorized_resume_events),
+        authorized_resume_stop_epochs=tuple(
+            epoch for epoch, _ in authorized_resume_events
+        ),
+        authorized_resume_times_s=tuple(
+            time_s for _, time_s in authorized_resume_events
+        ),
         planner_deadlock=planner_deadlock,
     )
     return DynamicEvaluationResult(
@@ -442,7 +691,161 @@ def evaluate_dynamic_pipeline(
         metrics=metrics,
         functional_qualified=not functional_failures,
         functional_failures=tuple(functional_failures),
+        category_oracle_applied=oracle_spec is not None,
+        category_oracle_failures=category_oracle_failures,
     )
+
+
+def _sustained_rejoin_completion_time(
+    times_s: list[float],
+    deviations_m: tuple[float, ...],
+    heading_errors_rad: tuple[float, ...],
+    *,
+    start_time_s: float,
+    distance_m: float,
+    heading_tolerance_rad: float,
+    hold_s: float,
+) -> float | None:
+    qualifying_since_s: float | None = None
+    for time_s, deviation_m, heading_error_rad in zip(
+        times_s,
+        deviations_m,
+        heading_errors_rad,
+        strict=True,
+    ):
+        if time_s + 1e-12 < start_time_s:
+            continue
+        if (
+            deviation_m <= distance_m
+            and heading_error_rad <= heading_tolerance_rad
+        ):
+            if qualifying_since_s is None:
+                qualifying_since_s = time_s
+            if time_s - qualifying_since_s + 1e-12 >= hold_s:
+                return time_s
+        else:
+            qualifying_since_s = None
+    return None
+
+
+def _category_oracle_failures(
+    pipeline: DynamicControllerPipelineResult,
+    *,
+    expectation_category: str,
+    oracle_spec: DynamicOracleSpec | None,
+    maximum_reference_deviation_m: float,
+    rejoin_observed: bool,
+    overtaken_actor_ids: frozenset[str],
+    ordered_detour_observed: bool,
+    protective_stop_epoch_count: int,
+    hazard_interval_stop_epoch_ids: tuple[tuple[int, ...], ...],
+    authorized_resume_events: tuple[tuple[int, float], ...],
+    stop_epoch_confirmed_at_s: dict[int, float],
+) -> tuple[str, ...]:
+    if oracle_spec is None:
+        return ()
+    failures: list[str] = []
+    controller_is_dwa = pipeline.controller_name == "dynamic_dwa"
+    controller_is_pp = pipeline.controller_name == "dynamic_pure_pursuit"
+    if not controller_is_dwa and not controller_is_pp:
+        return ("unsupported_controller_for_category_oracle",)
+    required_stops = oracle_spec.required_protective_stop_epochs
+    hazard_epochs = {
+        epoch
+        for interval_epochs in hazard_interval_stop_epoch_ids
+        for epoch in interval_epochs
+    }
+    hazard_intervals_covered = sum(bool(epochs) for epochs in hazard_interval_stop_epoch_ids)
+    resumed_stop_epochs = {epoch for epoch, _ in authorized_resume_events}
+
+    if expectation_category == "wait_and_resume":
+        # PP는 기준경로를 유지하므로 보호정지/재개를 요구한다. DWA는 hard-safety를
+        # 지키며 진행할 수 있어 정지를 강제하지 않는다.
+        if controller_is_pp and len(hazard_epochs) < required_stops:
+            failures.append("wait_and_resume_missing_protective_stop")
+        if (
+            controller_is_pp
+            and required_stops
+            and not hazard_epochs.intersection(resumed_stop_epochs)
+        ):
+            failures.append("wait_and_resume_missing_authorized_resume")
+    elif expectation_category == "local_detour_feasible":
+        if oracle_spec.feasible_witness is None:
+            failures.append("feasible_label_missing_independent_witness")
+        if controller_is_dwa:
+            if maximum_reference_deviation_m <= oracle_spec.departure_threshold_m:
+                failures.append("dwa_detour_departure_not_observed")
+            if not rejoin_observed:
+                failures.append("dwa_sustained_rejoin_not_observed")
+            expected_overtakes = frozenset(oracle_spec.same_direction_actor_ids)
+            if expected_overtakes and not expected_overtakes.issubset(
+                overtaken_actor_ids
+            ):
+                failures.append("dwa_same_direction_overtaking_not_observed")
+            if not ordered_detour_observed:
+                failures.append("dwa_detour_overtake_rejoin_sequence_invalid")
+        elif controller_is_pp:
+            if len(hazard_epochs) < required_stops:
+                failures.append("pp_feasible_case_did_not_wait")
+            if required_stops and not hazard_epochs.intersection(resumed_stop_epochs):
+                failures.append("pp_feasible_case_did_not_resume")
+    elif expectation_category == "local_detour_forbidden":
+        if overtaken_actor_ids:
+            failures.append("forbidden_overtaking_observed")
+        if len(hazard_epochs) < required_stops:
+            failures.append("forbidden_case_missing_protective_stop")
+        if required_stops and not hazard_epochs.intersection(resumed_stop_epochs):
+            failures.append("forbidden_case_missing_resume_after_clear")
+    elif expectation_category == "no_safe_solution":
+        if pipeline.completed:
+            failures.append("no_safe_solution_completed")
+        if any(
+            step.safety_decision.motion_state is DynamicMotionState.MOVING
+            and (
+                abs(step.safety_decision.command.linear) > 1e-12
+                or abs(step.safety_decision.command.angular) > 1e-12
+            )
+            for step in pipeline.steps
+        ):
+            failures.append("no_safe_solution_motion_observed")
+    elif expectation_category == "observation_invalid":
+        if protective_stop_epoch_count < max(1, required_stops):
+            failures.append("observation_invalid_missing_brake_and_hold")
+    elif expectation_category == "dynamic_change_restop":
+        if (
+            len(hazard_epochs) < required_stops
+            or hazard_intervals_covered < len(hazard_interval_stop_epoch_ids)
+        ):
+            failures.append("second_protective_stop_epoch_not_observed")
+        ordered_hazard_epochs = tuple(
+            min(epochs) if epochs else None
+            for epochs in hazard_interval_stop_epoch_ids
+        )
+        if any(
+            left is not None and right is not None and left >= right
+            for left, right in zip(
+                ordered_hazard_epochs,
+                ordered_hazard_epochs[1:],
+                strict=False,
+            )
+        ):
+            failures.append("hazard_stop_epochs_out_of_order")
+        intermediate_resume_missing = any(
+            current_epoch is None
+            or not any(
+                resumed_epoch == current_epoch
+                and stop_epoch_confirmed_at_s.get(current_epoch, float("inf"))
+                <= resume_time_s
+                < oracle_spec.hazard_intervals_s[index + 1][0]
+                for resumed_epoch, resume_time_s in authorized_resume_events
+            )
+            for index, current_epoch in enumerate(ordered_hazard_epochs[:-1])
+        )
+        if required_stops > 1 and intermediate_resume_missing:
+            failures.append("dynamic_change_missing_intermediate_resume")
+    else:
+        failures.append("unsupported_v6_expectation_category")
+    return tuple(failures)
 
 
 def _pipeline_step_is_finite(step: DynamicControllerPipelineStep) -> bool:
@@ -529,6 +932,13 @@ def _project_to_path(pose: Pose2D, path: tuple[Pose2D, ...]) -> tuple[float, flo
     return _project_point_to_path(pose.x, pose.y, path)
 
 
+def _project_to_path_with_heading(
+    pose: Pose2D,
+    path: tuple[Pose2D, ...],
+) -> tuple[float, float, float]:
+    return _project_point_to_path_with_heading(pose.x, pose.y, path)
+
+
 def _project_point_to_path(
     x: float,
     y: float,
@@ -556,6 +966,37 @@ def _project_point_to_path(
             best_arc = accumulated + fraction * length
         accumulated += length
     return best_arc, best_distance
+
+
+def _project_point_to_path_with_heading(
+    x: float,
+    y: float,
+    path: tuple[Pose2D, ...],
+) -> tuple[float, float, float]:
+    best_arc = 0.0
+    best_distance = float("inf")
+    best_heading = 0.0
+    accumulated = 0.0
+    for source, target in zip(path, path[1:], strict=False):
+        dx = target.x - source.x
+        dy = target.y - source.y
+        length_squared = dx * dx + dy * dy
+        if length_squared <= 1e-18:
+            continue
+        fraction = min(
+            1.0,
+            max(0.0, ((x - source.x) * dx + (y - source.y) * dy) / length_squared),
+        )
+        projection_x = source.x + fraction * dx
+        projection_y = source.y + fraction * dy
+        distance = hypot(x - projection_x, y - projection_y)
+        length = sqrt(length_squared)
+        if distance < best_distance:
+            best_distance = distance
+            best_arc = accumulated + fraction * length
+            best_heading = _normalize_angle(atan2(dy, dx))
+        accumulated += length
+    return best_arc, best_distance, best_heading
 
 
 def _acceleration_rms(values: tuple[float, ...]) -> float:
@@ -587,22 +1028,6 @@ def _rms(values: tuple[float, ...]) -> float:
     return sqrt(fmean(value * value for value in values)) if values else 0.0
 
 
-def _integrate(pose: Pose2D, command: Twist2D, dt_s: float) -> Pose2D:
-    if abs(command.angular) <= 1e-12:
-        return Pose2D(
-            pose.x + command.linear * cos(pose.yaw) * dt_s,
-            pose.y + command.linear * sin(pose.yaw) * dt_s,
-            pose.yaw,
-        )
-    next_yaw = pose.yaw + command.angular * dt_s
-    radius = command.linear / command.angular
-    return Pose2D(
-        pose.x + radius * (sin(next_yaw) - sin(pose.yaw)),
-        pose.y - radius * (cos(next_yaw) - cos(pose.yaw)),
-        _normalize_angle(next_yaw),
-    )
-
-
 def _integrate_simulation_tick(
     pose: Pose2D,
     command: Twist2D,
@@ -625,6 +1050,20 @@ def _poses_close(first: Pose2D, second: Pose2D) -> bool:
             (first.y, second.y),
             (_normalize_angle(first.yaw), _normalize_angle(second.yaw)),
         )
+    )
+
+
+def _twists_close(first: Twist2D, second: Twist2D) -> bool:
+    return (
+        abs(first.linear - second.linear) <= 1e-12
+        and abs(first.angular - second.angular) <= 1e-12
+    )
+
+
+def _robot_states_close(first: RobotState, second: RobotState) -> bool:
+    return _poses_close(first.pose, second.pose) and _twists_close(
+        first.twist,
+        second.twist,
     )
 
 

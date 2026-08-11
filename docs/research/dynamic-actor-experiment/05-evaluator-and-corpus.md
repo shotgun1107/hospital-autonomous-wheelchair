@@ -10,6 +10,34 @@
 - 선행 단계: 1~4단계 완료
 - 다음 단계 선행 구현: 없음
 
+### v6 공개 corpus·oracle 보정 — 2026-08-11
+
+legacy-v1 공개 36개와 그 exact hash는 그대로 둔 채 v6 공개 13개를 별도 generator로
+추가했다. v6는 같은 방향의 넓은·좁은 통로, offset 정면 접근, 대각선 횡단, 코너·교차로,
+90도 회전 세로 경로, 동시·시차 다중 Actor를 포함한다. 모든 값은 합성
+`simulation_only` calibration이며 병원 사람 행동 분포의 근거가 아니다.
+
+v6 evaluator 전용 metadata와 oracle은 controller 입력과 분리한다. source·map·Actor ID는
+평가 label을 드러내지 않는 불투명 ID를 사용하고, grid provenance는 label이 아니라
+`semantic_world_hash`에 결합한다. evaluator metadata를 바꿔도 같은 물리 world의
+controller input·관측 stream·grid가 바뀌지 않는 회귀시험을 둔다.
+
+기능 oracle은 다음을 추가로 확인한다.
+
+- reference에서 `>0.10 m` 이탈한 뒤 거리 `<=0.10 m`, heading error `<=10°`를
+  `0.5 s` 이상 유지한 rejoin
+- 같은 방향 Actor에 한정한 path 순서 반전과 종방향 footprint 중첩
+- 각 hazard interval에 귀속된 서로 다른 `stop_epoch`; 초기 source-invalid 정지를 두 번째
+  동적 위험 정지로 세지 않음
+- `LOCAL_DETOUR_FEASIBLE` label에 대한 controller 비종속 witness 존재
+- witness 시작 시각 `0`, 마지막 fresh 관측의 TTL `0.30 s`와 apply `0.05 s`를 합친
+  `0.35 s` tube 상한
+- pipeline step 시간·state 연속성, final state, 재출발 `stop_epoch` 동일성
+- Actor 원 궤적과 실제 rasterized occupied·forbidden cell 경계의 비중첩
+- 90° rigid pair의 관측 noise와 controller·gate·평가 결과 metamorphic 일치
+
+이 공개 corpus·oracle 구현만으로 DWA 기능 자격이나 제품 안전을 통과한 것은 아니다.
+
 ## 목표
 
 controller 입력과 독립된 200 Hz evaluator를 만들고, 기대 행동 범주·관측 fault·권한

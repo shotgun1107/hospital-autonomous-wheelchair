@@ -180,6 +180,50 @@ def test_inflate_occupancy_matches_small_grid_brute_force_oracle(radius_m: float
     assert not np.shares_memory(actual, occupancy)
 
 
+@pytest.mark.parametrize("shape", [(2, 9), (3, 11), (4, 20), (20, 3)])
+def test_forbidden_certification_small_non_square_grid_falls_back_exactly(
+    shape: tuple[int, int],
+) -> None:
+    height, width = shape
+    grid = GridMap(
+        np.zeros(shape, dtype=np.bool_),
+        resolution_m=0.02,
+    )
+    forbidden_cells = frozenset({(width // 2, height // 2)})
+    poses = (
+        Pose2D((width // 2 + 0.5) * 0.02, (height // 2 + 0.5) * 0.02),
+        Pose2D(0.01, 0.01),
+        Pose2D((width - 0.5) * 0.02, (height - 0.5) * 0.02, 0.7),
+    )
+    reference = CollisionChecker(
+        grid,
+        forbidden_cells=forbidden_cells,
+        use_optimized_geometry=False,
+    )
+    optimized = CollisionChecker(
+        grid,
+        forbidden_cells=forbidden_cells,
+        use_optimized_geometry=True,
+    )
+
+    reference_results = tuple(
+        (
+            reference.pose_enters_forbidden(pose),
+            reference.forbidden_clearance(pose),
+        )
+        for pose in poses
+    )
+    optimized_results = tuple(
+        (
+            optimized.pose_enters_forbidden(pose),
+            optimized.forbidden_clearance(pose),
+        )
+        for pose in poses
+    )
+
+    assert optimized_results == reference_results
+
+
 def test_map_factory_grid_astar_path_is_footprint_collision_free() -> None:
     world = generate_world(1, WorldFamily.CORRIDOR)
     episode = generate_episode(world, seed=101)

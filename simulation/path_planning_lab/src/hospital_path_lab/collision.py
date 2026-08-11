@@ -22,16 +22,44 @@ class CollisionChecker:
         profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
         *,
         forbidden_cells: frozenset[tuple[int, int]] = frozenset(),
+        use_optimized_geometry: bool = True,
     ) -> None:
         normalized = frozenset(forbidden_cells)
-        if any(not grid.in_bounds(cell) for cell in normalized):
-            raise ValueError("forbidden_cells must be inside the grid")
+        width = grid.width
+        height = grid.height
+        min_forbidden_x = width
+        max_forbidden_x = -1
+        min_forbidden_y = height
+        max_forbidden_y = -1
+        for x, y in normalized:
+            if x < 0 or x >= width or y < 0 or y >= height:
+                raise ValueError("forbidden_cells must be inside the grid")
+            if x < min_forbidden_x:
+                min_forbidden_x = x
+            if x > max_forbidden_x:
+                max_forbidden_x = x
+            if y < min_forbidden_y:
+                min_forbidden_y = y
+            if y > max_forbidden_y:
+                max_forbidden_y = y
+        forbidden_cell_bounds = (
+            None
+            if not normalized
+            else (
+                min_forbidden_x,
+                max_forbidden_x,
+                min_forbidden_y,
+                max_forbidden_y,
+            )
+        )
         self.grid = grid
         self.profile = profile
         self.forbidden_cells = normalized
+        self.use_optimized_geometry = use_optimized_geometry
         self._half_width = profile.collision_width_m / 2.0
         self._half_length = profile.collision_length_m / 2.0
         self._half_diagonal = hypot(self._half_width, self._half_length)
+        self._forbidden_cell_bounds = forbidden_cell_bounds
 
     @cached_property
     def _forbidden_occupancy(self) -> np.ndarray:
@@ -53,6 +81,45 @@ class CollisionChecker:
     @cached_property
     def _has_effective_occupancy(self) -> bool:
         return bool(np.any(self._effective_occupancy))
+
+    @cached_property
+    def _forbidden_world_bounds(self) -> tuple[float, float, float, float] | None:
+        if self._forbidden_cell_bounds is None:
+            return None
+        min_cell_x, max_cell_x, min_cell_y, max_cell_y = self._forbidden_cell_bounds
+        resolution_m = self.grid.resolution_m
+        return (
+            self.grid.origin_x_m + min_cell_x * resolution_m,
+            self.grid.origin_x_m + (max_cell_x + 1) * resolution_m,
+            self.grid.origin_y_m + min_cell_y * resolution_m,
+            self.grid.origin_y_m + (max_cell_y + 1) * resolution_m,
+        )
+
+    @cached_property
+    def _forbidden_overlap_certification_grid(self) -> GridMap:
+        """Conservative grid used only to prove non-entry into forbidden cells."""
+
+        radius_m = self._half_diagonal + 2.0**0.5 * self.grid.resolution_m
+        radius_cells = int(ceil(radius_m / self.grid.resolution_m))
+        if radius_cells > min(self.grid.height, self.grid.width):
+            # ``inflate_occupancy`` assumes each shifted source slice still
+            # overlaps the grid.  Very small non-square maps can violate that
+            # assumption.  A fully occupied certification grid proves nothing
+            # and therefore sends every non-bbox query to the historical exact
+            # forbidden-clearance path without weakening the result.
+            occupancy = np.ones_like(self.grid.occupancy)
+        else:
+            occupancy = inflate_occupancy(
+                self._forbidden_occupancy,
+                resolution_m=self.grid.resolution_m,
+                radius_m=radius_m,
+            )
+        return GridMap(
+            occupancy=occupancy,
+            resolution_m=self.grid.resolution_m,
+            origin_x_m=self.grid.origin_x_m,
+            origin_y_m=self.grid.origin_y_m,
+        )
 
     @cached_property
     def collision_grid(self) -> GridMap:
@@ -98,6 +165,54 @@ class CollisionChecker:
                 distance[y, x] = best
         return distance * self.grid.resolution_m
 
+    @cached_property
+    def _center_chebyshev_distance_field_m(self) -> np.ndarray:
+        """Nearest occupied-cell centre distance in the L-infinity metric.
+
+        The two-pass unit 3x3 chamfer transform is exact for the grid
+        Chebyshev metric.  Unlike the Euclidean chamfer field above it never
+        overestimates Euclidean distance, so it can certify a lower bound used
+        to skip exact geometry only when another hazard is already closer.
+        """
+
+        if not self._has_effective_occupancy:
+            distance = np.full(self.grid.occupancy.shape, np.inf, dtype=np.float64)
+            distance.setflags(write=False)
+            return distance
+
+        occupancy = self._effective_occupancy
+        height, width = occupancy.shape
+        unreachable = height + width + 1
+        distance_cells = np.where(occupancy, 0, unreachable).astype(np.int32)
+        column = np.arange(width, dtype=np.int32)
+        neighbor_row = np.empty(width, dtype=np.int32)
+
+        # Exact two-pass 3x3 chamfer transform with unit edge/diagonal cost.
+        # Horizontal recurrences use cumulative minima, so only the row axis
+        # remains in Python while producing the same chessboard distance as
+        # one-cell-at-a-time 3x3 dilation.
+        for y in range(height):
+            row = distance_cells[y]
+            if y:
+                previous = distance_cells[y - 1]
+                neighbor_row[:] = previous
+                neighbor_row[1:] = np.minimum(neighbor_row[1:], previous[:-1])
+                neighbor_row[:-1] = np.minimum(neighbor_row[:-1], previous[1:])
+                np.minimum(row, neighbor_row + 1, out=row)
+            row[:] = column + np.minimum.accumulate(row - column)
+        for y in range(height - 1, -1, -1):
+            row = distance_cells[y]
+            if y + 1 < height:
+                following = distance_cells[y + 1]
+                neighbor_row[:] = following
+                neighbor_row[1:] = np.minimum(neighbor_row[1:], following[:-1])
+                neighbor_row[:-1] = np.minimum(neighbor_row[:-1], following[1:])
+                np.minimum(row, neighbor_row + 1, out=row)
+            row[:] = -column + np.minimum.accumulate((row + column)[::-1])[::-1]
+        distance = distance_cells.astype(np.float64) * self.grid.resolution_m
+        distance.setflags(write=False)
+        return distance
+
     def conservative_path_is_collision_free(self, path: tuple[Pose2D, ...]) -> bool:
         grid = self.collision_grid
         return bool(path) and all(
@@ -116,6 +231,98 @@ class CollisionChecker:
             - self.grid.resolution_m / 2.0,
         )
         return min(self._boundary_clearance(pose), obstacle_clearance, limit_m)
+
+    def certified_clearance_lower_bound(
+        self,
+        pose: Pose2D,
+        *,
+        limit_m: float = 1.0,
+    ) -> float:
+        """Return a proof-safe lower bound for exact footprint clearance.
+
+        The nearest occupied-cell centre uses the L-infinity metric, then one
+        cell width covers both the continuous query offset and the occupied
+        cell AABB.  Subtracting the footprint half diagonal leaves a lower
+        bound on the exact oriented-rectangle clearance.  It is intentionally
+        conservative and is not a replacement for :meth:`clearance`.
+        """
+
+        if limit_m <= 0.0:
+            raise ValueError("limit_m must be positive")
+        return min(
+            self._boundary_clearance(pose),
+            self._certified_obstacle_clearance_lower_bound(pose),
+            limit_m,
+        )
+
+    def _certified_obstacle_clearance_lower_bound(self, pose: Pose2D) -> float:
+        resolution_m = self.grid.resolution_m
+        x = int((pose.x - self.grid.origin_x_m) // resolution_m)
+        y = int((pose.y - self.grid.origin_y_m) // resolution_m)
+        if not (0 <= x < self.grid.width and 0 <= y < self.grid.height):
+            return 0.0
+        return max(
+            0.0,
+            float(self._center_chebyshev_distance_field_m[y, x])
+            - resolution_m
+            - self._half_diagonal,
+        )
+
+    def certified_minimum_clearance_lower_bound(
+        self,
+        poses: tuple[Pose2D, ...],
+        *,
+        limit_m: float = 1.0,
+    ) -> float:
+        """Return the minimum batch bound without allocating per-pose output."""
+
+        if limit_m <= 0.0:
+            raise ValueError("limit_m must be positive")
+        if not poses:
+            return limit_m
+        field = self._center_chebyshev_distance_field_m
+        resolution_m = self.grid.resolution_m
+        origin_x_m = self.grid.origin_x_m
+        origin_y_m = self.grid.origin_y_m
+        width = self.grid.width
+        height = self.grid.height
+        max_x_m = origin_x_m + width * resolution_m
+        max_y_m = origin_y_m + height * resolution_m
+        half_length = self._half_length
+        half_width = self._half_width
+        half_diagonal = self._half_diagonal
+        minimum = limit_m
+        for pose in poses:
+            cell_x = int((pose.x - origin_x_m) // resolution_m)
+            cell_y = int((pose.y - origin_y_m) // resolution_m)
+            if not (0 <= cell_x < width and 0 <= cell_y < height):
+                return 0.0
+            cosine = abs(cos(pose.yaw))
+            sine = abs(sin(pose.yaw))
+            extent_x = cosine * half_length + sine * half_width
+            extent_y = sine * half_length + cosine * half_width
+            boundary = pose.x - extent_x - origin_x_m
+            candidate = max_x_m - pose.x - extent_x
+            if candidate < boundary:
+                boundary = candidate
+            candidate = pose.y - extent_y - origin_y_m
+            if candidate < boundary:
+                boundary = candidate
+            candidate = max_y_m - pose.y - extent_y
+            if candidate < boundary:
+                boundary = candidate
+            obstacle_lower_bound = (
+                float(field[cell_y, cell_x]) - resolution_m - half_diagonal
+            )
+            if obstacle_lower_bound < 0.0:
+                obstacle_lower_bound = 0.0
+            if boundary < minimum:
+                minimum = boundary
+            if obstacle_lower_bound < minimum:
+                minimum = obstacle_lower_bound
+            if minimum <= 0.0:
+                return minimum
+        return minimum
 
     def _inflated_grid(self, radius: float) -> GridMap:
         occupancy = inflate_occupancy(
@@ -145,7 +352,21 @@ class CollisionChecker:
     def pose_enters_forbidden(self, pose: Pose2D) -> bool:
         """차체 footprint가 금지 cell과 접촉하거나 겹치면 참을 반환한다."""
 
-        return bool(self.forbidden_cells) and self.forbidden_clearance(pose) <= 0.0
+        if not self.forbidden_cells:
+            return False
+        if self.use_optimized_geometry:
+            bounds = self._forbidden_world_bounds
+            if bounds is None:  # pragma: no cover - guarded above
+                return False
+            min_x, max_x, min_y, max_y = bounds
+            delta_x = max(min_x - pose.x, 0.0, pose.x - max_x)
+            delta_y = max(min_y - pose.y, 0.0, pose.y - max_y)
+            if hypot(delta_x, delta_y) > self._half_diagonal:
+                return False
+            grid = self._forbidden_overlap_certification_grid
+            if not grid.is_occupied(grid.world_to_cell(pose)):
+                return False
+        return self.forbidden_clearance(pose) <= 0.0
 
     def forbidden_clearance(self, pose: Pose2D, *, limit_m: float = 1.0) -> float:
         """회전 footprint와 가장 가까운 금지 cell의 표면 여유를 반환한다.
@@ -171,6 +392,15 @@ class CollisionChecker:
         boundary = self._boundary_clearance(pose)
         if boundary <= 0.0:
             return 0.0
+        if not self._has_effective_occupancy:
+            return min(boundary, limit_m)
+        exact_upper_bound = min(boundary, limit_m)
+        if (
+            self.use_optimized_geometry
+            and self._certified_obstacle_clearance_lower_bound(pose)
+            >= exact_upper_bound
+        ):
+            return exact_upper_bound
         obstacle_clearance = self._occupancy_clearance(
             pose, self._effective_occupancy, limit_m=limit_m
         )
@@ -209,11 +439,22 @@ class CollisionChecker:
         world_y = self.grid.origin_y_m + (
             occupied_y.astype(np.float64) + min_y + 0.5
         ) * self.grid.resolution_m
-        center_lower_bounds = (
-            np.hypot(world_x - pose.x, world_y - pose.y)
-            - self._half_diagonal
-            - cell_half_diagonal
-        )
+        if self.use_optimized_geometry:
+            delta_x = world_x - pose.x
+            delta_y = world_y - pose.y
+            cosine = cos(pose.yaw)
+            sine = sin(pose.yaw)
+            local_x = np.abs(cosine * delta_x + sine * delta_y)
+            local_y = np.abs(-sine * delta_x + cosine * delta_y)
+            outside_x = np.maximum(local_x - self._half_length, 0.0)
+            outside_y = np.maximum(local_y - self._half_width, 0.0)
+            center_lower_bounds = np.hypot(outside_x, outside_y) - cell_half_diagonal
+        else:
+            center_lower_bounds = (
+                np.hypot(world_x - pose.x, world_y - pose.y)
+                - self._half_diagonal
+                - cell_half_diagonal
+            )
         candidates = np.nonzero(center_lower_bounds < limit_m)[0]
         if not candidates.size:
             return limit_m
@@ -228,7 +469,18 @@ class CollisionChecker:
             cell = _axis_aligned_cell_polygon(
                 float(world_x[index]), float(world_y[index]), half_cell
             )
-            best = min(best, _convex_polygon_distance(footprint, cell))
+            distance = (
+                _oriented_footprint_cell_distance(
+                    pose,
+                    footprint,
+                    cell,
+                    half_length=self._half_length,
+                    half_width=self._half_width,
+                )
+                if self.use_optimized_geometry
+                else _convex_polygon_distance(footprint, cell)
+            )
+            best = min(best, distance)
             if best <= 0.0:
                 return 0.0
         return best
@@ -279,19 +531,110 @@ def _axis_aligned_cell_polygon(center_x: float, center_y: float, half: float) ->
 
 
 def _convex_polygon_distance(first: Polygon, second: Polygon) -> float:
-    if _convex_polygons_overlap(first, second):
+    first_segments = _segments(first)
+    second_segments = _segments(second)
+    if _convex_polygons_overlap(
+        first,
+        second,
+        first_segments=first_segments,
+        second_segments=second_segments,
+    ):
         return 0.0
-    return min(
-        _point_segment_distance(point, source, target)
-        for polygon, other in ((first, second), (second, first))
-        for point in polygon
-        for source, target in _segments(other)
+    # Keep the historical point/segment visitation order (and therefore the
+    # exact floating result) while avoiding eight identical segment-tuple
+    # constructions for every occupied cell candidate.
+    best = float("inf")
+    for point in first:
+        for source, target in second_segments:
+            best = min(best, _point_segment_distance(point, source, target))
+    for point in second:
+        for source, target in first_segments:
+            best = min(best, _point_segment_distance(point, source, target))
+    return best
+
+
+def _oriented_footprint_cell_distance(
+    pose: Pose2D,
+    footprint: Polygon,
+    cell: Polygon,
+    *,
+    half_length: float,
+    half_width: float,
+) -> float:
+    """Historical exact polygon distance with a rectangle-specific shortlist."""
+
+    footprint_segments = _segments(footprint)
+    cell_segments = _segments(cell)
+    if _convex_polygons_overlap(
+        footprint,
+        cell,
+        first_segments=footprint_segments,
+        second_segments=cell_segments,
+    ):
+        return 0.0
+
+    left = cell[0][0]
+    right = cell[1][0]
+    bottom = cell[0][1]
+    top = cell[2][1]
+    approximate: list[tuple[float, bool, int]] = []
+    for index, (x, y) in enumerate(footprint):
+        delta_x = max(left - x, 0.0, x - right)
+        delta_y = max(bottom - y, 0.0, y - top)
+        approximate.append((hypot(delta_x, delta_y), True, index))
+
+    cosine = cos(pose.yaw)
+    sine = sin(pose.yaw)
+    for index, (x, y) in enumerate(cell):
+        delta_x = x - pose.x
+        delta_y = y - pose.y
+        local_x = cosine * delta_x + sine * delta_y
+        local_y = -sine * delta_x + cosine * delta_y
+        approximate.append(
+            (
+                hypot(
+                    max(abs(local_x) - half_length, 0.0),
+                    max(abs(local_y) - half_width, 0.0),
+                ),
+                False,
+                index,
+            )
+        )
+
+    approximate_minimum = min(item[0] for item in approximate)
+    coordinate_scale = max(
+        1.0,
+        *(abs(value) for point in (*footprint, *cell) for value in point),
     )
+    selection_tolerance = 1e-12 * coordinate_scale
+    best = float("inf")
+    for distance, footprint_vertex, index in approximate:
+        if distance > approximate_minimum + selection_tolerance:
+            continue
+        if footprint_vertex:
+            point = footprint[index]
+            segments = cell_segments
+        else:
+            point = cell[index]
+            segments = footprint_segments
+        for source, target in segments:
+            best = min(best, _point_segment_distance(point, source, target))
+    return best
 
 
-def _convex_polygons_overlap(first: Polygon, second: Polygon) -> bool:
-    for polygon in (first, second):
-        for source, target in _segments(polygon):
+def _convex_polygons_overlap(
+    first: Polygon,
+    second: Polygon,
+    *,
+    first_segments: tuple[tuple[Point, Point], ...] | None = None,
+    second_segments: tuple[tuple[Point, Point], ...] | None = None,
+) -> bool:
+    segment_sets = (
+        first_segments if first_segments is not None else _segments(first),
+        second_segments if second_segments is not None else _segments(second),
+    )
+    for segments in segment_sets:
+        for source, target in segments:
             axis_x = -(target[1] - source[1])
             axis_y = target[0] - source[0]
             first_projection = tuple(x * axis_x + y * axis_y for x, y in first)
@@ -335,6 +678,8 @@ def oriented_footprint_circle_surface_distance(
     circle_center: Point,
     circle_radius_m: float,
     profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    use_optimized_geometry: bool = True,
+    inputs_validated: bool = False,
 ) -> float:
     """회전 직사각형 footprint와 원 사이의 signed surface distance.
 
@@ -342,42 +687,106 @@ def oriented_footprint_circle_surface_distance(
     ground truth 또는 prediction tube 원과 동일한 primitive를 공유하기 위한 API다.
     """
 
-    if circle_radius_m < 0.0:
-        raise ValueError("circle_radius_m must not be negative")
-    if not all(
-        np.isfinite(value)
-        for value in (
-            pose.x,
-            pose.y,
-            pose.yaw,
-            circle_center[0],
-            circle_center[1],
-            circle_radius_m,
-        )
-    ):
-        raise ValueError("footprint-circle geometry must be finite")
+    if not inputs_validated:
+        if circle_radius_m < 0.0:
+            raise ValueError("circle_radius_m must not be negative")
+        if not all(
+            np.isfinite(value)
+            for value in (
+                pose.x,
+                pose.y,
+                pose.yaw,
+                circle_center[0],
+                circle_center[1],
+                circle_radius_m,
+            )
+        ):
+            raise ValueError("footprint-circle geometry must be finite")
 
-    footprint = _footprint_polygon(
-        pose,
-        profile.collision_length_m / 2.0,
-        profile.collision_width_m / 2.0,
+    half_length = profile.collision_length_m / 2.0
+    half_width = profile.collision_width_m / 2.0
+    footprint = _footprint_polygon(pose, half_length, half_width)
+    if not use_optimized_geometry:
+        return _footprint_circle_surface_distance_reference(
+            footprint,
+            circle_center=circle_center,
+            circle_radius_m=circle_radius_m,
+        )
+
+    cosine = cos(pose.yaw)
+    sine = sin(pose.yaw)
+    delta_x = circle_center[0] - pose.x
+    delta_y = circle_center[1] - pose.y
+    local_x = cosine * delta_x + sine * delta_y
+    local_y = -sine * delta_x + cosine * delta_y
+    outside_x = abs(local_x) - half_length
+    outside_y = abs(local_y) - half_width
+    coordinate_scale = max(
+        1.0,
+        abs(pose.x),
+        abs(pose.y),
+        abs(circle_center[0]),
+        abs(circle_center[1]),
     )
-    if _point_inside_convex_polygon(circle_center, footprint):
+    ambiguity_tolerance = 1e-12 * coordinate_scale
+    if outside_x < -ambiguity_tolerance and outside_y < -ambiguity_tolerance:
         return -circle_radius_m
-    center_distance = min(
-        _point_segment_distance(circle_center, source, target)
-        for source, target in _segments(footprint)
-    )
+    if abs(outside_x) <= ambiguity_tolerance or abs(outside_y) <= ambiguity_tolerance:
+        return _footprint_circle_surface_distance_reference(
+            footprint,
+            circle_center=circle_center,
+            circle_radius_m=circle_radius_m,
+        )
+
+    candidate_segments: list[int] = []
+    if outside_x > 0.0:
+        candidate_segments.append(1 if local_x > 0.0 else 3)
+    if outside_y > 0.0:
+        candidate_segments.append(2 if local_y > 0.0 else 0)
+    if not candidate_segments:
+        return -circle_radius_m
+    center_distance = float("inf")
+    for index in candidate_segments:
+        distance = _point_segment_distance(
+            circle_center,
+            footprint[index],
+            footprint[(index + 1) % len(footprint)],
+        )
+        if distance < center_distance:
+            center_distance = distance
     return center_distance - circle_radius_m
 
 
+def _footprint_circle_surface_distance_reference(
+    footprint: Polygon,
+    *,
+    circle_center: Point,
+    circle_radius_m: float,
+) -> float:
+    if _point_inside_convex_polygon(circle_center, footprint):
+        return -circle_radius_m
+    return min(
+        _point_segment_distance(
+            circle_center,
+            footprint[index],
+            footprint[(index + 1) % len(footprint)],
+        )
+        for index in range(len(footprint))
+    ) - circle_radius_m
+
+
 def _point_inside_convex_polygon(point: Point, polygon: Polygon) -> bool:
-    signs: list[bool] = []
-    for source, target in _segments(polygon):
+    first_sign: bool | None = None
+    for index, source in enumerate(polygon):
+        target = polygon[(index + 1) % len(polygon)]
         cross = (target[0] - source[0]) * (point[1] - source[1]) - (
             target[1] - source[1]
         ) * (point[0] - source[0])
         if abs(cross) <= 1e-15:
             continue
-        signs.append(cross > 0.0)
-    return not signs or all(sign == signs[0] for sign in signs)
+        sign = cross > 0.0
+        if first_sign is None:
+            first_sign = sign
+        elif sign != first_sign:
+            return False
+    return True

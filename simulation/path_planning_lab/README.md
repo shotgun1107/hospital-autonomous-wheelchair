@@ -26,6 +26,23 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
+### v6 재자격 진행 상태 — 2026-08-11
+
+현재는 [v6 보정·재자격 명세](../../docs/research/dynamic-actor-experiment/v6-correction-and-requalification.md)에
+따라 공개 단계만 보정하고 있다. legacy 36개 corpus는 exact regression으로 유지하고,
+방향·코너·세로 경로·다중 Actor를 포함한 v6 공개 13개와 category oracle을 별도로
+추가했다. DWA 진단과 동작보존형 계산 재사용은 구현·회귀 검증했으며 98개 공개 대표
+snapshot의 최적화 전후 semantic digest가 일치한다. 다만 동결된 직렬 500회에서 DWA
+deadline miss가 `100/500`이므로 공개 50 ms 자격은 실패 상태다(PP `0/500`).
+
+기존 `dynamic-experiment` public+hidden 일괄 경로는 v6 재자격 동안 차단된다. 부분·축소
+실행은 진단용 report만 만들 수 있고 정식 receipt나 새 hidden을 만들 수 없다. 회사 PC의
+ignored `final-v4` output도 이 집 PC에는 없으므로 전체 artifact 회귀를 완료했다고 보지
+않는다.
+
+현재 pytest는 동적 `187 passed`와 기존 실험실 `148 passed`, 합계 `335 passed`다. 이는
+코드 회귀 증거이며 정식 expanded-public qualification receipt나 제품 안전 증거가 아니다.
+
 ```text
 seed 기반 지도 생성 → graph/grid·step 사건 검증 → 역할별 알고리즘 실행
 → 독립 oracle·안전 검증 → hidden 실패 보존 → 다음 회차 regression 후보
@@ -138,23 +155,23 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\hospital-path-lab.exe list-algorithms
 ```
 
-동적 Actor full 비교실험은 hidden seed의 commitment를 먼저 계산한 뒤 새 output에서
-실행한다. 이미 소비된 commitment와 기존 manifest가 있는 output은 거부한다.
+v6에서는 먼저 public-only 재자격만 실행한다. 매번 존재하지 않는 새 output 경로를
+사용하며, 부분·축소 실행은 진단 report만 만들고 정식 receipt를 만들지 않는다.
 
 ```powershell
-$hiddenSeed = 81260811
-$commitment = .\.venv\Scripts\python.exe -c "from hospital_path_lab.dynamic_corpus import hidden_seed_commitment; print(hidden_seed_commitment(81260811))"
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
-$outputDir = ".\simulation\path_planning_lab\outputs\dynamic-experiment-$runId"
-.\.venv\Scripts\hospital-path-lab.exe dynamic-experiment --base-seed 20260811 --hidden-seed $hiddenSeed --hidden-commitment $commitment --simulation-workers 6 --output-dir $outputDir
+$outputDir = ".\simulation\path_planning_lab\outputs\dynamic-public-v6-$runId"
+.\.venv\Scripts\hospital-path-lab.exe dynamic-public-qualification --base-seed 20260811 --simulation-workers 6 --output-dir $outputDir
 ```
 
-출력은 `experiment_manifest.json`, `hidden_consumption_receipt.json`, public 사전자격,
-qualification, paired 결과·통계·Pareto·승격 판정·요약, hidden PNG와 실패 회귀 후보를
-포함한다. DWA 조건 미달은 명령 실패가 아니라 `promotion_decision.json`의 연구 판정이며,
-hard-safety 실패만 프로세스 실패로 반환한다.
-worker 내부 경과시간은 병렬 contention이 섞인 `worker_elapsed_ns_nonqualification`이고,
-성능 판정에는 별도 `qualification_results.json`의 직렬 측정값만 사용한다.
+출력은 public report·gate와 paired 결과, contract·hard-safety·category 기능·직렬 50 ms
+qualification 증거를 포함한다. 전체 canonical 범위와 동결 횟수를 모두 실행하고 모든
+gate가 통과한 경우에만 `public_qualification_receipt.json`이 생긴다. 현재 CLI에는 v6
+hidden 생성·실행 명령이 없다. `final-v4`의 legacy hidden 명령과 산출물 설명은 과거
+회귀 이력이며 새 최종평가 절차가 아니다.
+
+worker 내부 경과시간은 병렬 contention이 섞인 nonqualification 값이고, 50 ms 판정에는
+worker pool 종료 뒤 부모 프로세스의 직렬 qualification만 사용한다.
 
 기본 20개 corpus 직렬 평가. 이전 산출물을 덮지 않도록 실행별 output 디렉터리를
 권장한다.

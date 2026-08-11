@@ -10,6 +10,27 @@
 - 선행 단계: 1~3단계 완료
 - 다음 단계 선행 구현: 없음
 
+### v6 보정 메모 — 2026-08-11
+
+v5 완료 이력과 별개로 현재 Python DWA 구현의 실패 원인과 실행시간을 다시 검증한다.
+후보 수 `217`, 후보당 `41` pose, 2초 horizon, 비용·tie-break, reverse 금지와 외부
+shared safety gate 권한은 바꾸지 않는다.
+
+현재 v6 변경 범위는 후보 탈락 phase/cause 집계, 선택·미선택·미평가 후보의 구분,
+controller semantic digest, 동일 step의 Actor tube·immutable grid 기하 재사용이다. 최적화
+전후 command·trajectory·상태·사건열이 같아야 하며 시간값만 비교에서 제외한다. 내부
+exact safety API가 apply·rollout·terminal 최초 실패를 구분해 주지 않는 경우 이를
+`EXACT_SHARED_GATE`로 합쳐 기록하고, 세부 phase를 구현한 것처럼 주장하지 않는다.
+
+이 보정이 공개 기능·직렬 50 ms 자격을 통과하기 전에는 DWA를 승격하지 않는다.
+
+최종 동작보존 회귀에서 실제 corner는 reference `38.998 s` 대비 optimized `0.075 s`,
+multisegment는 `15.474 s` 대비 `0.034 s`였고 controller·진단 digest가 일치했다. 그러나
+최종 5-case×100 직렬 측정은 DWA miss `100/500`, p50 `27.506 ms`, p95 `58.033 ms`,
+최대 `75.957 ms`였으므로 50 ms 자격은
+실패 상태로 동결한다. 후보 수·horizon·비용·tie-break·외부 gate는 이 결과 때문에
+완화하지 않았다.
+
 ## 목표
 
 같은 reference path와 `ControllerSnapshot`을 PP와 DWA에 제공하고, 두 결과를 같은
