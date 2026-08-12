@@ -36,6 +36,8 @@ def _seconds_to_ns(seconds: float) -> int:
 
 class DynamicObservationProfileName(StrEnum):
     NORMAL = "normal"
+    FUNCTIONAL_NO_DROPOUT = "functional_no_dropout"
+    FUNCTIONAL_IDEAL = "functional_ideal"
     STRESS = "stress"
     BOUNDARY_300 = "boundary_300"
     BOUNDARY_350 = "boundary_350"
@@ -81,6 +83,22 @@ NORMAL_OBSERVATION_PROFILE = DynamicObservationProfile(
     position_sigma_m=0.03,
     velocity_sigma_mps=0.05,
     dropout_probability=0.05,
+)
+FUNCTIONAL_NO_DROPOUT_OBSERVATION_PROFILE = DynamicObservationProfile(
+    name=DynamicObservationProfileName.FUNCTIONAL_NO_DROPOUT,
+    latency_s=NORMAL_OBSERVATION_PROFILE.latency_s,
+    ttl_s=NORMAL_OBSERVATION_PROFILE.ttl_s,
+    position_sigma_m=NORMAL_OBSERVATION_PROFILE.position_sigma_m,
+    velocity_sigma_mps=NORMAL_OBSERVATION_PROFILE.velocity_sigma_mps,
+    dropout_probability=0.0,
+)
+FUNCTIONAL_IDEAL_OBSERVATION_PROFILE = DynamicObservationProfile(
+    name=DynamicObservationProfileName.FUNCTIONAL_IDEAL,
+    latency_s=NORMAL_OBSERVATION_PROFILE.latency_s,
+    ttl_s=NORMAL_OBSERVATION_PROFILE.ttl_s,
+    position_sigma_m=0.0,
+    velocity_sigma_mps=0.0,
+    dropout_probability=0.0,
 )
 STRESS_OBSERVATION_PROFILE = DynamicObservationProfile(
     name=DynamicObservationProfileName.STRESS,

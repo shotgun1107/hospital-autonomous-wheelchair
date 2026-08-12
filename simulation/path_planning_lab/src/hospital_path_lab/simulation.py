@@ -275,6 +275,8 @@ def simulate_dynamic_controller_pipeline(
     ],
     profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
     max_ticks: int = 600,
+    start_tick_id: int = 0,
+    gate: DynamicSafetyGate | None = None,
     simulated_computation_time_s: float = 0.001,
     stop_when_holding: bool = False,
     goal_tolerance_m: float = 0.05,
@@ -283,12 +285,18 @@ def simulate_dynamic_controller_pipeline(
 
     if max_ticks <= 0 or not reference_path:
         raise ValueError("dynamic pipeline requires positive ticks and a reference path")
+    if (
+        not isinstance(start_tick_id, int)
+        or isinstance(start_tick_id, bool)
+        or not 0 <= start_tick_id < max_ticks
+    ):
+        raise ValueError("dynamic pipeline start tick must be inside the run range")
     if not profile.simulation_only:
         raise ValueError("dynamic pipeline requires a simulation-only vehicle profile")
     if not 0.0 <= simulated_computation_time_s <= 0.050:
         raise ValueError("deterministic computation time must be inside the 50 ms deadline")
 
-    gate = DynamicSafetyGate(profile=profile)
+    gate = gate or DynamicSafetyGate(profile=profile)
     state = initial_state
     steps: list[DynamicControllerPipelineStep] = []
     static_collision_count = 0
@@ -296,7 +304,7 @@ def simulate_dynamic_controller_pipeline(
     no_safe_candidate_count = 0
     expected_hold_reached = False
 
-    for tick_id in range(max_ticks):
+    for tick_id in range(start_tick_id, max_ticks):
         simulation_time_s = tick_id * profile.control_period_s
         context = context_factory(tick_id, simulation_time_s, state, gate)
         if context.tick_id != tick_id or not isfinite(context.simulation_time_s):

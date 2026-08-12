@@ -32,7 +32,10 @@ from hospital_path_lab.dynamic_directional_prediction import (
     DirectionalPredictionStatus,
 )
 from hospital_path_lab.dynamic_evaluation import evaluate_dynamic_pipeline
-from hospital_path_lab.dynamic_observation import NORMAL_OBSERVATION_PROFILE
+from hospital_path_lab.dynamic_observation import (
+    FUNCTIONAL_NO_DROPOUT_OBSERVATION_PROFILE,
+    NORMAL_OBSERVATION_PROFILE,
+)
 from hospital_path_lab.dynamic_safety import DynamicSafetyGate
 from hospital_path_lab.local_algorithms.dwb_reference import (
     SourceDerivedDynamicDwbController,
@@ -108,19 +111,19 @@ def test_first_ready_tick_has_a_legal_source_derived_dwb_candidate() -> None:
     assert len(result.predicted_trajectory) == 41
 
 
-def _manual_same_direction_wide_r00_completes_ordered_detour_and_rejoin() -> None:
+def _manual_dropout_free_same_direction_wide_r00_completes_ordered_detour_and_rejoin(
+) -> None:
     """Manual long-run continuation; it is not part of the regular test suite.
 
-    The company-PC run was intentionally stopped before completion on
-    2026-08-12.  Keep this harness for the home-PC continuation, but do not let
-    an unfinished 900-tick behavioral qualification masquerade as a regression
-    test or make every normal pytest invocation take hours in the Python lane.
+    This functional-isolation lane keeps Normal latency and noise but removes
+    random frame dropout.  The frozen Normal profile and its safety regression
+    remain unchanged.  Keep this hours-long harness outside regular pytest.
     """
 
     episode = _episode()
     factory = DirectionalPublicEpisodeContextFactory(
         episode,
-        NORMAL_OBSERVATION_PROFILE,
+        FUNCTIONAL_NO_DROPOUT_OBSERVATION_PROFILE,
     )
     pipeline = simulate_dynamic_controller_pipeline(
         SourceDerivedDynamicDwbController(),

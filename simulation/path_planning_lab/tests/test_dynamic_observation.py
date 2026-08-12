@@ -15,6 +15,8 @@ from hospital_path_lab.dynamic_contracts import (
 from hospital_path_lab.dynamic_observation import (
     BOUNDARY_300_OBSERVATION_PROFILE,
     BOUNDARY_350_OBSERVATION_PROFILE,
+    FUNCTIONAL_IDEAL_OBSERVATION_PROFILE,
+    FUNCTIONAL_NO_DROPOUT_OBSERVATION_PROFILE,
     NORMAL_OBSERVATION_PROFILE,
     STRESS_OBSERVATION_PROFILE,
     DynamicObservationAvailability,
@@ -82,6 +84,63 @@ def test_frozen_profiles_match_v5_values() -> None:
         assert profile.position_sigma_m == 0.0
         assert profile.velocity_sigma_mps == 0.0
         assert profile.dropout_probability == 0.0
+
+
+def test_functional_no_dropout_profile_changes_only_normal_frame_availability() -> None:
+    functional = FUNCTIONAL_NO_DROPOUT_OBSERVATION_PROFILE
+    normal = NORMAL_OBSERVATION_PROFILE
+    assert (
+        functional.observation_period_s,
+        functional.latency_s,
+        functional.ttl_s,
+        functional.position_sigma_m,
+        functional.velocity_sigma_mps,
+    ) == (
+        normal.observation_period_s,
+        normal.latency_s,
+        normal.ttl_s,
+        normal.position_sigma_m,
+        normal.velocity_sigma_mps,
+    )
+    assert normal.dropout_probability == 0.05
+    assert functional.dropout_probability == 0.0
+
+    trace, source = _trace_and_source(73)
+    normal_slots = generate_dynamic_observation_slots(
+        trace.ground_truth_frames,
+        source=source,
+        profile=normal,
+    )
+    functional_slots = generate_dynamic_observation_slots(
+        trace.ground_truth_frames,
+        source=source,
+        profile=functional,
+    )
+
+    assert any(slot.frame is None for slot in normal_slots)
+    assert all(slot.frame is not None for slot in functional_slots)
+    for normal_slot, functional_slot in zip(normal_slots, functional_slots, strict=True):
+        if normal_slot.frame is not None:
+            assert normal_slot.frame == functional_slot.frame
+
+
+def test_functional_ideal_profile_is_explicitly_separate_from_normal_safety() -> None:
+    ideal = FUNCTIONAL_IDEAL_OBSERVATION_PROFILE
+    normal = NORMAL_OBSERVATION_PROFILE
+
+    assert ideal.name is not normal.name
+    assert (ideal.observation_period_s, ideal.latency_s, ideal.ttl_s) == (
+        normal.observation_period_s,
+        normal.latency_s,
+        normal.ttl_s,
+    )
+    assert (ideal.position_sigma_m, ideal.velocity_sigma_mps) == (0.0, 0.0)
+    assert ideal.dropout_probability == 0.0
+    assert (
+        normal.position_sigma_m,
+        normal.velocity_sigma_mps,
+        normal.dropout_probability,
+    ) == (0.03, 0.05, 0.05)
 
 
 def test_twenty_hz_truth_is_sampled_at_exact_ten_hz_with_frozen_latency() -> None:
