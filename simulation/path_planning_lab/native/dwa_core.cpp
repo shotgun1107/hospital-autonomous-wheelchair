@@ -270,6 +270,21 @@ double occupancy_clearance(
     return best;
   }
   const double half_diagonal = std::hypot(input.half_length_m, input.half_width_m);
+  const auto [cell_x, cell_y] = cell_for(input, pose);
+  if (cell_x >= 0 && cell_y >= 0 && cell_x < input.width && cell_y < input.height) {
+    const double certified_lower_bound = std::max(
+        0.0,
+        input.combined_chebyshev_distance_m[
+            static_cast<std::size_t>(cell_y * input.width + cell_x)] -
+            input.resolution_m - half_diagonal);
+    // The combined field contains every physical and forbidden cell.  Its
+    // lower bound is therefore safe for each subset queried here.  The exact
+    // polygon scan remains mandatory whenever the proof cannot reach the
+    // current upper bound.
+    if (certified_lower_bound >= best) {
+      return best;
+    }
+  }
   const double cell_half_diagonal = input.resolution_m / std::sqrt(2.0);
   const double radius = half_diagonal + kClearanceLimit + cell_half_diagonal;
   const std::int32_t min_x = std::max(

@@ -2,7 +2,7 @@
 
 ## 1. 상태와 목적
 
-- 상태: **v6 보정 구현·회귀 완료, 공개 재자격은 50 ms 미달로 보류**
+- 상태: **v6 보정·C++ timing 재자격 완료, expanded public 기능 자격은 미실행**
 - 기준 소스: `main@fe383b010164e0fc35c932460a6c3200f80d9fd7`
 - 기준 tree: `5fb734678b437cc773343058484abb55b472fa98`
 - Stage 3~6 구현 기준 commit: `f89713c72c130c89b6d095a77ef90540aa5768f5`
@@ -41,6 +41,21 @@
 (`p50 27.506 ms`, `p95 58.033 ms`, 최대 `75.957 ms`)였다. 따라서 expanded public의
 정식 full qualification과 receipt 봉인은 수행하지 않았고, v6 기능 자격·승격·제품
 알고리즘 결론은 없으며 새 hidden도 생성하지 않는다.
+
+### 1.2 2026-08-12 C++ timing 재자격 추가
+
+위 `100/500`은 기존 Python+NumPy 경로의 역사적 결과다. 후보 `217`개, 후보당 `41`
+pose, terminal stopping, 비용·tie-break와 외부 shared safety gate를 유지한 선택적 C++
+반복 계산 코어를 구현했다. 첫 공식 5-case×100 실행은 코너 사례에서 miss `1/500`으로
+실패했고 그 결과를 보존했다. 정적 combined distance field가 exact scan의 현재 upper
+bound보다 충분히 멀다는 것을 증명할 때만 cell polygon scan을 생략하는 보수적 최적화 후,
+공개 대표 98 snapshot의 controller·diagnostic digest 불일치 `0/98`과 영향권 시험
+`212 passed`를 확인했다.
+
+같은 snapshot set과 warm-up `30`회·측정 `100`회 조건의 재실행은 PP·C++ DWA 모두
+miss `0/500`이었다. C++ DWA는 p50 `3.770 ms`, p95 `15.459 ms`, p99 `16.714 ms`,
+최대 `35.576 ms`였다. 이로써 timing 하위 gate만 통과했다. expanded public 전체 기능
+자격, receipt와 새 hidden은 여전히 미실행이며 DWA 승격·제품 알고리즘 결론도 없다.
 
 ## 2. v5와 `final-v4`의 해석
 

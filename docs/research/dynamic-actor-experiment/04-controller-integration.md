@@ -26,10 +26,12 @@ exact safety API가 apply·rollout·terminal 최초 실패를 구분해 주지 �
 
 최종 동작보존 회귀에서 실제 corner는 reference `38.998 s` 대비 optimized `0.075 s`,
 multisegment는 `15.474 s` 대비 `0.034 s`였고 controller·진단 digest가 일치했다. 그러나
-최종 5-case×100 직렬 측정은 DWA miss `100/500`, p50 `27.506 ms`, p95 `58.033 ms`,
-최대 `75.957 ms`였으므로 50 ms 자격은
-실패 상태로 동결한다. 후보 수·horizon·비용·tie-break·외부 gate는 이 결과 때문에
-완화하지 않았다.
+기존 Python+NumPy 경로의 5-case×100 직렬 측정은 DWA miss `100/500`, p50
+`27.506 ms`, p95 `58.033 ms`, 최대 `75.957 ms`로 실패했다. 후보 수·horizon·비용·
+tie-break·외부 gate를 완화하지 않고 선택적 C++ 반복 계산 코어를 추가한 뒤, 2026-08-12
+동일 timing 재자격은 PP·C++ DWA 모두 miss `0/500`이었다. C++ DWA는 p50 `3.770 ms`,
+p95 `15.459 ms`, 최대 `35.576 ms`였다. 이 결과는 controller timing 하위 자격이며
+expanded public 기능 자격이나 DWA 승격을 뜻하지 않는다.
 
 ## 목표
 

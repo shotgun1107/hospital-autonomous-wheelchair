@@ -32,8 +32,11 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 따라 공개 단계만 보정하고 있다. legacy 36개 corpus는 exact regression으로 유지하고,
 방향·코너·세로 경로·다중 Actor를 포함한 v6 공개 13개와 category oracle을 별도로
 추가했다. DWA 진단과 동작보존형 계산 재사용은 구현·회귀 검증했으며 98개 공개 대표
-snapshot의 최적화 전후 semantic digest가 일치한다. 다만 동결된 직렬 500회에서 DWA
-deadline miss가 `100/500`이므로 공개 50 ms 자격은 실패 상태다(PP `0/500`).
+snapshot의 최적화 전후 semantic digest가 일치한다. 기존 Python+NumPy 경로는 동결된
+직렬 500회에서 DWA deadline miss `100/500`으로 실패했다. 2026-08-12 선택적 C++ 코어와
+보수적 정적 geometry lower-bound 최적화를 적용한 독립 timing 재자격에서는 PP와 C++ DWA가
+각각 `0/500` miss였고, C++ DWA는 p50 `3.770 ms`, p95 `15.459 ms`, 최대 `35.576 ms`였다.
+이는 timing 하위 자격 통과이며 expanded-public 기능 자격·receipt·새 hidden은 아직 없다.
 
 기존 `dynamic-experiment` public+hidden 일괄 경로는 v6 재자격 동안 차단된다. 부분·축소
 실행은 진단용 report만 만들 수 있고 정식 receipt나 새 hidden을 만들 수 없다. 회사 PC의
@@ -274,4 +277,5 @@ JSON·PNG·Markdown 결과는 `outputs/`에 저장되고 기본적으로 Git에�
 경로의 강제 비활성화는 `HOSPITAL_PATH_LAB_DISABLE_CPP_DWA=1`을 사용한다. 상세 계약과
 현재 검증 범위는
 [v6 C++ DWA·충돌 코어 구현 명세](../../docs/research/dynamic-actor-experiment/v6-cpp-dwa-core.md)를
-따른다. 짧은 진단 결과는 expanded public qualification이나 제품 채택 근거가 아니다.
+따른다. 공식 5-case×100 timing은 `0/500` miss로 통과했지만 expanded public qualification,
+receipt, hidden 또는 제품 채택 근거가 아니다.

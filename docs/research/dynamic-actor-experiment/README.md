@@ -48,9 +48,12 @@
   전달하지 않는다. v6 source·map·Actor 식별자는 semantic world에서 분리한 불투명 ID다.
 - category oracle은 지속 rejoin, 같은 방향 추월, 위험 구간별 서로 다른 보호정지
   epoch를 검사한다.
-- DWA에는 후보 탈락 진단과 동작 보존형 계산 재사용을 추가했다. 98개 공개 대표
-  snapshot의 최적화 전후 semantic digest는 일치했지만, 직렬 500회에서 DWA가
-  `100`회 50 ms를 초과해 자격을 통과하지 못했다(PP `0/500`).
+- DWA에는 후보 탈락 진단과 동작 보존형 계산 재사용을 추가했다. 기존 Python+NumPy
+  경로는 직렬 500회에서 `100`회 50 ms를 초과했다(PP `0/500`). 이후 동결 계약을
+  유지한 선택적 C++ 코어를 구현했고, 공개 대표 98 snapshot의 controller·diagnostic
+  digest 불일치 `0/98`을 확인했다. 2026-08-12 독립 timing 재자격은 PP·C++ DWA 모두
+  miss `0/500`이었다. 이는 timing 하위 자격이며 expanded public 기능시험·receipt는
+  아직 수행하지 않았다.
 - v5의 public+hidden 일괄 실행 진입점은 v6 재자격이 끝날 때까지 차단한다. 축소·부분
   공개 실행은 정식 qualification receipt를 만들 수 없으며 새 hidden은 생성하지 않는다.
 - 회사 PC의 `final-v4`는 현재 실패 구현의 regression 자료다. 집 PC에는 해당 ignored

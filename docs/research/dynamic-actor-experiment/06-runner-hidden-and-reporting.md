@@ -42,9 +42,10 @@ public+hidden 일괄 진입점을 fail-closed로 차단하고 public-only 자격
 v6 public-only 실행이 통과하고 별도 승인된 hidden 단계가 생기기 전까지 이 문서 아래의
 legacy hidden 명령은 실행 절차가 아니라 과거 계약·회귀 설명으로만 읽는다.
 
-현재 standalone 5-case×100 직렬 측정은 PP miss `0/500`, DWA miss `100/500`이므로
-public gate의 50 ms 조건을 만족하지 않는다. 정식 expanded-public 실행·receipt 봉인과
-새 hidden 생성은 수행하지 않았다.
+기존 Python+NumPy standalone 5-case×100은 PP miss `0/500`, DWA miss `100/500`으로
+50 ms 조건을 만족하지 못했다. 2026-08-12 선택적 C++ 코어의 동일 직렬 timing 재자격은
+PP·C++ DWA 모두 miss `0/500`으로 timing 하위 gate를 통과했다. 다만 정식
+expanded-public 실행·receipt 봉인과 새 hidden 생성은 수행하지 않았다.
 
 ## 2026-08-11 full 실행 결과
 
