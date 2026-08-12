@@ -35,6 +35,11 @@ node_modules/
 dist/
 build/
 coverage/
+*.dll
+*.dylib
+*.lib
+*.pdb
+*.so
 
 # Path-planning research outputs
 /simulation/path_planning_lab/outputs/

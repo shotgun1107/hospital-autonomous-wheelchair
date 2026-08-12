@@ -23,6 +23,16 @@ from hospital_path_lab.contracts import (
     TrajectoryPoint,
     Twist2D,
 )
+from hospital_path_lab.cpp_dwa_core import (
+    CppDwaCandidate,
+    CppDwaStaticWorkspace,
+)
+from hospital_path_lab.cpp_dwa_core import (
+    evaluate_candidates as _evaluate_cpp_candidates,
+)
+from hospital_path_lab.cpp_dwa_core import (
+    prepare_static_workspace as _prepare_cpp_static_workspace,
+)
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_COMMAND_APPLY_LATENCY_S,
     ControllerCommandResult,
@@ -497,6 +507,18 @@ class DynamicDwaWorkspaceMetrics:
     coarse_candidates: int = 0
     certified_actor_dominated_candidates: int = 0
     reference_geometry_candidates: int = 0
+    native_core_used: bool = False
+
+
+@dataclass(slots=True)
+class _DynamicCandidateBatch:
+    candidates: tuple[_DynamicCandidate | CppDwaCandidate, ...]
+    counts: Counter[tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]]
+    details: list[DynamicDwaCandidateDiagnostic]
+    nonmoving_samples: int
+    coarse_candidates: int
+    certified_actor_dominated_candidates: int
+    native_core_used: bool
 
 
 class _StepActorTubeSampler:
@@ -566,14 +588,21 @@ class DynamicDwaController:
         *,
         use_step_local_workspace: bool = True,
         verify_all_ranked_candidates: bool = False,
+        use_cpp_core: bool = True,
     ) -> None:
         if not vehicle.simulation_only:
             raise ValueError("dynamic DWA requires a simulation-only vehicle profile")
         self.vehicle = vehicle
         self.use_step_local_workspace = use_step_local_workspace
         self.verify_all_ranked_candidates = verify_all_ranked_candidates
+        self.use_cpp_core = use_cpp_core
         self.last_diagnostics: DynamicDwaDiagnosticSummary | None = None
         self.last_workspace_metrics = DynamicDwaWorkspaceMetrics()
+        self._cpp_static_workspace_key: tuple[str, int, str] | None = None
+        self._cpp_static_workspace: CppDwaStaticWorkspace | None = None
+        self._collision_checker_key: tuple[str, int, str] | None = None
+        self._physical_checker: CollisionChecker | None = None
+        self._combined_checker: CollisionChecker | None = None
 
     def step(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
         started_at = perf_counter_ns()
@@ -658,21 +687,7 @@ class DynamicDwaController:
             snapshot.robot_state.twist,
             DYNAMIC_COMMAND_APPLY_LATENCY_S,
         )
-        physical_checker = CollisionChecker(
-            snapshot.static_grid_snapshot.grid,
-            self.vehicle,
-            use_optimized_geometry=self.use_step_local_workspace,
-        )
-        combined_checker = (
-            CollisionChecker(
-                snapshot.static_grid_snapshot.grid,
-                self.vehicle,
-                forbidden_cells=snapshot.static_grid_snapshot.forbidden_cells,
-                use_optimized_geometry=self.use_step_local_workspace,
-            )
-            if snapshot.static_grid_snapshot.forbidden_cells
-            else physical_checker
-        )
+        physical_checker, combined_checker = self._collision_checkers_for(snapshot)
         if snapshot.actor_tubes is None:  # pragma: no cover - _invalid_reason owns this
             raise RuntimeError("validated Actor prediction unexpectedly disappeared")
         actor_sampler = _StepActorTubeSampler(
@@ -683,76 +698,55 @@ class DynamicDwaController:
             snapshot.reference_path
         )
         start_goal_distance = _distance(snapshot.robot_state.pose, snapshot.goal_pose)
-        counts: Counter[tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]] = Counter()
-        details: list[DynamicDwaCandidateDiagnostic] = []
-        nonmoving_samples = 0
-        candidates: list[_DynamicCandidate] = []
-        coarse_candidates = 0
-        certified_actor_dominated_candidates = 0
-        sample_index = -1
-        for linear in linear_values:
-            for angular in angular_values:
-                sample_index += 1
-                if linear <= 1e-12:
-                    nonmoving_samples += 1
-                    continue
-                command = Twist2D(linear=linear, angular=angular)
-                trajectory = _dynamic_constant_rollout(
-                    apply_end,
-                    command,
-                    horizon_s=self.horizon_s,
-                    step_s=self.integration_dt_s,
-                )
-                coarse = _coarse_dynamic_candidate_clearance(
-                    trajectory,
-                    snapshot=snapshot,
+        batch = None
+        if self.use_cpp_core and self.use_step_local_workspace:
+            metadata = snapshot.static_grid_snapshot.metadata
+            workspace_key = (
+                metadata.map_id,
+                metadata.map_revision,
+                metadata.content_hash,
+            )
+            if workspace_key != self._cpp_static_workspace_key:
+                self._cpp_static_workspace = _prepare_cpp_static_workspace(
                     physical_checker=physical_checker,
                     combined_checker=combined_checker,
-                    vehicle=self.vehicle,
-                    actor_sampler=actor_sampler,
-                    use_certified_actor_dominance=self.use_step_local_workspace,
-                    preserve_rejection_detail=(
-                        len(details) < _DWA_DIAGNOSTIC_DETAIL_LIMIT
-                    ),
                 )
-                coarse_candidates += 1
-                certified_actor_dominated_candidates += int(
-                    coarse.used_certified_actor_dominance
-                )
-                if not coarse.accepted:
-                    if coarse.failure_phase is None or coarse.failure_cause is None:
-                        raise RuntimeError("coarse rejection must have a structured reason")
-                    counts[(coarse.failure_phase, coarse.failure_cause)] += 1
-                    _append_diagnostic_detail(
-                        details,
-                        DynamicDwaCandidateDiagnostic(
-                            sample_index=sample_index,
-                            command=command,
-                            phase=coarse.failure_phase,
-                            cause=coarse.failure_cause,
-                            failure_time_s=coarse.failure_time_s,
-                            minimum_static_clearance_m=(coarse.minimum_static_clearance_m),
-                            minimum_actor_clearance_m=coarse.minimum_actor_clearance_m,
-                            underlying_terminal_cause=(coarse.underlying_terminal_cause),
-                        ),
-                    )
-                    continue
-                if coarse.minimum_clearance_m is None:  # pragma: no cover - invariant
-                    raise RuntimeError("accepted coarse candidate must have clearance")
-                candidates.append(
-                    _dynamic_candidate(
-                        command,
-                        trajectory,
-                        start=snapshot.robot_state.pose,
-                        goal=snapshot.goal_pose,
-                        reference_path=snapshot.reference_path,
-                        minimum_clearance=coarse.minimum_clearance_m,
-                        previous_angular=snapshot.robot_state.twist.angular,
-                        sample_index=sample_index,
-                        start_goal_distance=start_goal_distance,
-                        reference_segments=reference_segments,
-                    )
-                )
+                self._cpp_static_workspace_key = workspace_key
+            batch = _cpp_dynamic_candidate_batch(
+                snapshot=snapshot,
+                linear_values=linear_values,
+                angular_values=angular_values,
+                apply_end=apply_end,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                actor_sampler=actor_sampler,
+                vehicle=self.vehicle,
+                horizon_s=self.horizon_s,
+                integration_step_s=self.integration_dt_s,
+                static_workspace=self._cpp_static_workspace,
+            )
+        if batch is None:
+            batch = _python_dynamic_candidate_batch(
+                snapshot=snapshot,
+                linear_values=linear_values,
+                angular_values=angular_values,
+                apply_end=apply_end,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                actor_sampler=actor_sampler,
+                vehicle=self.vehicle,
+                horizon_s=self.horizon_s,
+                integration_step_s=self.integration_dt_s,
+                use_certified_actor_dominance=self.use_step_local_workspace,
+            )
+        counts = batch.counts
+        details = batch.details
+        nonmoving_samples = batch.nonmoving_samples
+        candidates = batch.candidates
+        coarse_candidates = batch.coarse_candidates
+        certified_actor_dominated_candidates = (
+            batch.certified_actor_dominated_candidates
+        )
 
         self.last_workspace_metrics = DynamicDwaWorkspaceMetrics(
             coarse_candidates=coarse_candidates,
@@ -762,12 +756,25 @@ class DynamicDwaController:
             reference_geometry_candidates=(
                 coarse_candidates - certified_actor_dominated_candidates
             ),
+            native_core_used=batch.native_core_used,
         )
 
-        candidates.sort(key=lambda candidate: candidate.rank)
         selected: _DynamicCandidate | None = None
         selected_rank: int | None = None
-        for rank, candidate in enumerate(candidates):
+        for rank, candidate_source in enumerate(candidates):
+            candidate = (
+                candidate_source
+                if isinstance(candidate_source, _DynamicCandidate)
+                else _materialize_cpp_candidate(
+                    candidate_source,
+                    apply_end=apply_end,
+                    snapshot=snapshot,
+                    reference_segments=reference_segments,
+                    start_goal_distance=start_goal_distance,
+                    horizon_s=self.horizon_s,
+                    integration_step_s=self.integration_dt_s,
+                )
+            )
             proposal = _dynamic_proposal(snapshot, candidate.command, candidate.trajectory)
             evidence = evaluate_dynamic_trajectory_safety(
                 proposal,
@@ -778,7 +785,20 @@ class DynamicDwaController:
             )
             if evidence.safe:
                 if selected is None:
-                    selected = candidate
+                    selected = (
+                        _recompute_selected_cpp_candidate(
+                            candidate,
+                            snapshot=snapshot,
+                            physical_checker=physical_checker,
+                            combined_checker=combined_checker,
+                            actor_sampler=actor_sampler,
+                            vehicle=self.vehicle,
+                            reference_segments=reference_segments,
+                            start_goal_distance=start_goal_distance,
+                        )
+                        if batch.native_core_used
+                        else candidate
+                    )
                     selected_rank = rank
                     counts[
                         (
@@ -922,6 +942,326 @@ class DynamicDwaController:
             _samples_with_zero(linear_min, linear_max, self.linear_sample_count),
             _samples_with_zero(angular_min, angular_max, self.angular_sample_count),
         )
+
+    def _collision_checkers_for(
+        self,
+        snapshot: ControllerSnapshot,
+    ) -> tuple[CollisionChecker, CollisionChecker]:
+        metadata = snapshot.static_grid_snapshot.metadata
+        key = (metadata.map_id, metadata.map_revision, metadata.content_hash)
+        if (
+            key == self._collision_checker_key
+            and self._physical_checker is not None
+            and self._combined_checker is not None
+        ):
+            return self._physical_checker, self._combined_checker
+        physical = CollisionChecker(
+            snapshot.static_grid_snapshot.grid,
+            self.vehicle,
+            use_optimized_geometry=self.use_step_local_workspace,
+        )
+        combined = (
+            CollisionChecker(
+                snapshot.static_grid_snapshot.grid,
+                self.vehicle,
+                forbidden_cells=snapshot.static_grid_snapshot.forbidden_cells,
+                use_optimized_geometry=self.use_step_local_workspace,
+            )
+            if snapshot.static_grid_snapshot.forbidden_cells
+            else physical
+        )
+        self._collision_checker_key = key
+        self._physical_checker = physical
+        self._combined_checker = combined
+        return physical, combined
+
+
+def _python_dynamic_candidate_batch(
+    *,
+    snapshot: ControllerSnapshot,
+    linear_values: tuple[float, ...],
+    angular_values: tuple[float, ...],
+    apply_end: Pose2D,
+    physical_checker: CollisionChecker,
+    combined_checker: CollisionChecker,
+    actor_sampler: _StepActorTubeSampler,
+    vehicle: VehicleProfile,
+    horizon_s: float,
+    integration_step_s: float,
+    use_certified_actor_dominance: bool,
+) -> _DynamicCandidateBatch:
+    counts: Counter[tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]] = Counter()
+    details: list[DynamicDwaCandidateDiagnostic] = []
+    candidates: list[_DynamicCandidate] = []
+    nonmoving_samples = 0
+    coarse_candidates = 0
+    certified_candidates = 0
+    reference_segments = _prepare_reference_segments(snapshot.reference_path)
+    start_goal_distance = _distance(snapshot.robot_state.pose, snapshot.goal_pose)
+    sample_index = -1
+    for linear in linear_values:
+        for angular in angular_values:
+            sample_index += 1
+            if linear <= 1e-12:
+                nonmoving_samples += 1
+                continue
+            command = Twist2D(linear=linear, angular=angular)
+            trajectory = _dynamic_constant_rollout(
+                apply_end,
+                command,
+                horizon_s=horizon_s,
+                step_s=integration_step_s,
+            )
+            coarse = _coarse_dynamic_candidate_clearance(
+                trajectory,
+                snapshot=snapshot,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                vehicle=vehicle,
+                actor_sampler=actor_sampler,
+                use_certified_actor_dominance=use_certified_actor_dominance,
+                preserve_rejection_detail=(len(details) < _DWA_DIAGNOSTIC_DETAIL_LIMIT),
+            )
+            coarse_candidates += 1
+            certified_candidates += int(coarse.used_certified_actor_dominance)
+            if not coarse.accepted:
+                if coarse.failure_phase is None or coarse.failure_cause is None:
+                    raise RuntimeError("coarse rejection must have a structured reason")
+                counts[(coarse.failure_phase, coarse.failure_cause)] += 1
+                _append_diagnostic_detail(
+                    details,
+                    _coarse_diagnostic(sample_index, command, coarse),
+                )
+                continue
+            if coarse.minimum_clearance_m is None:  # pragma: no cover - invariant
+                raise RuntimeError("accepted coarse candidate must have clearance")
+            candidates.append(
+                _dynamic_candidate(
+                    command,
+                    trajectory,
+                    start=snapshot.robot_state.pose,
+                    goal=snapshot.goal_pose,
+                    reference_path=snapshot.reference_path,
+                    minimum_clearance=coarse.minimum_clearance_m,
+                    previous_angular=snapshot.robot_state.twist.angular,
+                    sample_index=sample_index,
+                    start_goal_distance=start_goal_distance,
+                    reference_segments=reference_segments,
+                )
+            )
+    candidates.sort(key=lambda candidate: candidate.rank)
+    return _DynamicCandidateBatch(
+        candidates=tuple(candidates),
+        counts=counts,
+        details=details,
+        nonmoving_samples=nonmoving_samples,
+        coarse_candidates=coarse_candidates,
+        certified_actor_dominated_candidates=certified_candidates,
+        native_core_used=False,
+    )
+
+
+def _cpp_dynamic_candidate_batch(
+    *,
+    snapshot: ControllerSnapshot,
+    linear_values: tuple[float, ...],
+    angular_values: tuple[float, ...],
+    apply_end: Pose2D,
+    physical_checker: CollisionChecker,
+    combined_checker: CollisionChecker,
+    actor_sampler: _StepActorTubeSampler,
+    vehicle: VehicleProfile,
+    horizon_s: float,
+    integration_step_s: float,
+    static_workspace: CppDwaStaticWorkspace,
+) -> _DynamicCandidateBatch | None:
+    if snapshot.actor_tubes is None:  # pragma: no cover - caller validates it
+        return None
+    native = _evaluate_cpp_candidates(
+        apply_start=apply_end,
+        scoring_start=snapshot.robot_state.pose,
+        goal=snapshot.goal_pose,
+        previous_angular=snapshot.robot_state.twist.angular,
+        linear_values=linear_values,
+        angular_values=angular_values,
+        physical_checker=physical_checker,
+        combined_checker=combined_checker,
+        reference_path=snapshot.reference_path,
+        prediction_set=snapshot.actor_tubes,
+        vehicle=vehicle,
+        horizon_s=horizon_s,
+        integration_step_s=integration_step_s,
+        angular_deceleration_radps2=DYNAMIC_ANGULAR_DECELERATION_RADPS2,
+        static_workspace=static_workspace,
+    )
+    if native is None:
+        return None
+    expected_samples = len(linear_values) * len(angular_values)
+    if native.sampled_candidates != expected_samples:
+        raise RuntimeError("C++ DWA candidate count violated the frozen contract")
+
+    counts: Counter[tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]] = Counter()
+    details: list[DynamicDwaCandidateDiagnostic] = []
+    certified_candidates = native.certified_actor_dominated_candidates
+    for candidate in native.candidates:
+        if candidate.state != 2:
+            continue
+        phase, cause = _cpp_rejection_taxonomy(candidate)
+        counts[(phase, cause)] += 1
+        if len(details) >= _DWA_DIAGNOSTIC_DETAIL_LIMIT:
+            continue
+
+        command = Twist2D(linear=candidate.linear, angular=candidate.angular)
+        trajectory = _dynamic_constant_rollout(
+            apply_end,
+            command,
+            horizon_s=horizon_s,
+            step_s=integration_step_s,
+        )
+        exact_detail = _coarse_dynamic_candidate_clearance(
+            trajectory,
+            snapshot=snapshot,
+            physical_checker=physical_checker,
+            combined_checker=combined_checker,
+            vehicle=vehicle,
+            actor_sampler=actor_sampler,
+            use_certified_actor_dominance=True,
+            preserve_rejection_detail=True,
+        )
+        if (
+            exact_detail.accepted
+            or exact_detail.failure_phase is not phase
+            or exact_detail.failure_cause is not cause
+        ):
+            # The optional accelerator must never change a rejection verdict.
+            return None
+        if candidate.used_certified_actor_dominance and not (
+            exact_detail.used_certified_actor_dominance
+        ):
+            certified_candidates -= 1
+        _append_diagnostic_detail(
+            details,
+            _coarse_diagnostic(candidate.sample_index, command, exact_detail),
+        )
+
+    ranked = tuple(native.candidates[index] for index in native.ranked_sample_indices)
+    return _DynamicCandidateBatch(
+        candidates=ranked,
+        counts=counts,
+        details=details,
+        nonmoving_samples=native.nonmoving_samples,
+        coarse_candidates=native.moving_candidates,
+        certified_actor_dominated_candidates=certified_candidates,
+        native_core_used=True,
+    )
+
+
+def _cpp_rejection_taxonomy(
+    candidate: CppDwaCandidate,
+) -> tuple[DynamicDwaCandidatePhase, DynamicDwaCandidateCause]:
+    phases = {
+        1: DynamicDwaCandidatePhase.COARSE_ROLLOUT,
+        2: DynamicDwaCandidatePhase.COARSE_TERMINAL,
+    }
+    causes = {
+        1: DynamicDwaCandidateCause.STATIC_OCCUPANCY,
+        2: DynamicDwaCandidateCause.STATIC_CLEARANCE,
+        3: DynamicDwaCandidateCause.FORBIDDEN_ZONE,
+        4: DynamicDwaCandidateCause.ACTOR_TUBE,
+        5: DynamicDwaCandidateCause.PREDICTION_INVALID,
+        6: DynamicDwaCandidateCause.TERMINAL_STOPPING,
+    }
+    try:
+        return phases[candidate.phase], causes[candidate.cause]
+    except KeyError as error:  # pragma: no cover - native ABI corruption
+        raise RuntimeError("C++ DWA returned an unknown rejection taxonomy") from error
+
+
+def _coarse_diagnostic(
+    sample_index: int,
+    command: Twist2D,
+    coarse: _CoarseCandidateEvaluation,
+) -> DynamicDwaCandidateDiagnostic:
+    if coarse.failure_phase is None or coarse.failure_cause is None:
+        raise RuntimeError("coarse rejection must have a structured reason")
+    return DynamicDwaCandidateDiagnostic(
+        sample_index=sample_index,
+        command=command,
+        phase=coarse.failure_phase,
+        cause=coarse.failure_cause,
+        failure_time_s=coarse.failure_time_s,
+        minimum_static_clearance_m=coarse.minimum_static_clearance_m,
+        minimum_actor_clearance_m=coarse.minimum_actor_clearance_m,
+        underlying_terminal_cause=coarse.underlying_terminal_cause,
+    )
+
+
+def _materialize_cpp_candidate(
+    candidate: CppDwaCandidate,
+    *,
+    apply_end: Pose2D,
+    snapshot: ControllerSnapshot,
+    reference_segments: tuple[tuple[Pose2D, Pose2D, float, float, float], ...],
+    start_goal_distance: float,
+    horizon_s: float,
+    integration_step_s: float,
+) -> _DynamicCandidate:
+    command = Twist2D(linear=candidate.linear, angular=candidate.angular)
+    trajectory = _dynamic_constant_rollout(
+        apply_end,
+        command,
+        horizon_s=horizon_s,
+        step_s=integration_step_s,
+    )
+    return _dynamic_candidate(
+        command,
+        trajectory,
+        start=snapshot.robot_state.pose,
+        goal=snapshot.goal_pose,
+        reference_path=snapshot.reference_path,
+        minimum_clearance=candidate.minimum_clearance_m,
+        previous_angular=snapshot.robot_state.twist.angular,
+        sample_index=candidate.sample_index,
+        start_goal_distance=start_goal_distance,
+        reference_segments=reference_segments,
+    )
+
+
+def _recompute_selected_cpp_candidate(
+    candidate: _DynamicCandidate,
+    *,
+    snapshot: ControllerSnapshot,
+    physical_checker: CollisionChecker,
+    combined_checker: CollisionChecker,
+    actor_sampler: _StepActorTubeSampler,
+    vehicle: VehicleProfile,
+    reference_segments: tuple[tuple[Pose2D, Pose2D, float, float, float], ...],
+    start_goal_distance: float,
+) -> _DynamicCandidate:
+    exact = _coarse_dynamic_candidate_clearance(
+        candidate.trajectory,
+        snapshot=snapshot,
+        physical_checker=physical_checker,
+        combined_checker=combined_checker,
+        vehicle=vehicle,
+        actor_sampler=actor_sampler,
+        use_certified_actor_dominance=True,
+        preserve_rejection_detail=False,
+    )
+    if not exact.accepted or exact.minimum_clearance_m is None:
+        raise RuntimeError("C++ DWA selected candidate disagreed with Python safety oracle")
+    return _dynamic_candidate(
+        candidate.command,
+        candidate.trajectory,
+        start=snapshot.robot_state.pose,
+        goal=snapshot.goal_pose,
+        reference_path=snapshot.reference_path,
+        minimum_clearance=exact.minimum_clearance_m,
+        previous_angular=snapshot.robot_state.twist.angular,
+        sample_index=candidate.sample_index,
+        start_goal_distance=start_goal_distance,
+        reference_segments=reference_segments,
+    )
 
 
 def _dynamic_controller_result(

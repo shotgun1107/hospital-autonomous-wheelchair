@@ -258,3 +258,20 @@ DWA 폐루프로 재생하는 시험은 아직 미측정이다. 종단 pipeline�
 JSON·PNG·Markdown 결과는 `outputs/`에 저장되고 기본적으로 Git에서 제외된다. Python
 시험이 성공해도 센서 오차, 통신 지연, 실제 회전·제동, 축소 실물 또는 사람 탑승
 안전성을 입증하지 않는다. 경로가 `FOUND`여도 이동 허가로 간주하지 않는다.
+
+## 선택적 C++ DWA 코어
+
+동적 DWA의 217개 후보 생성·41 pose rollout·terminal stopping·정적/금지구역/Actor
+충돌검사·비용·정렬은 선택적 C++20 공유 라이브러리로 실행할 수 있다. Python은
+시나리오, 관측, 권한, 결과 조립과 기존 shared safety gate를 계속 담당한다. 라이브러리가
+없거나 ABI가 맞지 않으면 기존 Python 경로로 보수적으로 fallback한다.
+
+```powershell
+.\.venv\Scripts\python.exe .\simulation\path_planning_lab\scripts\build_cpp_dwa_core.py
+```
+
+빌드 산출물은 `src/hospital_path_lab/_native/`에 생성되며 Git에 포함하지 않는다. C++
+경로의 강제 비활성화는 `HOSPITAL_PATH_LAB_DISABLE_CPP_DWA=1`을 사용한다. 상세 계약과
+현재 검증 범위는
+[v6 C++ DWA·충돌 코어 구현 명세](../../docs/research/dynamic-actor-experiment/v6-cpp-dwa-core.md)를
+따른다. 짧은 진단 결과는 expanded public qualification이나 제품 채택 근거가 아니다.

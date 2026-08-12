@@ -232,3 +232,11 @@ $nextOutput = ".\simulation\path_planning_lab\outputs\experiment-regression-repl
 `dynamic_local_evidence`, `freeze_evidence`, `regression_candidates`를 확인하고,
 `pareto.json`의 `roles`와 `pipelines`를 분리해 읽는다. hard failure가 0이어도
 `full_corpus_dynamic_local_closed_loop` limitation은 별도 해석해야 한다.
+
+## C++ DWA 가속 경로 추적
+
+| ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
+|---|---|---|---|
+| DYN-CPP-001 | 217개 후보, 후보당 41 pose, terminal stopping, oriented footprint, Actor tube, 비용·tie-break를 바꾸지 않고 반복 수치 계산을 C++로 옮긴다. | [dwa_core.cpp](native/dwa_core.cpp), [cpp_dwa_core.py](src/hospital_path_lab/cpp_dwa_core.py), `tests/test_cpp_dwa_core.py::test_cpp_core_preserves_frozen_candidate_and_pose_counts` | 연결됨, L1. C++ 라이브러리가 없으면 시험은 skip되고 Python fallback을 사용한다. |
+| DYN-CPP-002 | C++ 결과도 기존 shared safety gate를 통과해야 하며 Python 기준선과 같은 공개 입력 결과를 내야 한다. | [dwa.py](src/hospital_path_lab/local_algorithms/dwa.py), `tests/test_cpp_dwa_core.py::test_cpp_core_matches_python_on_all_frozen_qualification_snapshots`, `tests/test_dynamic_dwa_pipeline.py` | 연결됨, L1. 98개 공개 대표 snapshot의 별도 one-tick 대조는 구현 세션 진단이며 정식 public qualification이 아니다. |
+| DYN-CPP-003 | 정적 지도 보조 배열은 동일 map revision에서 재사용하고 ABI·공유 라이브러리 문제에서는 Python으로 fallback한다. | [cpp_dwa_core.py](src/hospital_path_lab/cpp_dwa_core.py), [build_cpp_dwa_core.py](scripts/build_cpp_dwa_core.py), `tests/test_cpp_dwa_core.py::test_explicit_python_fallback_does_not_use_native_core` | 연결됨, L1. 실제 5-case×100 직렬 qualification은 아직 수행하지 않았다. |
