@@ -23,6 +23,11 @@ from hospital_path_lab.contracts import (
     TrajectoryPoint,
     Twist2D,
 )
+from hospital_path_lab.dwa_hotloop import (
+    certified_actor_dominated_clearance as _cython_certified_actor_clearance,
+)
+from hospital_path_lab.dwa_hotloop import constant_rollout as _cython_constant_rollout
+from hospital_path_lab.dwa_hotloop import terminal_rollout as _cython_terminal_rollout
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_COMMAND_APPLY_LATENCY_S,
     ControllerCommandResult,
@@ -1455,6 +1460,17 @@ def _dynamic_constant_rollout(
     horizon_s: float,
     step_s: float,
 ) -> tuple[TrajectoryPoint, ...]:
+    accelerated = _cython_constant_rollout(
+        start,
+        command,
+        horizon_s=horizon_s,
+        step_s=step_s,
+        pose_type=Pose2D,
+        trajectory_point_type=TrajectoryPoint,
+    )
+    if accelerated is not None:
+        return accelerated
+
     steps = int(round(horizon_s / step_s))
     pose = start
     points = [TrajectoryPoint(0.0, pose, command)]
@@ -1490,6 +1506,18 @@ def _dynamic_terminal_rollout(
     angular_deceleration_radps2: float,
     step_s: float,
 ) -> tuple[TrajectoryPoint, ...]:
+    accelerated = _cython_terminal_rollout(
+        start,
+        linear_deceleration_mps2=linear_deceleration_mps2,
+        angular_deceleration_radps2=angular_deceleration_radps2,
+        step_s=step_s,
+        pose_type=Pose2D,
+        twist_type=Twist2D,
+        trajectory_point_type=TrajectoryPoint,
+    )
+    if accelerated is not None:
+        return accelerated
+
     pose = start.pose
     twist = start.twist
     elapsed_s = 0.0
@@ -1691,6 +1719,24 @@ def _certified_actor_dominated_clearance(
     path unchanged.  Bounded rejection details deliberately use that exact
     path so their semantic digest remains stable.
     """
+
+    accelerated = _cython_certified_actor_clearance(
+        trajectory,
+        combined_checker=combined_checker,
+        vehicle=vehicle,
+        actor_sampler=actor_sampler,
+        preserve_rejection_detail=preserve_rejection_detail,
+        evaluation_type=_CoarseCandidateEvaluation,
+        phase_type=DynamicDwaCandidatePhase,
+        cause_type=DynamicDwaCandidateCause,
+        pose_type=Pose2D,
+        twist_type=Twist2D,
+        trajectory_point_type=TrajectoryPoint,
+        oriented_circle_distance=oriented_footprint_circle_surface_distance,
+        angular_deceleration_radps2=DYNAMIC_ANGULAR_DECELERATION_RADPS2,
+    )
+    if accelerated is not None:
+        return accelerated
 
     minimum_actor_clearance = inf
     minimum_actor_witnesses: list[tuple[Pose2D, ActorTubeCircle]] = []

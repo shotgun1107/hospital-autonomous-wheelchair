@@ -38,3 +38,6 @@ coverage/
 
 # Path-planning research outputs
 /simulation/path_planning_lab/outputs/
+/simulation/path_planning_lab/src/hospital_path_lab/_dwa_hotloop.c
+/simulation/path_planning_lab/src/hospital_path_lab/_dwa_hotloop.lib
+/simulation/path_planning_lab/src/hospital_path_lab/_dwa_hotloop.*.pdb

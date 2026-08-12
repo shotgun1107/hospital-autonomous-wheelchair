@@ -21,6 +21,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.9",
 ]
+acceleration = [
+    "Cython>=3.1,<4",
+    "setuptools>=75",
+]
 
 [project.scripts]
 hospital-path-lab = "hospital_path_lab.cli:main"

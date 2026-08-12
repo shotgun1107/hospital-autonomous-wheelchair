@@ -35,6 +35,11 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 snapshot의 최적화 전후 semantic digest가 일치한다. 다만 동결된 직렬 500회에서 DWA
 deadline miss가 `100/500`이므로 공개 50 ms 자격은 실패 상태다(PP `0/500`).
 
+후속 병목 측정과 `217×41` rollout·coarse 충돌 검사의 선택형 Cython 이전 결과는
+[v6 DWA Cython hot-loop 이전 기록](../../docs/research/dynamic-actor-experiment/v6-cython-dwa-hotloop.md)에
+있다. 공개 5-case 동등성은 통과했지만 짧은 진단에서도 50 ms 초과가 남아 있으므로
+expanded public, receipt와 새 hidden은 아직 실행하지 않는다.
+
 기존 `dynamic-experiment` public+hidden 일괄 경로는 v6 재자격 동안 차단된다. 부분·축소
 실행은 진단용 report만 만들 수 있고 정식 receipt나 새 hidden을 만들 수 없다. 회사 PC의
 ignored `final-v4` output도 이 집 PC에는 없으므로 전체 artifact 회귀를 완료했다고 보지

@@ -41,6 +41,9 @@
 [v6 보정·재자격 명세](v6-correction-and-requalification.md)에 따라 4~6단계의
 연구 구현을 다시 검증하고 있다. 이는 위 표의 v5 구현 이력을 삭제하는 작업이 아니다.
 
+2026-08-12의 병목 측정과 선택형 Cython 이전 범위·동등성·잔여 50 ms 실패는
+[v6 DWA Cython hot-loop 이전 기록](v6-cython-dwa-hotloop.md)에 분리해 기록한다.
+
 - legacy-v1 공개 36개와 고정 corpus hash는 회귀 lane으로 유지한다.
 - 방향·코너·교차로·세로 경로·다중 Actor를 포함한 v6 공개 13개를 별도 lane으로
   추가했다.
