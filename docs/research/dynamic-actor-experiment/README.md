@@ -36,6 +36,40 @@
 | 5. 평가기와 corpus | 구현·전용시험·전체 회귀 완료 |
 | 6. runner·hidden·판정 | 구현·전용시험·full hidden 실행 완료 |
 
+### source-derived v7 전환 — 2026-08-12
+
+기존 사용자 정의 DWA의 공개 기능 실패를 분석한 뒤, 공개 ROS DWA·Nav2 DWB 고정 커밋을
+소스 기준으로 사용하는 새 reference 구현 방향을 승인했다. 분석 범위, 라이선스, 프로젝트 고유
+안전 계약과 구현 순서는
+[`공개 DWA·DWB 소스 분석과 프로젝트 적용 설계`](07-open-source-dwa-dwb-analysis-and-adaptation.md)를
+따른다. 이는 v6 결과를 삭제하거나 제품 알고리즘을 채택하는 결정이 아니다.
+
+현재 generator·core·critics·goal controller·프로젝트 안전 constraint·adapter·composition까지
+구현했고 source-derived 전용시험 `129 passed`, 전체 회귀 `467 passed`를 확인했다. 다만 첫 공개 사례의 `217/217` 후보가
+현재 Actor reachable tube에 의해 제거됐다. 따라서 이는 DWB 점수 튜닝 문제가 아니라 corpus의
+`LOCAL_DETOUR_FEASIBLE` 분류와 보수적 Actor 운동 가정 사이의 계약 충돌이다. 이 충돌을 결정하기
+전에는 source-derived full public, timing qualification과 새 hidden을 진행하지 않는다.
+
+같은 공개 입력의 Python 1-tick은 약 `1.40 s`였고, 주 병목은 약 `90,696`회의 pose safety
+판정이었다. 검사기 재사용만으로는 50 ms를 달성하지 못했으므로 현재 구현은 기능 reference이며
+실시간 자격을 통과한 controller가 아니다.
+
+이 충돌을 공개 조건 안에서 분리하기 위한
+[`방향 관성을 반영한 Actor 예측 v7 명세`](08-directional-actor-prediction-v7.md)와
+[`ADR 0010`](../../decisions/0010-directional-actor-prediction.md)을 추가했다. 최신 20개 unique
+accepted `observed_velocity` 평균, 최신 `observed_position` anchor, 최근 20개 중 최대
+`velocity_sigma/√20`, 최신 position sigma를 사용하며, `norm(v_mean)-2σ >= 0.03 m/s`에서만
+direction을 lock한다. endpoint는
+`s0`의 제한 감속·가속만 사용하고 속도 불확실성은 exact Capsule 반경에 한 번만 반영한다.
+stale·invalid·track/binding 변경에서는 과거 이력을 폐기한다.
+
+공개-only 자격시험은 217개 action primitive의 후보당 41 pose, 2.0초 rollout과 terminal
+stopping에서 exact Capsule 계산과 결정론을 확인한다. 이는 기존 witness가 `0.35 s`만 확인한
+공백을 닫는 기하 자격이며 closed-loop DWB 우회 성공은 아니다. 실제 legal bypass는
+`ONLINE_DWB_BYPASS_UNPROVEN`으로 남고, Stress 저속 Actor의 fail-closed 시험이 최종 통과해야
+방향 예측 자격 완료로 기록한다. 해당 targeted 방향 예측·공개-only 자격은 `33 passed`로
+완료했다. 이는 전체 공개 폐루프 자격이 아니며 v7 hidden은 생성·열람·실행하지 않았다.
+
 ### v6 보정 상태 — 2026-08-11
 
 [v6 보정·재자격 명세](v6-correction-and-requalification.md)에 따라 4~6단계의

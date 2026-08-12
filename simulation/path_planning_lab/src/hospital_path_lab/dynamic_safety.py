@@ -5,16 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 from json import dumps
-from math import cos, isclose, isfinite, pi, sin
+from math import ceil, cos, isclose, isfinite, pi, sin
+from weakref import WeakSet
 
 from hospital_path_lab.collision import (
     CollisionChecker,
+    oriented_footprint_capsule_surface_distance,
     oriented_footprint_circle_surface_distance,
 )
 from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, TrajectoryPoint, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_COMMAND_APPLY_LATENCY_S,
     DYNAMIC_CONTROL_PERIOD_S,
+    DYNAMIC_OBSERVATION_TTL_S,
     MAX_ACTOR_SPEED_MPS,
     DynamicCommandProposal,
     DynamicHoldReason,
@@ -22,6 +25,11 @@ from hospital_path_lab.dynamic_contracts import (
     DynamicSafetyDecision,
     DynamicSafetyEventCounters,
     ResumeAuthorization,
+)
+from hospital_path_lab.dynamic_directional_prediction import (
+    DirectionalCapsuleSample,
+    DirectionalPredictionSet,
+    sample_directional_capsules,
 )
 from hospital_path_lab.dynamic_observation import (
     DynamicObservationAvailability,
@@ -42,6 +50,8 @@ DYNAMIC_SAFE_OBSERVATION_FRAMES = 11
 DYNAMIC_COMMAND_DEADLINE_S = 0.050
 DYNAMIC_SWEEP_SAMPLE_PERIOD_S = 0.005
 _GEOMETRY_TOLERANCE = 1e-12
+_COLLISION_CHECKER_TYPE = CollisionChecker
+_DYNAMIC_CHECKER_FACTORY_CAPABILITY = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +62,7 @@ class DynamicSafetyContext:
     authorization_revision: int
     grid_snapshot: GridSnapshot
     observation_snapshot: DynamicObservationSnapshot
-    prediction_set: ActorPredictionSet | None
+    prediction_set: ActorPredictionSet | DirectionalPredictionSet | None
     path_still_valid: bool
     local_safety_recheck_passed: bool
     observation_safe: bool
@@ -88,6 +98,84 @@ class DynamicTrajectorySafetyEvidence:
     minimum_static_clearance_m: float | None
     minimum_actor_clearance_m: float | None
     failures: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
+class DynamicTrajectorySafetyCheckers:
+    """Collision checkers bound to one exact grid snapshot and profile.
+
+    ``CollisionChecker`` lazily builds geometry caches.  DWB evaluates many
+    trajectories against the same immutable snapshot, so rebuilding both
+    checkers per candidate discards those caches without changing the safety
+    question.  This object permits reuse while retaining an identity check that
+    prevents a checker from crossing snapshot boundaries.
+    """
+
+    grid_snapshot: GridSnapshot
+    grid_source: object
+    profile: VehicleProfile
+    forbidden_cells_source: frozenset[tuple[int, int]]
+    physical_checker: CollisionChecker
+    combined_checker: CollisionChecker
+    _factory_capability: object
+
+    def __init__(
+        self,
+        grid_snapshot: GridSnapshot,
+        profile: VehicleProfile,
+        physical_checker: CollisionChecker,
+        combined_checker: CollisionChecker,
+        *,
+        _factory_capability: object | None = None,
+    ) -> None:
+        if _factory_capability is not _DYNAMIC_CHECKER_FACTORY_CAPABILITY:
+            raise TypeError(
+                "DynamicTrajectorySafetyCheckers must be created by "
+                "build_dynamic_trajectory_safety_checkers"
+            )
+        object.__setattr__(self, "grid_snapshot", grid_snapshot)
+        object.__setattr__(self, "grid_source", grid_snapshot.grid)
+        object.__setattr__(self, "profile", profile)
+        object.__setattr__(
+            self,
+            "forbidden_cells_source",
+            grid_snapshot.forbidden_cells,
+        )
+        object.__setattr__(self, "physical_checker", physical_checker)
+        object.__setattr__(self, "combined_checker", combined_checker)
+        object.__setattr__(self, "_factory_capability", _factory_capability)
+
+
+_FACTORY_ISSUED_DYNAMIC_CHECKERS: WeakSet[DynamicTrajectorySafetyCheckers] = (
+    WeakSet()
+)
+
+
+def build_dynamic_trajectory_safety_checkers(
+    *,
+    grid_snapshot: GridSnapshot,
+    profile: VehicleProfile,
+) -> DynamicTrajectorySafetyCheckers:
+    """Build the two shared-safety checkers once for one immutable snapshot."""
+
+    checkers = DynamicTrajectorySafetyCheckers(
+        grid_snapshot=grid_snapshot,
+        profile=profile,
+        physical_checker=CollisionChecker(grid_snapshot.grid, profile),
+        combined_checker=CollisionChecker(
+            grid_snapshot.grid,
+            profile,
+            forbidden_cells=grid_snapshot.forbidden_cells,
+        ),
+        _factory_capability=_DYNAMIC_CHECKER_FACTORY_CAPABILITY,
+    )
+    _validate_checker_pair_sources(
+        checkers,
+        grid_snapshot=grid_snapshot,
+        profile=profile,
+    )
+    _FACTORY_ISSUED_DYNAMIC_CHECKERS.add(checkers)
+    return checkers
 
 
 class DynamicSafetyGate:
@@ -475,6 +563,16 @@ def _source_reason(
         return DynamicHoldReason.INVALID_SOURCE, ("fresh_prediction_missing",)
     frame = snapshot.frame
     prediction = context.prediction_set
+    if type(prediction) not in (ActorPredictionSet, DirectionalPredictionSet):
+        return DynamicHoldReason.INVALID_SOURCE, ("prediction_type_invalid",)
+    if (
+        isinstance(prediction, DirectionalPredictionSet)
+        and snapshot.last_event_was_no_frame
+    ):
+        return DynamicHoldReason.INVALID_SOURCE, ("directional_frame_dropout",)
+    time_reason = _source_time_reason(context, frame, prediction)
+    if time_reason is not None:
+        return time_reason
     metadata = context.grid_snapshot.metadata
     identity_matches = all(
         (
@@ -493,6 +591,70 @@ def _source_reason(
     if not identity_matches:
         return DynamicHoldReason.INVALID_SOURCE, ("prediction_source_mismatch",)
     return None, ()
+
+
+def _source_time_reason(
+    context: DynamicSafetyContext,
+    frame,
+    prediction: ActorPredictionSet | DirectionalPredictionSet,
+) -> tuple[DynamicHoldReason, tuple[str, ...]] | None:
+    """Bind a fresh snapshot and prediction to this exact simulation tick.
+
+    A validated snapshot is immutable.  Replaying it later while leaving its
+    cached ``FRESH`` availability unchanged must therefore not extend its life.
+    The gate derives age again from the current simulation clock before trusting
+    either the snapshot age or the prediction's controller-time commitment.
+    """
+
+    snapshot = context.observation_snapshot
+    values = (
+        snapshot.age_s,
+        frame.observed_at_s,
+        frame.delivered_at_s,
+        prediction.observed_at_s,
+        prediction.controller_time_s,
+        prediction.snapshot_age_s,
+    )
+    if any(value is None or not isfinite(value) for value in values):
+        return DynamicHoldReason.INVALID_SOURCE, ("observation_time_invalid",)
+    assert snapshot.age_s is not None
+    actual_age_s = context.simulation_time_s - frame.observed_at_s
+    if not isfinite(actual_age_s) or actual_age_s < -_GEOMETRY_TOLERANCE:
+        return DynamicHoldReason.INVALID_SOURCE, ("observation_time_invalid",)
+    if actual_age_s > DYNAMIC_OBSERVATION_TTL_S + _GEOMETRY_TOLERANCE:
+        return DynamicHoldReason.STALE, ("observation_replay_stale",)
+    time_matches = all(
+        (
+            frame.delivered_at_s <= context.simulation_time_s + _GEOMETRY_TOLERANCE,
+            isclose(
+                snapshot.age_s,
+                actual_age_s,
+                rel_tol=0.0,
+                abs_tol=_GEOMETRY_TOLERANCE,
+            ),
+            isclose(
+                prediction.observed_at_s,
+                frame.observed_at_s,
+                rel_tol=0.0,
+                abs_tol=_GEOMETRY_TOLERANCE,
+            ),
+            isclose(
+                prediction.snapshot_age_s,
+                actual_age_s,
+                rel_tol=0.0,
+                abs_tol=_GEOMETRY_TOLERANCE,
+            ),
+            isclose(
+                prediction.controller_time_s,
+                context.simulation_time_s,
+                rel_tol=0.0,
+                abs_tol=_GEOMETRY_TOLERANCE,
+            ),
+        )
+    )
+    if not time_matches:
+        return DynamicHoldReason.INVALID_SOURCE, ("observation_prediction_time_mismatch",)
+    return None
 
 
 def _proposal_provenance_failures(
@@ -520,8 +682,9 @@ def evaluate_dynamic_trajectory_safety(
     *,
     robot_state: RobotState,
     grid_snapshot: GridSnapshot,
-    prediction_set: ActorPredictionSet | None,
+    prediction_set: ActorPredictionSet | DirectionalPredictionSet | None,
     profile: VehicleProfile,
+    checkers: DynamicTrajectorySafetyCheckers | None = None,
 ) -> DynamicTrajectorySafetyEvidence:
     """현재 운동·post-apply rollout·terminal stopping을 같은 계약으로 검사한다."""
 
@@ -534,13 +697,22 @@ def evaluate_dynamic_trajectory_safety(
     prediction = prediction_set
     if prediction is None:
         return _unsafe_evidence("prediction_set_missing")
+    if type(prediction) not in (ActorPredictionSet, DirectionalPredictionSet):
+        return _unsafe_evidence("prediction_set_type_invalid")
 
-    physical_checker = CollisionChecker(grid_snapshot.grid, profile)
-    combined_checker = CollisionChecker(
-        grid_snapshot.grid,
-        profile,
-        forbidden_cells=grid_snapshot.forbidden_cells,
-    )
+    if checkers is None:
+        checkers = build_dynamic_trajectory_safety_checkers(
+            grid_snapshot=grid_snapshot,
+            profile=profile,
+        )
+    else:
+        _validate_dynamic_trajectory_safety_checkers(
+            checkers,
+            grid_snapshot=grid_snapshot,
+            profile=profile,
+        )
+    physical_checker = checkers.physical_checker
+    combined_checker = checkers.combined_checker
     static_clearances: list[float] = []
     actor_clearances: list[float] = []
     failures: list[str] = []
@@ -555,27 +727,18 @@ def evaluate_dynamic_trajectory_safety(
     apply_end = apply_samples[-1].pose
     for point in apply_samples:
         remaining_s = DYNAMIC_COMMAND_APPLY_LATENCY_S - point.time_s
-        sample = sample_actor_tubes(prediction, rollout_time_s=0.0)
-        sample = tuple(
-            ActorTubeCircle(
-                track_id=circle.track_id,
-                actor_binding_id=circle.actor_binding_id,
-                rollout_time_s=circle.rollout_time_s,
-                prediction_horizon_s=circle.prediction_horizon_s,
-                center=circle.center,
-                radius_m=circle.radius_m + MAX_ACTOR_SPEED_MPS * remaining_s,
-                position_sigma_m=circle.position_sigma_m,
-                acceleration_bound_m=circle.acceleration_bound_m,
+        try:
+            sample = _sample_actor_safety_shapes(prediction, rollout_time_s=0.0)
+            result = _pose_safety(
+                point.pose,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                actor_shapes=sample,
+                actor_radius_expansion_m=MAX_ACTOR_SPEED_MPS * remaining_s,
+                profile=profile,
             )
-            for circle in sample
-        )
-        result = _pose_safety(
-            point.pose,
-            physical_checker=physical_checker,
-            combined_checker=combined_checker,
-            actor_circles=sample,
-            profile=profile,
-        )
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            return _unsafe_evidence("prediction_set_malformed")
         _merge_pose_result(
             result,
             static_clearances,
@@ -590,16 +753,19 @@ def evaluate_dynamic_trajectory_safety(
     except (TypeError, ValueError) as error:
         return _unsafe_evidence(f"proposal_trajectory_invalid:{error}")
     for point in rollout:
-        result = _pose_safety(
-            point.pose,
-            physical_checker=physical_checker,
-            combined_checker=combined_checker,
-            actor_circles=sample_actor_tubes(
-                prediction,
-                rollout_time_s=point.time_s,
-            ),
-            profile=profile,
-        )
+        try:
+            result = _pose_safety(
+                point.pose,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                actor_shapes=_sample_actor_safety_shapes(
+                    prediction,
+                    rollout_time_s=point.time_s,
+                ),
+                profile=profile,
+            )
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            return _unsafe_evidence("prediction_set_malformed")
         _merge_pose_result(result, static_clearances, actor_clearances, failures)
         actor_hazard |= result.actor_hazard
         forbidden_entry |= result.forbidden_entry
@@ -607,16 +773,19 @@ def evaluate_dynamic_trajectory_safety(
     terminal = _terminal_stopping_samples(rollout[-1], profile)
     terminal_offset_s = rollout[-1].time_s
     for point in terminal[1:]:
-        result = _pose_safety(
-            point.pose,
-            physical_checker=physical_checker,
-            combined_checker=combined_checker,
-            actor_circles=sample_actor_tubes(
-                prediction,
-                rollout_time_s=terminal_offset_s + point.time_s,
-            ),
-            profile=profile,
-        )
+        try:
+            result = _pose_safety(
+                point.pose,
+                physical_checker=physical_checker,
+                combined_checker=combined_checker,
+                actor_shapes=_sample_actor_safety_shapes(
+                    prediction,
+                    rollout_time_s=terminal_offset_s + point.time_s,
+                ),
+                profile=profile,
+            )
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            return _unsafe_evidence("prediction_set_malformed")
         _merge_pose_result(result, static_clearances, actor_clearances, failures)
         actor_hazard |= result.actor_hazard
         forbidden_entry |= result.forbidden_entry
@@ -632,8 +801,81 @@ def evaluate_dynamic_trajectory_safety(
     )
 
 
+def _validate_dynamic_trajectory_safety_checkers(
+    checkers: DynamicTrajectorySafetyCheckers,
+    *,
+    grid_snapshot: GridSnapshot,
+    profile: VehicleProfile,
+) -> None:
+    """Reject stale, foreign, or differently configured prebuilt checkers."""
+
+    if type(checkers) is not DynamicTrajectorySafetyCheckers:
+        raise TypeError("checkers must be DynamicTrajectorySafetyCheckers")
+    if (
+        checkers._factory_capability is not _DYNAMIC_CHECKER_FACTORY_CAPABILITY
+        or checkers not in _FACTORY_ISSUED_DYNAMIC_CHECKERS
+    ):
+        raise ValueError("prebuilt checkers were not issued by the checker factory")
+    if checkers.grid_snapshot is not grid_snapshot:
+        raise ValueError("prebuilt checkers belong to a different grid snapshot")
+    if checkers.grid_source is not grid_snapshot.grid:
+        raise ValueError("prebuilt checkers belong to a different grid source")
+    if checkers.profile is not profile:
+        raise ValueError("prebuilt checkers belong to a different vehicle profile")
+    if checkers.forbidden_cells_source is not grid_snapshot.forbidden_cells:
+        raise ValueError("prebuilt checkers belong to different forbidden cells")
+
+    _validate_checker_pair_sources(
+        checkers,
+        grid_snapshot=grid_snapshot,
+        profile=profile,
+    )
+
+
+def _validate_checker_pair_sources(
+    checkers: DynamicTrajectorySafetyCheckers,
+    *,
+    grid_snapshot: GridSnapshot,
+    profile: VehicleProfile,
+) -> None:
+    """Require the exact checker implementation and its exact immutable sources."""
+
+    physical = checkers.physical_checker
+    combined = checkers.combined_checker
+    if (
+        type(physical) is not _COLLISION_CHECKER_TYPE
+        or type(combined) is not _COLLISION_CHECKER_TYPE
+        or physical.grid is not grid_snapshot.grid
+        or combined.grid is not grid_snapshot.grid
+        or physical.profile is not profile
+        or combined.profile is not profile
+        or physical.forbidden_cells
+        or combined.forbidden_cells != grid_snapshot.forbidden_cells
+        or not physical.use_optimized_geometry
+        or not combined.use_optimized_geometry
+    ):
+        raise ValueError("prebuilt checkers do not match the safety inputs")
+
+
 def _unsafe_evidence(reason: str) -> DynamicTrajectorySafetyEvidence:
     return DynamicTrajectorySafetyEvidence(False, False, False, None, None, (reason,))
+
+
+def _sample_actor_safety_shapes(
+    prediction_set: ActorPredictionSet | DirectionalPredictionSet,
+    *,
+    rollout_time_s: float,
+) -> tuple[ActorTubeCircle | DirectionalCapsuleSample, ...]:
+    """Sample the exact geometry frozen by the selected prediction contract."""
+
+    if type(prediction_set) is ActorPredictionSet:
+        return sample_actor_tubes(prediction_set, rollout_time_s=rollout_time_s)
+    if type(prediction_set) is DirectionalPredictionSet:
+        return sample_directional_capsules(
+            prediction_set,
+            rollout_time_s=rollout_time_s,
+        )
+    raise TypeError("unsupported Actor prediction set type")
 
 
 def _pose_safety(
@@ -641,22 +883,41 @@ def _pose_safety(
     *,
     physical_checker: CollisionChecker,
     combined_checker: CollisionChecker,
-    actor_circles: tuple[ActorTubeCircle, ...],
+    actor_shapes: tuple[ActorTubeCircle | DirectionalCapsuleSample, ...],
     profile: VehicleProfile,
+    actor_radius_expansion_m: float = 0.0,
 ) -> DynamicTrajectorySafetyEvidence:
+    if not isfinite(actor_radius_expansion_m) or actor_radius_expansion_m < 0.0:
+        raise ValueError("Actor radius expansion must be finite and non-negative")
     physical_clearance = physical_checker.clearance(pose)
     combined_clearance = combined_checker.clearance(pose)
     forbidden_entry = combined_checker.pose_enters_forbidden(pose)
     static_clearance = min(physical_clearance, combined_clearance)
-    actor_clearances = tuple(
-        oriented_footprint_circle_surface_distance(
-            pose,
-            circle_center=(circle.center.x, circle.center.y),
-            circle_radius_m=circle.radius_m,
-            profile=profile,
-        )
-        for circle in actor_circles
-    )
+    actor_clearances: list[float] = []
+    for shape in actor_shapes:
+        if type(shape) is ActorTubeCircle:
+            actor_clearances.append(
+                oriented_footprint_circle_surface_distance(
+                    pose,
+                    circle_center=(shape.center.x, shape.center.y),
+                    circle_radius_m=shape.radius_m + actor_radius_expansion_m,
+                    profile=profile,
+                )
+            )
+        elif type(shape) is DirectionalCapsuleSample:
+            actor_clearances.append(
+                oriented_footprint_capsule_surface_distance(
+                    pose,
+                    segment_start=(shape.start.x, shape.start.y),
+                    segment_end=(shape.end.x, shape.end.y),
+                    capsule_radius_m=(
+                        shape.base_radius_m + actor_radius_expansion_m
+                    ),
+                    profile=profile,
+                )
+            )
+        else:
+            raise TypeError("unsupported Actor safety geometry")
     actor_clearance = min(actor_clearances) if actor_clearances else None
     failures: list[str] = []
     if forbidden_entry:
@@ -728,7 +989,7 @@ def _normalized_rollout(
     samples: list[TrajectoryPoint] = [first]
     for source, target in zip(trajectory, trajectory[1:], strict=False):
         duration = target.time_s - source.time_s
-        steps = max(1, int(round(duration / DYNAMIC_SWEEP_SAMPLE_PERIOD_S)))
+        steps = max(1, ceil(duration / DYNAMIC_SWEEP_SAMPLE_PERIOD_S))
         for step in range(1, steps + 1):
             fraction = step / steps
             samples.append(

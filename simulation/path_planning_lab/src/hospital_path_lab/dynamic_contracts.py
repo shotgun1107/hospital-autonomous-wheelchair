@@ -13,6 +13,7 @@ from hospital_path_lab.contracts import PlanStatus, Pose2D, RobotState, Trajecto
 
 if TYPE_CHECKING:
     from hospital_path_lab.contracts import GridSnapshot
+    from hospital_path_lab.dynamic_directional_prediction import DirectionalPredictionSet
     from hospital_path_lab.dynamic_observation import DynamicObservationSnapshot
     from hospital_path_lab.dynamic_prediction import ActorPredictionSet
     from hospital_path_lab.vehicle import VehicleProfile
@@ -197,7 +198,7 @@ class ControllerSnapshot:
     reference_path: tuple[Pose2D, ...]
     static_grid_snapshot: GridSnapshot
     validated_observation: DynamicObservationSnapshot
-    actor_tubes: ActorPredictionSet | None
+    actor_tubes: ActorPredictionSet | DirectionalPredictionSet | None
     vehicle_profile: VehicleProfile
     map_id: str
     map_revision: int
@@ -372,7 +373,7 @@ def build_controller_snapshot(
     reference_path: tuple[Pose2D, ...],
     static_grid_snapshot: GridSnapshot,
     validated_observation: DynamicObservationSnapshot,
-    actor_tubes: ActorPredictionSet | None,
+    actor_tubes: ActorPredictionSet | DirectionalPredictionSet | None,
     vehicle_profile: VehicleProfile,
 ) -> ControllerSnapshot:
     """검증된 Stage 2/3 입력의 provenance를 하나의 controller snapshot으로 묶는다."""
@@ -407,6 +408,16 @@ def build_controller_snapshot(
             frame.content_hash,
         ):
             raise ValueError("controller Actor tube provenance mismatch")
+        # Imported lazily to preserve the contracts -> predictor dependency.
+        # A history-derived set cannot be rebuilt from one frame, so its
+        # stateful factory capability and semantic commitments are verified.
+        from hospital_path_lab.dynamic_directional_prediction import (
+            DirectionalPredictionSet,
+            validate_directional_prediction_set,
+        )
+
+        if isinstance(actor_tubes, DirectionalPredictionSet):
+            validate_directional_prediction_set(actor_tubes, current_frame=frame)
     content_hash = controller_snapshot_content_hash(
         tick_id=tick_id,
         mission_id=mission_id,

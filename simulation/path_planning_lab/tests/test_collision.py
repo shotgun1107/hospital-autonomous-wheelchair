@@ -5,7 +5,11 @@ from math import ceil, hypot, isclose, isfinite, pi
 import numpy as np
 import pytest
 
-from hospital_path_lab.collision import CollisionChecker
+from hospital_path_lab.collision import (
+    CollisionChecker,
+    oriented_footprint_capsule_surface_distance,
+    oriented_footprint_circle_surface_distance,
+)
 from hospital_path_lab.contracts import PlanStatus, Pose2D, RobotState
 from hospital_path_lab.grid import GridMap, inflate_occupancy
 from hospital_path_lab.local_algorithms.grid_astar import BoundedGridAStarPlanner
@@ -250,3 +254,169 @@ def test_map_factory_grid_astar_path_is_footprint_collision_free() -> None:
     assert result.minimum_clearance > 0.0
     assert checker.path_is_collision_free(result.path)
     assert all(isfinite(checker.clearance(pose)) for pose in result.path)
+
+
+@pytest.mark.parametrize(
+    "pose",
+    (
+        Pose2D(0.0, 0.0, 0.0),
+        Pose2D(1.25, -0.75, pi / 3.0),
+        Pose2D(-4.0, 2.0, -pi / 2.0),
+    ),
+)
+@pytest.mark.parametrize("use_optimized_geometry", (False, True))
+def test_degenerate_capsule_exactly_matches_existing_circle_contract(
+    pose: Pose2D,
+    use_optimized_geometry: bool,
+) -> None:
+    center = (0.41, -0.17)
+    radius_m = 0.18
+
+    circle = oriented_footprint_circle_surface_distance(
+        pose,
+        circle_center=center,
+        circle_radius_m=radius_m,
+        use_optimized_geometry=use_optimized_geometry,
+    )
+    capsule = oriented_footprint_capsule_surface_distance(
+        pose,
+        segment_start=center,
+        segment_end=center,
+        capsule_radius_m=radius_m,
+        use_optimized_geometry=use_optimized_geometry,
+    )
+
+    assert capsule == circle
+
+
+@pytest.mark.parametrize("use_optimized_geometry", (False, True))
+def test_capsule_centerline_crossing_footprint_returns_negative_radius(
+    use_optimized_geometry: bool,
+) -> None:
+    radius_m = 0.12
+
+    clearance = oriented_footprint_capsule_surface_distance(
+        Pose2D(0.0, 0.0, pi / 5.0),
+        segment_start=(-1.0, 0.0),
+        segment_end=(1.0, 0.0),
+        capsule_radius_m=radius_m,
+        use_optimized_geometry=use_optimized_geometry,
+    )
+
+    assert clearance == -radius_m
+
+
+@pytest.mark.parametrize("use_optimized_geometry", (False, True))
+def test_capsule_contact_and_minimum_clearance_boundary_are_exact(
+    use_optimized_geometry: bool,
+) -> None:
+    profile = VIRTUAL_DOLL_WHEELCHAIR_V0_1
+    half_length = profile.collision_length_m / 2.0
+    radius_m = 0.10
+    segment_y = (-0.50, 0.50)
+
+    contact = oriented_footprint_capsule_surface_distance(
+        Pose2D(0.0, 0.0, 0.0),
+        segment_start=(half_length + radius_m, segment_y[0]),
+        segment_end=(half_length + radius_m, segment_y[1]),
+        capsule_radius_m=radius_m,
+        use_optimized_geometry=use_optimized_geometry,
+    )
+    safety_boundary = oriented_footprint_capsule_surface_distance(
+        Pose2D(0.0, 0.0, 0.0),
+        segment_start=(
+            half_length + radius_m + profile.minimum_clearance_m,
+            segment_y[0],
+        ),
+        segment_end=(
+            half_length + radius_m + profile.minimum_clearance_m,
+            segment_y[1],
+        ),
+        capsule_radius_m=radius_m,
+        use_optimized_geometry=use_optimized_geometry,
+    )
+
+    assert contact == pytest.approx(0.0, abs=1e-15)
+    assert safety_boundary == pytest.approx(profile.minimum_clearance_m, abs=1e-15)
+
+
+def test_capsule_distance_respects_oriented_wheelchair_extents() -> None:
+    radius_m = 0.10
+    segment = ((0.40, -0.50), (0.40, 0.50))
+
+    length_toward_capsule = oriented_footprint_capsule_surface_distance(
+        Pose2D(0.0, 0.0, 0.0),
+        segment_start=segment[0],
+        segment_end=segment[1],
+        capsule_radius_m=radius_m,
+    )
+    width_toward_capsule = oriented_footprint_capsule_surface_distance(
+        Pose2D(0.0, 0.0, pi / 2.0),
+        segment_start=segment[0],
+        segment_end=segment[1],
+        capsule_radius_m=radius_m,
+    )
+
+    assert length_toward_capsule == pytest.approx(0.08)
+    assert width_toward_capsule == pytest.approx(0.12)
+
+
+@pytest.mark.parametrize(
+    ("segment_start", "segment_end", "radius_m", "message"),
+    (
+        ((0.0, 0.0), (1.0, 0.0), -0.01, "must not be negative"),
+        ((float("nan"), 0.0), (1.0, 0.0), 0.1, "must be finite"),
+        ((0.0, 0.0), (float("inf"), 0.0), 0.1, "must be finite"),
+        ((0.0, 0.0), (1.0, 0.0), float("nan"), "must be finite"),
+    ),
+)
+def test_capsule_rejects_invalid_geometry(
+    segment_start: tuple[float, float],
+    segment_end: tuple[float, float],
+    radius_m: float,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        oriented_footprint_capsule_surface_distance(
+            Pose2D(0.0, 0.0, 0.0),
+            segment_start=segment_start,
+            segment_end=segment_end,
+            capsule_radius_m=radius_m,
+        )
+
+
+def test_optimized_capsule_distance_matches_world_polygon_reference_randomly() -> None:
+    rng = np.random.default_rng(20260812)
+
+    for _ in range(500):
+        pose = Pose2D(
+            float(rng.uniform(-3.0, 3.0)),
+            float(rng.uniform(-3.0, 3.0)),
+            float(rng.uniform(-pi, pi)),
+        )
+        segment_start = (
+            float(rng.uniform(-3.0, 3.0)),
+            float(rng.uniform(-3.0, 3.0)),
+        )
+        segment_end = (
+            float(rng.uniform(-3.0, 3.0)),
+            float(rng.uniform(-3.0, 3.0)),
+        )
+        radius_m = float(rng.uniform(0.0, 0.75))
+
+        reference = oriented_footprint_capsule_surface_distance(
+            pose,
+            segment_start=segment_start,
+            segment_end=segment_end,
+            capsule_radius_m=radius_m,
+            use_optimized_geometry=False,
+        )
+        optimized = oriented_footprint_capsule_surface_distance(
+            pose,
+            segment_start=segment_start,
+            segment_end=segment_end,
+            capsule_radius_m=radius_m,
+            use_optimized_geometry=True,
+        )
+
+        assert optimized == pytest.approx(reference, rel=1e-12, abs=1e-12)

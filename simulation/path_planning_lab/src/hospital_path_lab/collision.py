@@ -757,6 +757,95 @@ def oriented_footprint_circle_surface_distance(
     return center_distance - circle_radius_m
 
 
+def oriented_footprint_capsule_surface_distance(
+    pose: Pose2D,
+    *,
+    segment_start: Point,
+    segment_end: Point,
+    capsule_radius_m: float,
+    profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    use_optimized_geometry: bool = True,
+    inputs_validated: bool = False,
+) -> float:
+    """Return signed clearance from the wheelchair footprint to a capsule.
+
+    The capsule is the Minkowski sum of the closed centerline segment and a
+    circle with ``capsule_radius_m``.  A positive result is free surface
+    clearance, zero is contact, and a negative result is overlap.  When the
+    centerline intersects or lies inside the footprint, the function returns
+    ``-capsule_radius_m``.  This matches the existing circle contract when a
+    capsule's two endpoints are equal.
+
+    ``use_optimized_geometry`` evaluates the centerline in the wheelchair's
+    axis-aligned local frame.  The reference path evaluates the same geometry
+    against the world-frame footprint polygon and is retained as an independent
+    parity oracle.
+    """
+
+    if not inputs_validated:
+        if capsule_radius_m < 0.0:
+            raise ValueError("capsule_radius_m must not be negative")
+        if not all(
+            np.isfinite(value)
+            for value in (
+                pose.x,
+                pose.y,
+                pose.yaw,
+                segment_start[0],
+                segment_start[1],
+                segment_end[0],
+                segment_end[1],
+                capsule_radius_m,
+            )
+        ):
+            raise ValueError("footprint-capsule geometry must be finite")
+
+    if segment_start == segment_end:
+        return oriented_footprint_circle_surface_distance(
+            pose,
+            circle_center=segment_start,
+            circle_radius_m=capsule_radius_m,
+            profile=profile,
+            use_optimized_geometry=use_optimized_geometry,
+            inputs_validated=True,
+        )
+
+    half_length = profile.collision_length_m / 2.0
+    half_width = profile.collision_width_m / 2.0
+    if not use_optimized_geometry:
+        footprint = _footprint_polygon(pose, half_length, half_width)
+        return _footprint_capsule_surface_distance_reference(
+            footprint,
+            segment_start=segment_start,
+            segment_end=segment_end,
+            capsule_radius_m=capsule_radius_m,
+        )
+
+    cosine = cos(pose.yaw)
+    sine = sin(pose.yaw)
+
+    def to_local(point: Point) -> Point:
+        delta_x = point[0] - pose.x
+        delta_y = point[1] - pose.y
+        return (
+            cosine * delta_x + sine * delta_y,
+            -sine * delta_x + cosine * delta_y,
+        )
+
+    local_footprint = (
+        (-half_length, -half_width),
+        (half_length, -half_width),
+        (half_length, half_width),
+        (-half_length, half_width),
+    )
+    centerline_distance = _convex_polygon_segment_distance(
+        local_footprint,
+        segment_start=to_local(segment_start),
+        segment_end=to_local(segment_end),
+    )
+    return centerline_distance - capsule_radius_m
+
+
 def _footprint_circle_surface_distance_reference(
     footprint: Polygon,
     *,
@@ -773,6 +862,156 @@ def _footprint_circle_surface_distance_reference(
         )
         for index in range(len(footprint))
     ) - circle_radius_m
+
+
+def _footprint_capsule_surface_distance_reference(
+    footprint: Polygon,
+    *,
+    segment_start: Point,
+    segment_end: Point,
+    capsule_radius_m: float,
+) -> float:
+    centerline_distance = _convex_polygon_segment_distance(
+        footprint,
+        segment_start=segment_start,
+        segment_end=segment_end,
+    )
+    return centerline_distance - capsule_radius_m
+
+
+def _convex_polygon_segment_distance(
+    polygon: Polygon,
+    *,
+    segment_start: Point,
+    segment_end: Point,
+) -> float:
+    """Return the exact unsigned distance between a convex polygon and segment."""
+
+    if _point_inside_convex_polygon(
+        segment_start,
+        polygon,
+    ) or _point_inside_convex_polygon(segment_end, polygon):
+        return 0.0
+
+    polygon_segments = _segments(polygon)
+    if any(
+        _line_segments_intersect(
+            segment_start,
+            segment_end,
+            edge_start,
+            edge_end,
+        )
+        for edge_start, edge_end in polygon_segments
+    ):
+        return 0.0
+
+    return min(
+        *(
+            _point_segment_distance(point, segment_start, segment_end)
+            for point in polygon
+        ),
+        *(
+            _point_segment_distance(segment_start, edge_start, edge_end)
+            for edge_start, edge_end in polygon_segments
+        ),
+        *(
+            _point_segment_distance(segment_end, edge_start, edge_end)
+            for edge_start, edge_end in polygon_segments
+        ),
+    )
+
+
+def _line_segments_intersect(
+    first_start: Point,
+    first_end: Point,
+    second_start: Point,
+    second_end: Point,
+) -> bool:
+    """Return whether two closed line segments intersect, including contact."""
+
+    scale = max(
+        1.0,
+        *(
+            abs(value)
+            for point in (first_start, first_end, second_start, second_end)
+            for value in point
+        ),
+    )
+    cross_tolerance = 1e-15 * scale * scale
+    coordinate_tolerance = 1e-15 * scale
+    first_to_second_start = _orientation_cross(
+        first_start,
+        first_end,
+        second_start,
+    )
+    first_to_second_end = _orientation_cross(
+        first_start,
+        first_end,
+        second_end,
+    )
+    second_to_first_start = _orientation_cross(
+        second_start,
+        second_end,
+        first_start,
+    )
+    second_to_first_end = _orientation_cross(
+        second_start,
+        second_end,
+        first_end,
+    )
+
+    if (
+        first_to_second_start > cross_tolerance
+        and first_to_second_end < -cross_tolerance
+        or first_to_second_start < -cross_tolerance
+        and first_to_second_end > cross_tolerance
+    ) and (
+        second_to_first_start > cross_tolerance
+        and second_to_first_end < -cross_tolerance
+        or second_to_first_start < -cross_tolerance
+        and second_to_first_end > cross_tolerance
+    ):
+        return True
+
+    collinear_candidates = (
+        (first_to_second_start, second_start, first_start, first_end),
+        (first_to_second_end, second_end, first_start, first_end),
+        (second_to_first_start, first_start, second_start, second_end),
+        (second_to_first_end, first_end, second_start, second_end),
+    )
+    return any(
+        abs(cross) <= cross_tolerance
+        and _point_inside_segment_bounds(
+            point,
+            segment_start,
+            segment_end,
+            tolerance=coordinate_tolerance,
+        )
+        for cross, point, segment_start, segment_end in collinear_candidates
+    )
+
+
+def _orientation_cross(source: Point, target: Point, point: Point) -> float:
+    return (target[0] - source[0]) * (point[1] - source[1]) - (
+        target[1] - source[1]
+    ) * (point[0] - source[0])
+
+
+def _point_inside_segment_bounds(
+    point: Point,
+    segment_start: Point,
+    segment_end: Point,
+    *,
+    tolerance: float,
+) -> bool:
+    return (
+        min(segment_start[0], segment_end[0]) - tolerance
+        <= point[0]
+        <= max(segment_start[0], segment_end[0]) + tolerance
+        and min(segment_start[1], segment_end[1]) - tolerance
+        <= point[1]
+        <= max(segment_start[1], segment_end[1]) + tolerance
+    )
 
 
 def _point_inside_convex_polygon(point: Point, polygon: Polygon) -> bool:
