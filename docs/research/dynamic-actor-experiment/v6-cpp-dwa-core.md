@@ -172,3 +172,21 @@ qualification snapshot set hash는
 `77f876702b4db90ea729740b3eb96187ae14fba26f045c2ea63c96dd678bb8af`이다. 이 결과는
 독립 timing 하위 자격만 통과했다는 뜻이다. expanded public 기능시험, 정식 receipt와 새
 hidden은 생성하거나 실행하지 않았으며, DWA 승격이나 제품 알고리즘 채택 결론도 내리지 않는다.
+
+### 9.2 expanded public 1차 자격 결과
+
+2026-08-12 `main@bdb6c5e`에서 공개 49 episode × Normal/Stress × PP/DWA, 총 `196`
+run을 22개 process worker로 실행했다. source freeze와 `196/196` record coverage,
+contract-fault, hard safety는 통과했고 hard-safety failure는 `0`이었다. 90° rigid pair도
+`4/4` 통과했다.
+
+기능 자격은 실패했다. 기능 통과 수는 PP Normal `35/49`, C++ DWA Normal `16/49`,
+PP Stress `6/49`, C++ DWA Stress `6/49`였다. progressable 미완료는 `128`건이었고,
+Stress에서는 두 controller 모두 완료 `0/49`였다. `LOCAL_DETOUR_FEASIBLE`은 golden
+`0/2`, development `0/9`였으며 C++ DWA의 양의 detour 관측은 전체 `0/98`이었다.
+
+따라서 runner는 fail-closed로 직렬 timing을 실행하지 않았고 receipt·hidden commitment를
+생성하지 않았다. 이 결과는 C++ 수치 코어의 timing 실패가 아니라 현재 controller·authority·
+Stress 기능 계약 조합이 공개 기능 자격을 통과하지 못했다는 증거다. 다음 공개 전체 재실행
+전에는 public 사례에서 DWA 후보 탈락 원인과 무회전·무우회, Stress의 반복 정지·재승인과
+episode timeout을 분리 진단해야 한다. hidden은 열지 않는다.

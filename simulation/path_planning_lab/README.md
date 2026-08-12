@@ -36,7 +36,11 @@ snapshot의 최적화 전후 semantic digest가 일치한다. 기존 Python+NumP
 직렬 500회에서 DWA deadline miss `100/500`으로 실패했다. 2026-08-12 선택적 C++ 코어와
 보수적 정적 geometry lower-bound 최적화를 적용한 독립 timing 재자격에서는 PP와 C++ DWA가
 각각 `0/500` miss였고, C++ DWA는 p50 `3.770 ms`, p95 `15.459 ms`, 최대 `35.576 ms`였다.
-이는 timing 하위 자격 통과이며 expanded-public 기능 자격·receipt·새 hidden은 아직 없다.
+이는 timing 하위 자격 통과다. 2026-08-12 expanded public 1차 실행은 49 episode × 2 profile
+× 2 controller=`196` run의 범위·contract·hard safety를 통과했지만 기능 자격에서 실패했다.
+PP/C++ DWA 기능 통과는 Normal `35/49`·`16/49`, Stress `6/49`·`6/49`였고, DWA의
+`LOCAL_DETOUR_FEASIBLE` 통과는 `0/11`, 양의 detour 관측은 `0/98`이었다. 이 때문에
+직렬 timing은 fail-closed로 실행하지 않았고 receipt·새 hidden도 만들지 않았다.
 
 기존 `dynamic-experiment` public+hidden 일괄 경로는 v6 재자격 동안 차단된다. 부분·축소
 실행은 진단용 report만 만들 수 있고 정식 receipt나 새 hidden을 만들 수 없다. 회사 PC의

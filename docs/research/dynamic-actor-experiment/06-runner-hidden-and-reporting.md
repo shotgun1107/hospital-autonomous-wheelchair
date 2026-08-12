@@ -47,6 +47,25 @@ legacy hidden 명령은 실행 절차가 아니라 과거 계약·회귀 설명�
 PP·C++ DWA 모두 miss `0/500`으로 timing 하위 gate를 통과했다. 다만 정식
 expanded-public 실행·receipt 봉인과 새 hidden 생성은 수행하지 않았다.
 
+### 2026-08-12 C++ expanded public 1차 실행
+
+- output: `simulation/path_planning_lab/outputs/dynamic-public-qualification-20260812-cpp-v2`
+- 실행: 공개 49 episode × Normal/Stress × PP/DWA=`196` run, process worker `22`
+- coverage: `196/196`, source freeze 일치, contract-fault 통과
+- hard safety: failure `0`, 통과
+- rigid pair metamorphic: `4/4`, 통과
+- 기능 통과: PP Normal `35/49`, C++ DWA Normal `16/49`, PP Stress `6/49`,
+  C++ DWA Stress `6/49`
+- progressable 미완료: `128`건; Stress 완료는 양쪽 모두 `0/49`
+- DWA feasible detour: golden `0/2`, development `0/9`, 전체 양의 detour `0/98`
+- 결과: public prequalification 실패, 직렬 timing `not_run`, receipt 없음, hidden 미생성
+
+처음 시작한 14-worker `cpp-v1`은 worker 활용 해석을 바로잡기 위해 중단했으며 final evidence로
+사용하지 않는다. `cpp-v2`만 완료된 공개 1차 결과다. worker 수를 늘려도 길이가 큰 episode
+몇 개가 마지막에 남아 CPU가 비는 tail은 발생했다. episode 내부를 tick 단위로 나누어 paired
+상태 연속성을 깨지는 않으며, 후속 runner 성능 개선은 긴 job 우선 제출 같은 결정론적 scheduling
+범위에서만 검토한다.
+
 ## 2026-08-11 full 실행 결과
 
 - output: `simulation/path_planning_lab/outputs/dynamic-experiment-20260811-final-v4`
