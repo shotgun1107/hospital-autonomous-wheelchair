@@ -10,8 +10,8 @@
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
-- 현재 단계: `R1 완료`, `R2 공개 13+6 audit 실행 완료`, `Ideal Actor 출현 coverage hard
-  failure 2건으로 R2 자격 실패`, `R3 진입 보류`
+- 현재 단계: `R1 narrow prediction 감사 완료`, `R2-A ground-truth 경로 부분 완료`,
+  `R2-B 관측·prediction hard failure 2건으로 후속 보류`, `R3 명세 진입 가능`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -262,6 +262,17 @@ Capsule은 `19,170/20,118`이다. Normal miss `948`개는 안전 수치 완화 �
 현재 수동 feasible witness를 자동 실행 가능한 공개 time-indexed oracle로 만들고, 여러
 장면에서 공간·시간·관측 실패를 분리한다.
 
+[`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)에 따라 R2
+완료판정은 다음 두 lane으로 분리한다.
+
+```text
+R2-A: exact ground-truth Actor 기반 시간 경로 존재성
+R2-B: 관측·prediction으로 해당 기동을 판단할 수 있는지
+```
+
+R2-B 실패는 perception-integrated 종단 자격을 막지만, observation을 입력으로 받지 않는
+R3 static 공간 oracle을 자동으로 막지 않는다.
+
 ### 입력
 
 - `R1`을 통과한 prediction contract와 공개 corpus
@@ -302,6 +313,9 @@ Capsule은 `19,170/20,118`이다. Normal miss `948`개는 안전 수치 완화 �
 - `SPATIALLY_INFEASIBLE`과 `TEMPORALLY_INFEASIBLE`을 자동 witness만으로 구분할 수 없으면
   `R3` 공간 oracle이 해당 판정을 분해한다.
 - `R2` 결과에 맞춰 safety, Actor radius, clearance와 prediction envelope를 낮추지 않는다.
+- R2-A ground-truth hard failure는 해당 경로 후보를 R3·R4에 전달하지 않는다.
+- R2-A의 `SEARCH_INCONCLUSIVE`는 불가능 판정이 아니라 R3 공간 oracle 입력이다.
+- R2-B hard failure는 관측 통합 R5~R7과 hidden을 막지만 R3 공간 연구를 막지 않는다.
 
 ## R3 — Bounded 공간 Oracle 연구
 
@@ -551,9 +565,10 @@ hidden까지 연구 조건 충족
 
 | 단계 | 핵심 질문 | 완료 증거 | 현재 상태 | 다음 진입 조건 |
 |---|---|---|---|---|
-| `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 완료 | hard failure 0 |
-| `R2` | 안전한 time-indexed witness를 자동화할 수 있는가? | 자동 witness·음성 판정·taxonomy | 공개 19개 실행 완료, Ideal coverage hard failure 2건으로 미완료 | R1 완료 |
-| `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 미시작 | R2 분류 가능 |
+| `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 기존 narrow claim 완료, total Actor coverage는 R2-B 후속 | hard failure 0 |
+| `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 부분 완료: 17 matched, 횡단 1 inconclusive, 다중 위험 1 incomplete | ground-truth hard safety |
+| `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
+| `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 미시작, 명세 진입 가능 | R2-A의 검증·미해결 분류 |
 | `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 미시작 | R2·R3 계약 정리 |
 | `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 미시작 | 검증된 witness·reference |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
@@ -625,10 +640,15 @@ second-risk와 legacy dynamic-change에서 episode 중간에 새 Actor가 생성
 발생했다. 자세한 실행 정본과 수치는
 [`R2 공개 Witness 감사 결과`](r2-public-witness-audit-result-2026-08-13.md)에 보존한다.
 
-따라서 현재는 `R2 실행 완료`이지 `R2 자격 완료`가 아니다. 바로 다음 작업은 R3가 아니라
-Actor entry·visibility·fresh EMPTY 의미와 actual-Actor-without-shape coverage를 새 공개 계약으로
-동결하는 것이다. 안전 수치나 latency를 완화하지 않으며, 변경 뒤 새 manifest로 공개 감사를
-다시 통과하기 전에는 R3로 진입하지 않는다.
+따라서 기존 결합 R2는 `실행 완료`이지 전체 `자격 완료`가 아니다. 다만 사용자 결정과
+[`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)에 따라 경로
+연구와 카메라·관측 연구를 분리한다. R2-A에서 확인한 WAIT/HOLD·same-direction PASS와
+미해결 횡단·다중 위험 분류를 입력으로 R3 명세를 시작할 수 있다. R2-B의 Actor
+entry·visibility·fresh EMPTY와 역방향 coverage는 hard failure 2건을 보존한 채 카메라 통합
+후속으로 둔다.
+
+R3 결과는 online 이동 허가나 perception 통합 완료가 아니다. R2-B를 통과하기 전에는
+perception-integrated R6, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

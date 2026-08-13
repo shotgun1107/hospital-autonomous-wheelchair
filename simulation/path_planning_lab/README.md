@@ -69,8 +69,11 @@ controller·gate 실행 실패를 뜻하지 않는다.
 실행했다. PASS 후보 `135,360`개와 WAIT/HOLD 후보 `389`개가 모두 정직한 count bucket으로
 집계됐고, 산출물 coverage도 `19/19`였다. 그러나 v6 second-risk와 legacy dynamic-change에서
 episode 중간 Actor 출현 뒤 관측 latency 동안 fresh EMPTY가 유지되어 실제 Actor를 Ideal
-Capsule이 포함하지 못하는 hard failure 2건이 발생했다. 따라서 실행은 complete지만 R2 자격은
-fail이며 R3로 진입하지 않는다. 상세 수치와 다음 수정 경계는
+Capsule이 포함하지 못하는 hard failure 2건이 발생했다. 따라서 실행은 complete지만 결합 R2
+자격은 fail이다. 이후 [`ADR 0011`](../../docs/decisions/0011-separate-path-and-perception-research-gates.md)에
+따라 R2-A ground-truth path와 R2-B observation/prediction을 분리했다. 두 hard failure는
+R2-B에 보존하고, R2-A 미해결 공간 분류를 위한 R3 명세 진입은 허용한다. 상세 수치와 다음
+수정 경계는
 [`R2 공개 Witness 감사 결과`](../../docs/research/dynamic-actor-experiment/r2-public-witness-audit-result-2026-08-13.md)에
 기록했다. 구현 뒤 저장소 전체 회귀는 `688 passed`, Ruff·compileall·diff 검사는 통과했다.
 hidden은 생성·열람·실행하지 않았다.

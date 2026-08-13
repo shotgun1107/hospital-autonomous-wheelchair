@@ -3,8 +3,8 @@
 ## 1. 상태와 목적
 
 - 작성일: `2026-08-13`
-- 상태: WAIT/HOLD·PASS structured search, 공개 13+6 audit·reporting 구현과 실행 완료,
-  Ideal Actor 출현 coverage hard failure 2건으로 R2 자격 미완료
+- 상태: R2-A ground-truth path 부분 완료, R2-B observation/prediction hard failure 2건으로
+  후속 보류, R3 경로 공간 명세 진입 가능
 - 상위 단계: [R1~R7 Master Specification](10-dynamic-local-maneuver-research-master-spec.md)
 - 선행 gate: `R1 완료`
 - 실행 범위: Python `simulation_only`, 공개 corpus만 사용
@@ -37,7 +37,16 @@ online_controller_executable
 - `online_controller_executable`: 실제 persistent controller와 shared gate가 해당 기동을
   연속 실행함
 
-R2는 첫째와 둘째를 분리해 기록한다. 셋째는 `R5~R6` 대상이다.
+R2는 첫째와 둘째를 별도 gate로 분리한다. 셋째는 `R5~R6` 대상이다.
+
+```text
+R2-A = ground_truth_feasible
+R2-B = prediction_or_observation_decidable
+```
+
+R2-A는 exact Actor ground truth를 쓰는 offline path oracle이며 카메라·EMPTY·prediction을
+합격조건에 넣지 않는다. R2-B는 현재 hard failure 2건을 보존한 관측 후속 lane이다. 자세한
+gate는 [`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)을 따른다.
 
 ### 1.1 시간 영역과 구현 언어 경계
 
@@ -754,6 +763,17 @@ Python이 느리다는 사실, 낮은 CPU 사용률, cache miss, 긴 pytest 실�
 - hidden·controller·gate·안전 수치·제품 결정을 변경하지 않음
 
 R2가 완료돼도 `SPATIALLY_INFEASIBLE` 일반 판정은 완료되지 않는다. R3가 그 역할을 맡는다.
+
+### 12.1 분리된 현재 판정
+
+- `R2-A 부분 완료`: ground-truth witness hard safety는 통과했으며, 횡단 Actor 1건과 다중
+  위험 재정지 1건은 각각 `SEARCH_INCONCLUSIVE`, `not fully covered`로 R3·후속 시간 search에
+  전달한다.
+- `R2-B 실패·후속 보류`: Ideal Actor 출현 coverage hard failure 2건과 fresh EMPTY
+  false-safe 계약을 보존한다.
+- 전체 결합 `R2 완료`는 아직 아니다.
+- R3는 R2-A의 공간 분류를 보완하는 offline 연구로 시작할 수 있다.
+- R2-B 통과 전 perception-integrated R6·hidden·제품 증거는 금지한다.
 
 ## 13. R3 진입 Gate
 

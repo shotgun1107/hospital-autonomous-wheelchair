@@ -11,6 +11,12 @@
 - hidden: 생성·열람·실행하지 않음
 - 제품 알고리즘, `G1~G5`, 제품 경로분석 7단계: 결정하지 않음
 
+후속 범위 보정: 이 문서의 `R2 자격 FAIL`은 당시 결합돼 있던 ground-truth path와
+observation/prediction 전체 자격에 대한 역사적 판정으로 유지한다. 이후 사용자 결정과
+[`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)에 따라
+`R2-A ground-truth path`와 `R2-B observation/prediction`을 분리했다. hard failure 2건은
+R2-B에 귀속하며, R2-A 미해결 공간 분류를 위한 R3 명세 진입은 허용한다.
+
 이번 결과는 검색이나 보고 runner가 중단된 partial 결과가 아니다. 전체 19개 episode의
 검색·독립 검증·Ideal/Normal/Stress replay·JSON/Markdown/PNG 생성과 completion receipt
 봉인까지 끝났다. 그러나 Ideal profile hard failure가 2건이므로 `R2 완료`로 승격하지 않는다.
@@ -126,7 +132,7 @@ R2의 stricter replay는 실제 Actor 기준으로 반대 방향도 검사해 �
 > 공개 19개 R2 감사 runner와 산출물 수명주기는 완성됐지만, 공개 corpus의 Actor 출현 모델과
 > Ideal 관측·prediction 계약이 서로 충돌하므로 R2 자격은 실패했다.
 
-다음 작업은 R3 구현이 아니다. 새로운 공개 버전에서 다음을 먼저 명세해야 한다.
+결합 R2를 그대로 재실행한다면 새로운 공개 버전에서 다음을 먼저 명세해야 한다.
 
 - Actor가 episode 중간에 어디에서 어떻게 진입하는가
 - 지도 밖·가림·미관측 영역을 표현할 것인가
@@ -137,7 +143,8 @@ R2의 stricter replay는 실제 Actor 기준으로 반대 방향도 검사해 �
 
 안전 여유, Actor radius, Capsule, latency나 hard criterion을 이번 결과에 맞춰 낮추지 않는다.
 계약을 수정하면 기존 완료 output은 실패 회귀 자료로 유지하고, 새 corpus·manifest hash로 공개
-감사를 다시 실행한다. 그 재실행에서 hard failure가 `0`이 되기 전에는 R3로 진입하지 않는다.
+감사를 다시 실행한다. 이 조건은 perception-integrated R5~R7과 hidden 진입을 막는다. 후속
+gate 분리 뒤에는 observation을 입력으로 받지 않는 R3 static 공간 oracle까지 막지는 않는다.
 
 ## 6. 증거 한계
 
