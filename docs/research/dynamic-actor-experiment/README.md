@@ -70,6 +70,25 @@ stopping에서 exact Capsule 계산과 결정론을 확인한다. 이는 기존 
 방향 예측 자격 완료로 기록한다. 해당 targeted 방향 예측·공개-only 자격은 `33 passed`로
 완료했다. 이는 전체 공개 폐루프 자격이 아니며 v7 hidden은 생성·열람·실행하지 않았다.
 
+### 예측 계약 감사 1단계 — 2026-08-13
+
+후속 기동 연구의 첫 단계로
+[`09-prediction-contract-audit.md`](09-prediction-contract-audit.md)를 추가했다. 이 감사는
+공개 v6 13개와 Ideal·Normal·Stress 합성 관측만 사용해 다음을 분리한다.
+
+```text
+결정론적 Actor 운동 범위 포함 여부
+!=
+Gaussian 관측과 방향성 Capsule의 경험적 coverage
+```
+
+공개 motion transition `5,420`개에서 동결 방향 운동 계약 위반은 `0`건이고, Ideal
+Capsule은 `26,257/26,257`을 포함했다. Normal Capsule은 `19,170/20,118`
+(`95.2878%`)이며 `948`개 miss가 있었다. 이 miss는 통계 결과와 limitation으로 기록하며
+안전 수치나 prediction envelope를 낮추지 않는다. 공개 corpus에는 가속·감속·정지·회전
+transition이 없으므로 해당 기능을 검증했다고 주장하지 않는다. 새 hidden, controller 튜닝과
+제품 알고리즘 선택은 수행하지 않았다.
+
 ### v6 보정 상태 — 2026-08-11
 
 [v6 보정·재자격 명세](v6-correction-and-requalification.md)에 따라 4~6단계의

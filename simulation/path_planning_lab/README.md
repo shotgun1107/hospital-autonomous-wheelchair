@@ -156,6 +156,19 @@ py -3.12 -m venv .venv
 
 ## 실행 명령
 
+방향성 Actor 예측 계약 1단계 감사는 공개 v6 13개만 사용하며, 기존 경로를 덮지 않는 새
+output 디렉터리를 요구한다.
+
+```powershell
+$runId = Get-Date -Format "yyyyMMdd-HHmmss"
+$outputDir = ".\simulation\path_planning_lab\outputs\prediction-contract-audit-$runId"
+.\.venv\Scripts\python.exe .\simulation\path_planning_lab\scripts\run_prediction_contract_audit.py --output-dir $outputDir
+```
+
+출력은 `prediction_contract_audit.json`과 `summary.md`다. 공개 motion bound와 Ideal
+입력·Capsule 위반만 hard failure이며, Normal·Stress의 Gaussian `2σ` 및 Capsule miss는
+통계 coverage와 limitation으로 보존한다. 이 명령은 hidden을 만들거나 실행하지 않는다.
+
 구현·후속 후보 목록:
 
 ```powershell

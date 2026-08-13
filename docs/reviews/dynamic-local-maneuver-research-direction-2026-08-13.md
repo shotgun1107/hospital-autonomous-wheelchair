@@ -274,6 +274,9 @@ persistent DWB
 
 ### 7단계 — 후속 실행 순서
 
+- 1단계 예측 계약 감사는
+  [`09-prediction-contract-audit.md`](../research/dynamic-actor-experiment/09-prediction-contract-audit.md)에
+  따라 결정론적 운동 포함과 통계적 coverage를 분리한다.
 - Python에서 위 기능 구조를 먼저 증명한다.
 - 기능이 닫힌 뒤에만 계산 kernel의 C++ 이전을 검토한다.
 - 공개 기능·안전·연산 자격이 닫힌 뒤 별도 승인으로 새 hidden을 생성한다.
