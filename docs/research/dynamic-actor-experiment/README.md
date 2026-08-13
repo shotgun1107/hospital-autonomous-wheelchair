@@ -31,12 +31,15 @@
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 witness 자동화·일반화의 계약·projection·
-독립 validator·WAIT/HOLD structured search 구현`, `R2-PASS 구현 전 상세 명세 작성` 상태다.
+독립 validator·WAIT/HOLD·PASS structured search 구현`, `R2 profile replay 대표 checkpoint 구현`
+상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
 정의했다. 좌·우 통과의 후보 공간·종류별 결과·검증·시험 순서는
 [`12-pass-structured-witness-search.md`](12-pass-structured-witness-search.md)에 분리했다.
+Ideal·Normal·Stress 관측과 자동 witness의 결합은
+[`13-witness-profile-replay.md`](13-witness-profile-replay.md)에 분리했다.
 ground-truth feasible과 관측상 판단 가능, 실제 controller 실행을 서로 다른 증거로 유지한다.
 
 | 단계 | 상태 |

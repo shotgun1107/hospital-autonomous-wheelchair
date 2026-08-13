@@ -53,10 +53,23 @@ witness가 독립 validator를 통과했다. 이는 체크인된 전체 taxonomy
 PASS witness를 찾았다. 후보 bucket은 validated `38,660`, dynamic reject `70,318`, geometry
 reject `26,382`로 전체 합계와 일치했다. 같은 작은 공개 파생 입력의 serial·parallel 결과는
 후보 수·선택 witness·validation hash·semantic hash가 동일했다. 기능 실행 wall-clock은 총 약
-`29분 29초`였으며 timing qualification이 아니다. profile replay, 공개 13+6 영구 audit와
-JSON·PNG reporting은 아직 구현하지 않았으므로 R2 전체는 미완료다.
-PASS/WAIT/HOLD 직접 영향권은 `106 passed`, 저장소 전체 회귀는 8개 독립 pytest process로
-분할해 `668 passed`였다. hidden은 생성·열람·실행하지 않았다.
+`29분 29초`였으며 timing qualification이 아니다.
+
+[`R2 profile replay 상세 명세`](../../docs/research/dynamic-actor-experiment/13-witness-profile-replay.md)에
+따라 대표 `same-direction-wide-r00` PASS witness를 Ideal·Normal·Stress 관측에 다시 연결했다.
+Ideal 최초 READY는 `2.00s`, Normal은 `2.10s`, Stress는 READY 없음이었다. 최초 READY만큼
+기존 witness를 지연한 뒤 200 Hz ground-truth로 다시 검사하자 Ideal·Normal 모두 Actor
+clearance와 선언된 pass time이 달라져 무효였다. Ideal Capsule containment miss는 `0`이었지만
+predicted minimum clearance는 약 `0.07427m`로 `0.08m` 계약에 미달했다. Normal은 dropout
+`16/451`, Stress는 `89/451`이었고, Stress는 방향 판단 불가로 보수 종료됐다. 이는 자동
+witness가 존재하더라도 관측 준비시간을 포함한 time-aware search가 아직 필요하다는 결과이며,
+controller·gate 실행 실패를 뜻하지 않는다.
+
+공개 13+6 영구 audit와 JSON·PNG reporting은 아직 구현하지 않았으므로 R2 전체는 미완료다.
+PASS/WAIT/HOLD 직접 영향권은 직전 `106 passed`, profile replay 표적은 `11 passed`, profile
+replay를 포함한 직접 영향권은 `163 passed`였다. 저장소 전체 최신 회귀는 8개 독립 pytest
+process로 분할한 `679 passed`였다. hidden은
+생성·열람·실행하지 않았다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 

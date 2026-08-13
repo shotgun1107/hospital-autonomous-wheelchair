@@ -72,9 +72,9 @@ batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용
 따른다. 이 번호는 제품 경로분석 단계나 기존 동적 Actor 구현 단계와 다른 연구 단계다.
 R2의 상세 계약은
 [`witness 자동화·일반화 명세`](../../docs/research/dynamic-actor-experiment/11-witness-automation-and-generalization.md)에
-있다. 현재는 label-free 계약·projection, 독립 ground-truth validator와 WAIT/HOLD structured
-search까지 L1으로 연결됐다. PASS 자동 탐색·profile replay·영구 전체 공개 audit과 reporting
-runner는 미구현이다.
+있다. 현재는 label-free 계약·projection, 독립 ground-truth validator, WAIT/HOLD·PASS
+structured search와 대표 profile replay까지 L1으로 연결됐다. 영구 전체 공개 audit과
+reporting runner는 미구현이다.
 
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
 |---|---|---|---|
@@ -99,6 +99,8 @@ runner는 미구현이다.
 | `DYN-WIT-006` | `PASS_LEFT/RIGHT`는 같은 방향·앞선 단일 Actor만 target으로 삼고, departure→Actor active 중 ordered overtake→동일 segment 재합류→0.50 s dwell을 strict ground-truth로 검증한다. 매 이동 tick은 제한감속 terminal-stopping guard를 거치며 allowed/prohibited policy와 non-target Actor를 무시하지 않는다. | [dynamic_witness_pass.py](src/hospital_path_lab/dynamic_witness_pass.py), [dynamic_witness_validation.py](src/hospital_path_lab/dynamic_witness_validation.py), `tests/test_dynamic_witness_pass.py`, `tests/test_dynamic_witness_validation.py` | 연결됨, L1. 축 정렬 직선·단일 target structured template이며 일반 pose-space 해 존재나 online 실행 가능성을 뜻하지 않는다. |
 | `DYN-WIT-007` | PASS 후보는 frozen ordinal을 연속 shard로 나눠 process 병렬 평가할 수 있다. parent는 range 전체 coverage와 count를 확인하고 동일 total objective key로 best를 선택한 뒤 strict validator/hash를 재확인한다. worker 수·shard 크기·wall-clock은 semantic 결과에서 제외한다. | [dynamic_witness_pass.py](src/hospital_path_lab/dynamic_witness_pass.py), `tests/test_dynamic_witness_pass.py::test_parallel_shards_match_serial_semantics_and_counts` | 연결됨, L1. 2026-08-13 회사 PC 20 physical/28 logical CPU에서 14 worker로 공개 wide 5개 `135,360`후보를 완주했다. 총 wall-clock 약 `29분 29초`는 운영 진단이며 timing 자격이 아니다. |
 | `DYN-WIT-008` | 공개 same-direction-wide 5개에서 좌·우 structured PASS 자동 발견과 strict validator 통과를 확인한다. | 2026-08-13 public-only 완전탐색: validated `38,660`, dynamic reject `70,318`, geometry reject `26,382`; 총 `135,360`. 직접 영향권 `106 passed`, 전체 회귀 `668 passed`. | 수동 실행 L1. profile replay·공개 13+6 영구 audit·JSON/PNG·online controller·제품 채택 증거가 아니며 hidden은 사용하지 않았다. |
+| `DYN-WIT-009` | 자동 witness를 Ideal·Normal·Stress 관측 stream과 방향성 predictor에 재생하고 최초 READY, 상태 interval, 지연 witness ground-truth 재검증, post-apply 5 ms Capsule clearance와 actual Actor containment를 분리한다. | [dynamic_witness_profile_replay.py](src/hospital_path_lab/dynamic_witness_profile_replay.py), `tests/test_dynamic_witness_profile_replay.py`의 11개 pytest case | 연결됨, L1 대표 checkpoint. r00 RIGHT에서 Ideal READY `2.00s`, Normal `2.10s`, Stress READY 없음. Ideal·Normal 지연 witness는 ground-truth 재검증 실패했고 Ideal predicted minimum clearance 약 `0.07427m`; 직접 영향권 `163 passed`, 전체 회귀 `679 passed`. controller·gate는 실행하지 않았다. |
+| `DYN-WIT-010` | Gaussian `2σ` Capsule의 actual Actor miss를 exact ground-truth hard clearance와 분리한다. Ideal miss만 hard replay failure이며 Normal·Stress miss는 통계 limitation이다. | [13-witness-profile-replay.md](../../docs/research/dynamic-actor-experiment/13-witness-profile-replay.md), [dynamic_witness_profile_replay.py](src/hospital_path_lab/dynamic_witness_profile_replay.py), `tests/test_dynamic_witness_profile_replay.py::test_normal_and_stress_keep_degradation_separate_from_ground_truth` | 연결됨, L1. 대표 Normal containment miss `354/3,285`; 이 수치로 safety margin이나 prediction envelope를 완화하지 않는다. |
 
 ## DYN-STAGE3 — 동적 safety gate·권한·시간
 

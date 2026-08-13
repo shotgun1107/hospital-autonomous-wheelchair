@@ -782,9 +782,13 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
   보관하지 않고 best WAIT·best HOLD만 유지하는 streaming 평가
 - 5 ms grid 밖 Actor 활성 시작·종료 시각도 exact evaluation sample로 삽입해 순간 출현
   clearance 위반을 놓치지 않는 검증
-- 세 번째 구현 묶음의 구현 전 기준으로
-  [`R2-PASS 상세 명세`](12-pass-structured-witness-search.md)를 작성했다. 현재는 동결 후보이며
-  PASS 코드·시험을 구현했다는 뜻이 아니다.
+- `R2-PASS`는
+  [`좌·우 통과 상세 명세`](12-pass-structured-witness-search.md)에 따라 label-free 후보 생성,
+  strict validator와 process-shard 완전탐색까지 구현했다.
+- profile replay는
+  [`관측·예측 프로필 재생 상세 명세`](13-witness-profile-replay.md)에 따라 대표 public
+  witness의 Ideal·Normal·Stress 상태 trace, 최초 READY 지연, 지연 witness ground-truth
+  재검증과 post-apply Capsule 검사를 구현했다.
 
 `tests/test_dynamic_witness_search.py`의 현재 14개 pytest case는 full-duration hold, wait→follow
 순서, label·oracle 비누출, 결정론적 hash·count, resource limit, nonzero initial twist와 공개
@@ -796,10 +800,16 @@ controller 실행·제품 알고리즘 채택의 증거로 사용하지 않는�
 
 아직 구현하지 않은 범위는 다음과 같다.
 
-- `PASS_LEFT/PASS_RIGHT` structured geometry·kinematics 자동 탐색
-- profile별 prediction·observation replay
+- profile replay를 공개 13+6 전체 taxonomy 결과에 연결하는 영구 audit
 - 공개 13+6 taxonomy 판정과 영구 자동 audit
 - JSON·PNG·process-parallel runner
 
 따라서 현재 checkpoint는 `R2 완료`가 아니다. 수동 witness를 새 검색 결과로 가장하거나
 `NO_WITNESS`를 공간·시간 불가능으로 해석하지 않는다.
+
+대표 `same-direction-wide-r00` profile replay에서는 자동 PASS witness 자체는 exact
+ground-truth를 통과했지만, Ideal 최초 READY `2.00s`만큼 시작을 미룬 witness는 Actor
+clearance와 pass time이 달라져 재검증에 실패했다. Ideal Capsule containment miss는 없었으나
+predicted minimum clearance도 약 `0.07427m`로 동결 `0.08m`보다 작았다. 이는 현재
+ground-truth search가 observation readiness를 시간축에 포함하지 않았다는 R2 결합 공백이며,
+안전 수치 완화나 controller 실패 결론의 근거가 아니다.
