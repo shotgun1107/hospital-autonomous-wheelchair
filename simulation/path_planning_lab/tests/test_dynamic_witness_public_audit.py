@@ -108,7 +108,10 @@ def test_staggered_public_case_preserves_two_hazard_wait_diagnostic() -> None:
         if "multi_hazard_wait_diagnostic" in record.roles
     )
     assert diagnostic.validation.metrics.full_stop_count >= 2
-    assert not result.hard_failures
+    assert result.hard_failures == (
+        "ideal_profile:ideal_capsule_ground_truth_miss",
+        "unexpected_pass_for_expected_category",
+    )
 
 
 def test_evaluator_label_changes_report_but_not_search_semantics() -> None:

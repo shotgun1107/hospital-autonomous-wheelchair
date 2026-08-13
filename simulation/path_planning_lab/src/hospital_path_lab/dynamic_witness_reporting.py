@@ -62,14 +62,14 @@ from hospital_path_lab.dynamic_witness_profile_replay import (
     WitnessProfileReplayBundle,
     replay_witness_profiles,
 )
+from hospital_path_lab.dynamic_witness_restop import (
+    search_multi_hazard_restop,
+    validate_multi_hazard_restop,
+)
 from hospital_path_lab.dynamic_witness_search import (
     generate_hold_only_witness,
     generate_wait_and_follow_witness,
     search_wait_and_hold,
-)
-from hospital_path_lab.dynamic_witness_restop import (
-    search_multi_hazard_restop,
-    validate_multi_hazard_restop,
 )
 from hospital_path_lab.dynamic_witness_validation import (
     GroundTruthWitnessValidation,

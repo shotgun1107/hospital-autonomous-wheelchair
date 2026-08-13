@@ -215,8 +215,10 @@ def validate_multi_hazard_restop(
         )
         if intermediate_progress < _MINIMUM_INTERMEDIATE_PROGRESS_M - 1e-12:
             core_failures.append("intermediate_progress_insufficient")
-    if first_stop is not None and second_stop is not None:
-        if not (
+    if (
+        first_stop is not None
+        and second_stop is not None
+        and not (
             first_hazard.starts_at_s
             <= first_stop.stopped_until_s + _TIME_TOLERANCE
             and first_stop.stopped_from_s
@@ -225,8 +227,9 @@ def validate_multi_hazard_restop(
             <= second_stop.stopped_until_s + _TIME_TOLERANCE
             and second_stop.stopped_from_s
             <= second_hazard.ends_at_s + _TIME_TOLERANCE
-        ):
-            core_failures.append("hazard_order_invalid")
+        )
+    ):
+        core_failures.append("hazard_order_invalid")
 
     resumed_after_second = any(
         point.time_s > second_hazard.ends_at_s + _TIME_TOLERANCE
