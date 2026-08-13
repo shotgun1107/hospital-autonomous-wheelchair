@@ -10,8 +10,8 @@
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
-- 현재 단계: `R1 완료`, `R2 계약·projection·독립 validator·WAIT/HOLD·PASS structured search
-  구현`, `R2 Ideal·Normal·Stress 대표 profile replay checkpoint 구현`
+- 현재 단계: `R1 완료`, `R2 공개 13+6 audit 실행 완료`, `Ideal Actor 출현 coverage hard
+  failure 2건으로 R2 자격 실패`, `R3 진입 보류`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -552,7 +552,7 @@ hidden까지 연구 조건 충족
 | 단계 | 핵심 질문 | 완료 증거 | 현재 상태 | 다음 진입 조건 |
 |---|---|---|---|---|
 | `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 완료 | hard failure 0 |
-| `R2` | 안전한 time-indexed witness를 자동화할 수 있는가? | 자동 witness·음성 판정·taxonomy | 부분 구현: WAIT/HOLD·PASS·대표 profile replay | R1 완료 |
+| `R2` | 안전한 time-indexed witness를 자동화할 수 있는가? | 자동 witness·음성 판정·taxonomy | 공개 19개 실행 완료, Ideal coverage hard failure 2건으로 미완료 | R1 완료 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 미시작 | R2 분류 가능 |
 | `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 미시작 | R2·R3 계약 정리 |
 | `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 미시작 | 검증된 witness·reference |
@@ -618,12 +618,17 @@ hidden까지 연구 조건 충족
 계약이 감사 가능하고, Ideal 입력에서 결정론적 포함이 성립한다는 뜻이다. Normal·Stress의
 통계적 miss와 public corpus에 없는 가속·감속·정지·회전은 그대로 limitation이다.
 
-`R2`의 WAIT/HOLD·PASS 구조화 search와 대표 profile replay checkpoint를 구현했다. 대표
-profile replay는 ground-truth witness 존재와 관측 준비 뒤 실행 가능성이 다름을 확인했다.
-Ideal 최초 READY만큼 기존 witness를 미루면 Actor 시간관계가 바뀌어 hard validator를 다시
-통과하지 못했다. 바로 다음 작업은 이 결과를 숨기지 않고 공개 13+6 영구 audit·JSON/PNG
-reporting에 연결하는 것이다. observation readiness를 search 시간축에 포함하는 보정은 별도
-명세 변경과 공개 재검증 뒤에만 수행한다.
+`R2`의 WAIT/HOLD·PASS 구조화 search, Ideal·Normal·Stress replay와 공개 13+6 영구
+audit·JSON/Markdown/PNG reporting을 구현하고 전체 `19/19`를 실행했다. 그러나 v6
+second-risk와 legacy dynamic-change에서 episode 중간에 새 Actor가 생성된 뒤 관측 latency
+동안 fresh EMPTY가 유지돼, 실제 Actor는 존재하지만 Ideal Capsule은 없는 hard failure 2건이
+발생했다. 자세한 실행 정본과 수치는
+[`R2 공개 Witness 감사 결과`](r2-public-witness-audit-result-2026-08-13.md)에 보존한다.
+
+따라서 현재는 `R2 실행 완료`이지 `R2 자격 완료`가 아니다. 바로 다음 작업은 R3가 아니라
+Actor entry·visibility·fresh EMPTY 의미와 actual-Actor-without-shape coverage를 새 공개 계약으로
+동결하는 것이다. 안전 수치나 latency를 완화하지 않으며, 변경 뒤 새 manifest로 공개 감사를
+다시 통과하기 전에는 R3로 진입하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

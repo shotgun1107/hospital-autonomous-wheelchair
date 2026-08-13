@@ -26,7 +26,7 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
-### 동적 지역 기동 연구 R2 진행 상태 — 2026-08-13
+### 동적 지역 기동 연구 R2 실행 결과 — 2026-08-13
 
 R1 prediction 계약 감사 뒤 R2의 두 번째 구현 묶음까지 공개 episode용 label-free
 `WitnessWorldSnapshot`, 명시적 maneuver constraint, 검색 결과 계약, 독립 ground-truth
@@ -65,11 +65,15 @@ predicted minimum clearance는 약 `0.07427m`로 `0.08m` 계약에 미달했다.
 witness가 존재하더라도 관측 준비시간을 포함한 time-aware search가 아직 필요하다는 결과이며,
 controller·gate 실행 실패를 뜻하지 않는다.
 
-공개 13+6 영구 audit와 JSON·PNG reporting은 아직 구현하지 않았으므로 R2 전체는 미완료다.
-PASS/WAIT/HOLD 직접 영향권은 직전 `106 passed`, profile replay 표적은 `11 passed`, profile
-replay를 포함한 직접 영향권은 `163 passed`였다. 저장소 전체 최신 회귀는 8개 독립 pytest
-process로 분할한 `679 passed`였다. hidden은
-생성·열람·실행하지 않았다.
+공개 13+6 영구 audit와 JSON·Markdown·PNG reporting runner를 구현하고 `19/19`를 끝까지
+실행했다. PASS 후보 `135,360`개와 WAIT/HOLD 후보 `389`개가 모두 정직한 count bucket으로
+집계됐고, 산출물 coverage도 `19/19`였다. 그러나 v6 second-risk와 legacy dynamic-change에서
+episode 중간 Actor 출현 뒤 관측 latency 동안 fresh EMPTY가 유지되어 실제 Actor를 Ideal
+Capsule이 포함하지 못하는 hard failure 2건이 발생했다. 따라서 실행은 complete지만 R2 자격은
+fail이며 R3로 진입하지 않는다. 상세 수치와 다음 수정 경계는
+[`R2 공개 Witness 감사 결과`](../../docs/research/dynamic-actor-experiment/r2-public-witness-audit-result-2026-08-13.md)에
+기록했다. 구현 뒤 저장소 전체 회귀는 `688 passed`, Ruff·compileall·diff 검사는 통과했다.
+hidden은 생성·열람·실행하지 않았다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 

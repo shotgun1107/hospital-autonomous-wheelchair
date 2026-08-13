@@ -3,8 +3,8 @@
 ## 1. 상태와 목적
 
 - 작성일: `2026-08-13`
-- 상태: 상세 명세 동결, WAIT/HOLD·PASS structured search와 대표 profile replay 구현,
-  공개 13+6 영구 audit·reporting 미구현, R2 미완료
+- 상태: WAIT/HOLD·PASS structured search, 공개 13+6 audit·reporting 구현과 실행 완료,
+  Ideal Actor 출현 coverage hard failure 2건으로 R2 자격 미완료
 - 상위 단계: [R1~R7 Master Specification](10-dynamic-local-maneuver-research-master-spec.md)
 - 선행 gate: `R1 완료`
 - 실행 범위: Python `simulation_only`, 공개 corpus만 사용
@@ -820,7 +820,7 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
 
 이 순서는 연구 구현 순서이며 최종 제품 경로 알고리즘을 확정하지 않는다.
 
-### 14.1 현재 구현 checkpoint — 2026-08-13
+### 14.1 구현 checkpoint — 2026-08-13
 
 현재까지 다음을 완료했다.
 
@@ -863,14 +863,10 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
 controller 실행·제품 알고리즘 채택의 증거로 사용하지 않는다. hidden은 생성·열람·실행하지
 않았다.
 
-아직 구현하지 않은 범위는 다음과 같다.
-
-- profile replay를 공개 13+6 전체 taxonomy 결과에 연결하는 영구 audit
-- 공개 13+6 taxonomy 판정과 영구 자동 audit
-- 공개 13+6 JSON·PNG·process-parallel audit runner
-
-따라서 현재 checkpoint는 `R2 완료`가 아니다. 수동 witness를 새 검색 결과로 가장하거나
-`NO_WITNESS`를 공간·시간 불가능으로 해석하지 않는다.
+이후 `dynamic_witness_reporting.py`와 `run_dynamic_witness_audit.py`로 공개 13+6 전체 taxonomy,
+Ideal·Normal·Stress replay, JSON·Markdown·PNG와 process-parallel PASS 평가를 하나의
+비덮어쓰기 audit로 연결했다. 수동 witness를 새 검색 결과로 가장하거나 `NO_WITNESS`를
+공간·시간 불가능으로 해석하지 않는 규칙은 유지한다.
 
 대표 `same-direction-wide-r00` profile replay에서는 자동 PASS witness 자체는 exact
 ground-truth를 통과했지만, Ideal 최초 READY `2.00s`만큼 시작을 미룬 witness는 Actor
@@ -882,3 +878,20 @@ ground-truth search가 observation readiness를 시간축에 포함하지 않았
 Python 실행속도, CPU 점유율, memory와 cache 상태는 이 결론을 만들지 않았다. `2.00s`는
 관측 warmup의 `T_sim`이고, 실제 연산 deadline·CPU·memory·cache 자격은 R7 native(C++)
 qualification 전까지 미측정이다.
+
+### 14.2 공개 13+6 최종 audit 실행 — 2026-08-13
+
+source commit `4e4ba0fb91d67498fe163aca99ff1ab647224f08`에서 v6 `13/13`과 legacy
+mechanism golden `6/6`, 합계 `19/19`를 실행하고 completion receipt까지 생성했다. PASS는
+`135,360`후보 중 `38,660`이 strict validator를 통과했고, WAIT/HOLD는 `389`후보 중 `234`가
+통과했다. 기대 판정은 `17 matched`, `1 mismatched`, `1 not fully covered`였다.
+
+실행 자체는 complete지만 R2 자격은 fail이다. v6 second-risk와 legacy dynamic-change에서
+episode 중간 Actor 출현 뒤 관측 latency 동안 fresh EMPTY가 유지돼, 실제 Actor는 존재하지만
+Ideal Capsule이 없는 containment hard failure가 각각 발생했다. 이것은 Python wall-clock이나
+controller 성능 문제가 아니라 corpus Actor 출현과 Ideal 관측·prediction 의미의 계약 충돌이다.
+
+상세 결과·hash·산출물 경로는
+[`R2 공개 Witness 감사 결과`](r2-public-witness-audit-result-2026-08-13.md)에 기록한다. Actor
+entry·visibility·fresh EMPTY와 actual Actor without prediction shape의 감사 규칙을 새 공개
+버전으로 동결하고 재실행하기 전에는 R2 완료 또는 R3 진입으로 판정하지 않는다.
