@@ -4,7 +4,9 @@
 
 - 작성일: `2026-08-13`
 - 상태: 사용자 개인 연구 방향을 실행 가능한 단계 계약으로 구체화한 기준선
-- 증거 범위: Python `simulation_only`, 합성 지도, 가상 차체, open-loop 원형 Actor
+- 기능·안전 증거 범위: `R1~R6` Python `simulation_only`, 합성 지도, 가상 차체,
+  open-loop 원형 Actor
+- 연산 성능 증거 범위: `R7`의 frozen native(C++) 구현·고정 머신 qualification만 해당
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
@@ -69,7 +71,7 @@ controller가 주어진 reference를 실행하지 못함
 vs
 shared safety gate 또는 권한 계약이 실행을 거부함
 vs
-계산시간이 실행 주기를 만족하지 못함
+동결 native 구현의 실제 계산시간이 실행 주기를 만족하지 못함
 ```
 
 상위 구조는 다음으로 고정한다.
@@ -130,15 +132,39 @@ ground truth는 offline oracle과 evaluator만 사용한다.
 - 새 hidden은 `R7`에서 별도 사용자 승인과 새 seed commitment 뒤 한 번만 실행한다.
 - 기존에 소비한 v5 hidden은 새 연구의 최종 증거로 재사용하지 않는다.
 
-### 4.4 결정론과 실행 자원
+### 4.4 시간 영역, 결정론과 실행 자원
 
-- 한 episode 안의 tick은 상태가 이어지므로 직렬로 실행한다.
-- 서로 독립적인 public episode는 process 기반으로 병렬 실행할 수 있다.
+시간은 다음 네 영역으로 분리한다.
+
+| 시간 영역 | 의미 | 판정 사용 범위 |
+|---|---|---|
+| `T_sim` | Actor·차체 운동, 관측 timestamp·latency·TTL, 제어 주기, 고정 적용 지연, 제동과 episode duration | `R1~R6` 기능·안전 판정에 사용 |
+| `T_fault` | stale·late result·통신 지연을 재현하기 위해 명시적으로 주입한 결정론적 simulation-time delay | 계약·fail-closed 시험에 사용 |
+| `T_wall_python` | Python 하네스·oracle·controller·시험이 실제 PC에서 소비한 시간 | 운영·병목 진단만, 합격·탈락 금지 |
+| `T_wall_native` | semantic parity를 통과한 frozen native(C++) 구현의 고정 머신 실행시간 | `R7` 연산 자격에서만 사용 |
+
+- 문서와 결과에서 단순히 `time`이라고 쓰지 않고 가능한 한 위 시간 영역을 명시한다.
+- `R1~R6`의 `time_s`, 관측 준비 `2.00s`, `20Hz`, `50ms`, Actor 활성시각과 episode
+  duration은 모두 `T_sim`이다. Python 함수가 실제로 소비한 시간이 아니다.
+- Python 함수·후보 하나·episode·전체 회귀의 wall-clock, CPU 사용률, 프로세스 수, RSS와
+  cache 상태는 알고리즘의 `FEASIBLE`, `NO_WITNESS`, hard safety 또는 functional gate를
+  변경하지 않는다.
+- Python timeout, OOM, worker crash, 사용자의 중단과 머신 오류는
+  `INFRASTRUCTURE_INCOMPLETE`로 기록한다. 완료되지 않은 결과를 `NO_WITNESS`,
+  `RESOURCE_LIMIT`, timing failure 또는 알고리즘 실패로 바꾸지 않는다.
+- 동결 candidate·expansion limit은 search가 실제로 검사한 유한 범위를 정의하는 semantic
+  config다. 이 count limit 도달은 `SEARCH_INCONCLUSIVE/RESOURCE_LIMIT`이며 Python이 느리다는
+  판정이나 일반 해 부재가 아니다.
+- Python의 late-command 계약시험은 측정된 함수 실행시간이 아니라 `T_fault`로 늦은 결과를
+  주입해 검증한다. 실제 연산 deadline miss는 `R7`의 `T_wall_native`에서만 판정한다.
+- 서로 독립적인 public episode와 독립 후보 shard는 process 기반으로 병렬 실행할 수 있다.
+  shard 내부 frozen 순서와 ordinal을 유지하고, parent는 gap·overlap 없이 결정론적으로 환원한다.
 - paired controller 비교는 같은 worker에서 같은 seed·관측 stream을 사용한다.
 - 병렬 결과는 corpus 입력 순서로 다시 정렬해 worker 완료 순서의 영향을 없앤다.
-- wall-clock timing qualification은 worker pool 종료 뒤 CPU 간섭 없이 직렬 실행한다.
-- wall-clock 시간 자체는 결정론 대상이 아니며, 명령·상태·event·metric은 동결 tolerance
-  안에서 결정론을 만족해야 한다.
+- 한 episode의 상태 의존 20Hz tick은 직렬로 실행한다. 독립 후보 평가는 위 shard 계약 아래에서만
+  병렬화한다.
+- 명령·상태·event·metric은 동결 tolerance 안에서 결정론을 만족한다. wall-clock, worker 번호와
+  완료 순서는 semantic hash에서 제외한다.
 - 장기 실행의 checkpoint는 진단용이며, 여러 checkpoint를 이어 붙여 연속 hard-safety
   증거로 사용하지 않는다.
 
@@ -180,6 +206,10 @@ input_content_hash
 
 이 분류는 연구 판정을 위한 상위 taxonomy다. 구체 enum과 직렬화 형식은 `R2` 상세 명세에서
 정의하고 이후 단계에서 의미를 바꾸지 않는다.
+
+`INFRASTRUCTURE_INCOMPLETE`는 위 evidence taxonomy가 아니라 실행 완료 상태다. timeout·OOM·
+worker crash·I/O 실패·사용자 중단으로 semantic 평가가 끝나지 않았음을 뜻하며, 이 상태에서는
+episode evidence를 생성하지 않고 partial 진단만 보존한다.
 
 ## 6. 단계별 계약
 
@@ -385,7 +415,8 @@ PASS_RIGHT
 - completion, traffic wait와 planner deadlock
 - controller stop request, no-safe candidate와 gate override 원인
 - 최소 ground-truth clearance, path length, jerk와 각운동 지표
-- 후보 수·illegal taxonomy·계산시간 진단
+- 후보 수·illegal taxonomy
+- Python wall-clock·CPU·memory 관측값은 별도 non-qualification 병목 진단
 
 ### 완료조건
 
@@ -395,6 +426,7 @@ PASS_RIGHT
 - Normal에서 기능 실패 시 prediction, reference, controller와 gate 원인을 분리한다.
 - Stress는 안전 열화 시험이며 무조건 임무 완료를 요구하지 않는다.
 - RPP 또는 DWB 한 구현의 실패를 알고리즘 계열 전체의 실패로 확대하지 않는다.
+- Python wall-clock을 controller 기능·안전 또는 알고리즘 계열의 합격·탈락에 사용하지 않는다.
 
 ## R6 — 연속 공개 종단 자격
 
@@ -433,12 +465,13 @@ PASS_RIGHT
 - full-state digest와 연속 event trace
 - public corpus·source·parameter·code hash 동결
 
-### 실행과 timing
+### 실행과 기능 자격
 
 - 독립 episode의 기능·안전 평가는 process 병렬화할 수 있다.
 - paired 조건은 같은 worker에 유지한다.
-- wall-clock qualification은 별도 직렬 lane에서 측정한다.
-- Python 기능이 통과했지만 timing이 실패하면 기능 증거와 성능 미달을 별도로 기록한다.
+- Python wall-clock은 운영 metadata와 병목 후보로만 기록하고 R6 자격조건에 포함하지 않는다.
+- stale·late-command 적용 금지는 결정론적으로 주입한 `T_fault`로 검사한다.
+- native wall-clock qualification은 R6 결과·source·parameter를 동결한 뒤 R7에서 수행한다.
 - 기능 미달을 C++ 이식으로 숨기지 않는다.
 
 ### 완료조건
@@ -446,7 +479,7 @@ PASS_RIGHT
 - 모든 요구 public episode가 중간 checkpoint 없이 완료 또는 정당한 보수적 종료된다.
 - 최신 전체 회귀, Ruff, source freeze와 결과 hash가 통과한다.
 - 부분·축소 실행은 report-only이며 정식 public qualification receipt를 만들지 않는다.
-- 기능·안전·timing 중 미완료 항목을 숨기지 않는다.
+- 기능·안전 중 미완료 항목을 숨기지 않는다. 연산 자격은 R7 진입 전까지 `미측정`으로 둔다.
 
 ## R7 — 후속 실행·Native·Hidden 진입 Gate
 
@@ -457,15 +490,31 @@ PASS_RIGHT
 
 ### 순서
 
-1. Python에서 prediction → oracle → reference → persistent controller → gate의 기능 구조를
+1. Python에서 prediction → oracle → reference → persistent controller → gate의 기능·안전 구조를
    먼저 증명한다.
-2. 기능은 통과했으나 계산시간만 미달하면 병목을 측정한다.
-3. 의미를 바꾸지 않고 필요한 계산 kernel만 C++로 이전한다.
+2. Python profiler는 native 이식 범위를 찾는 진단에만 사용하고 deadline 합격·실패를 판정하지
+   않는다.
+3. 동결된 의미·후보·안전·평가 기준을 바꾸지 않고 실제 실행 대상 kernel을 C++로 이전한다.
 4. Python과 native의 controller·diagnostic·safety semantic parity를 확인한다.
-5. CPU 간섭 없는 직렬 wall-clock qualification을 실행한다.
-6. 공개 기능·안전·연산 자격과 manifest를 동결한다.
+5. parity를 통과한 native build만 고정 머신에서 직렬 wall-clock qualification한다.
+6. 공개 기능·안전·native 연산 자격과 manifest를 동결한다.
 7. 사용자 별도 승인 뒤 새 hidden seed commitment를 생성한다.
 8. 새 hidden을 한 번 실행하고 결과를 변경 없이 보존한다.
+
+### Native 연산 자격 조건
+
+native timing manifest에는 최소한 다음을 동결한다.
+
+- compiler·build type·optimization flag·native source hash
+- 실행 머신·CPU model·physical/logical core·OS·전원 정책
+- process/thread 수, CPU affinity와 background-load 정책
+- warm-up 횟수, warm-cache와 cold-start 측정 구분
+- allocator·동적 할당 허용 범위, peak RSS와 page-fault 관측
+- 후보 수·Actor 수·map geometry를 결박한 qualification snapshot set
+- monotonic high-resolution clock, p50·p95·p99·maximum과 deadline miss 수
+
+주 자격은 CPU contention이 없는 직렬 lane에서 수행한다. 별도의 contention·cold-cache lane은
+degradation 자료이며 주 자격 결과를 대체하거나 유리한 결과만 선택하는 데 사용하지 않는다.
 
 ### Hidden 전 필수 입력
 
@@ -482,10 +531,10 @@ PASS_RIGHT
 공개 기능 미달
 → Python 공개 연구로 복귀, hidden 금지
 
-공개 기능 통과 + timing 미달
+공개 기능 통과 + native timing 미달
 → native 최적화 후보, hidden 금지
 
-공개 기능·안전·timing 통과
+공개 기능·안전·native timing 통과
 → 사용자 승인 시 새 hidden 자격
 
 hidden hard failure
@@ -507,8 +556,8 @@ hidden까지 연구 조건 충족
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 미시작 | R2 분류 가능 |
 | `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 미시작 | R2·R3 계약 정리 |
 | `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 미시작 | 검증된 witness·reference |
-| `R6` | 연속 공개 episode 전체가 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
-| `R7` | native 또는 새 hidden으로 넘어갈 자격이 있는가? | freeze manifest·직렬 timing·승인 | 미시작 | R1~R6 증거 완결 |
+| `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
+| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 미시작 | R1~R6 기능·안전 증거 완결 |
 
 ## 8. 산출물과 보존
 
@@ -556,6 +605,9 @@ hidden까지 연구 조건 충족
 - ground-truth evaluator가 online prediction을 재사용해 독립성을 잃음
 - partial checkpoint를 연속 종단 증거로 사용
 - public 기능 실패를 native 성능 최적화로 우회
+- Python wall-clock·CPU 사용률·메모리·cache 상태를 기능 또는 알고리즘 가능성 판정에 사용
+- timeout·OOM·worker crash·사용자 중단을 `NO_WITNESS`, `RESOURCE_LIMIT` 또는 알고리즘 실패로
+  오분류
 - 실제 사람·센서·차체 증거로 확대 해석
 
 중단은 연구 실패를 숨기는 절차가 아니라 실패 계층을 다시 분리하는 gate다.
@@ -572,5 +624,9 @@ Ideal 최초 READY만큼 기존 witness를 미루면 Actor 시간관계가 바�
 통과하지 못했다. 바로 다음 작업은 이 결과를 숨기지 않고 공개 13+6 영구 audit·JSON/PNG
 reporting에 연결하는 것이다. observation readiness를 search 시간축에 포함하는 보정은 별도
 명세 변경과 공개 재검증 뒤에만 수행한다.
+
+이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
+뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)
+구현으로 `R7`에서만 판정한다.
 
 이 master specification 자체는 지역 수정이나 DWB를 제품 기능으로 채택하지 않는다.

@@ -3,8 +3,8 @@
 ## 1. 상태와 목적
 
 - 작성일: `2026-08-13`
-- 상태: 상세 명세 동결, 2차 구현 checkpoint(WAIT/HOLD structured search),
-  R2-PASS 구현 전 상세 명세 작성, R2 미완료
+- 상태: 상세 명세 동결, WAIT/HOLD·PASS structured search와 대표 profile replay 구현,
+  공개 13+6 영구 audit·reporting 미구현, R2 미완료
 - 상위 단계: [R1~R7 Master Specification](10-dynamic-local-maneuver-research-master-spec.md)
 - 선행 gate: `R1 완료`
 - 실행 범위: Python `simulation_only`, 공개 corpus만 사용
@@ -39,7 +39,31 @@ online_controller_executable
 
 R2는 첫째와 둘째를 분리해 기록한다. 셋째는 `R5~R6` 대상이다.
 
-`PASS_LEFT`·`PASS_RIGHT`의 구현 전 세부 계약은
+### 1.1 시간 영역과 구현 언어 경계
+
+R2의 시간은 Python 실행시간이 아니라 다음 `simulation time(T_sim)`만 뜻한다.
+
+- `WitnessPoint.time_s`, Actor 활성 시작·종료와 episode duration
+- 20Hz 차체 적분, 200Hz evaluator와 5ms swept sample
+- 10Hz 관측 timestamp, `100/250ms` 관측 latency와 `300ms` TTL
+- 방향성 predictor 20개 고유 관측 warmup과 최초 READY
+- 고정 command 적용 지연, 제한감속과 terminal stopping
+
+예를 들어 대표 profile replay의 Ideal READY `2.00s`는 Python이 계산에 2초를 썼다는 뜻이
+아니라 10Hz 관측 20개가 `T_sim`에서 도착하는 데 걸린 시간이다. C++로 옮겨도 관측 계약을
+바꾸지 않는 한 이 시간은 사라지지 않는다.
+
+반대로 아래 값은 `Python wall-clock(T_wall_python)`이며 R2 evidence 판정에 사용하지 않는다.
+
+- 후보 하나·episode 하나·전체 audit·pytest가 PC에서 소비한 실제 시간
+- worker 수, CPU 사용률, scheduling, Python GIL·GC와 allocator 비용
+- RSS, page fault와 warm/cold CPU cache 상태
+
+R2의 `WITNESS_FOUND`, `NO_WITNESS_IN_STRUCTURED_TEMPLATE`, `RESOURCE_LIMIT`, hard failure,
+objective와 taxonomy는 `T_wall_python`에 의존하면 안 된다. 실제 연산 deadline과 CPU·memory·
+cache 자격은 frozen C++ 구현이 Python과 semantic parity를 통과한 뒤 `R7`에서만 판정한다.
+
+`PASS_LEFT`·`PASS_RIGHT`의 세부 계약은
 [`R2-PASS 좌·우 통과 Witness 자동 탐색 상세 명세`](12-pass-structured-witness-search.md)를
 따른다. 후보 종류별 결과 보존, target Actor 결박, 직선 segment template와 구현 순서는 해당
 문서가 이 상위 명세를 구체화한다.
@@ -212,6 +236,10 @@ INVALID_INPUT
 `SPATIALLY_INFEASIBLE` 또는 `TEMPORALLY_INFEASIBLE`로 바꾸지 않는다. 일반 공간 완전성은 R3
 bounded oracle 대상이다.
 
+`INFRASTRUCTURE_INCOMPLETE`는 `WitnessSearchStatus`가 아니라 runner 완료 상태다. 후보 전체가
+semantic 규칙에 따라 끝나지 않았으므로 search result를 새로 만들지 않고 완료 shard와 partial
+진단만 보존한다.
+
 ### 4.2 Witness kind
 
 ```text
@@ -273,6 +301,9 @@ SAFE_HOLD
 R2의 local maneuver 증거에는 `REJOIN_DWELL`이면 충분하다. 기존 수동 witness 재현 회귀는
 `GOAL_DWELL`도 검사한다. `REJOIN_DWELL`을 목적지 도착으로 기록하지 않는다.
 
+`elapsed_nonqualification_ns`는 운영 진단 필드다. 값이 크거나 머신마다 달라도 semantic 결과를
+바꾸지 않으며, 없거나 측정 실패해도 witness 판정에는 영향이 없다.
+
 ## 5. R2 v1 자동 탐색 범위
 
 ### 5.1 Structured template를 사용하는 이유
@@ -311,25 +342,31 @@ R3 또는 R4 대상이다. R2 template에서 찾지 못했다는 사실은 일�
 후보 축:
 
 - side: `LEFT`, `RIGHT`
+- target Actor binding과 straight reference segment
 - departure progress
 - lateral lane offset
-- pass-complete progress
-- rejoin progress
-- terminal mode
+- departure release tick
+- 모든 translation phase의 공통 linear target
+- 모든 turn의 공통 angular magnitude
+- side wait policy: `IMMEDIATE`, `UNTIL_TARGET_INACTIVE`
 
 생성 규칙:
 
-1. departure·pass·rejoin progress는 reference 길이와 Actor 활성 구간의 progress 범위에서
-   생성한다.
+1. departure progress는 reference 길이와 Actor 활성 구간의 progress 범위에서 생성한다.
 2. progress grid 기본 간격은 `max(grid_resolution, 0.10m)`다.
 3. lateral offset은 grid cell 중심을 따라 `grid_resolution` 간격으로 생성한다.
 4. candidate footprint가 static·forbidden·allowed-region 경계를 침범하면 timing 생성 전에
    제거한다.
 5. 이탈은 departure threshold `0.10m`를 넘을 수 있는 offset만 pass 후보로 인정한다.
 6. 재합류 pose는 reference까지 `0.10m`, tangent heading 오차 `10°` 안으로 들어와야 한다.
-7. goal까지 남은 길이가 부족하면 `GOAL_DWELL` 후보를 만들지 않고 `REJOIN_DWELL`만
+7. ordered pass 뒤에는 제한감속·side wait·return·rejoin suffix 전체를 안전하게 유지할 수
+   있는 첫 suffix-safe stop point를 결정론적으로 찾는다. `pass-complete progress`와
+   `rejoin progress`를 별도 전조합 축으로 만들지 않는다.
+8. 완전 정지한 suffix stop pose의 reference projection을 같은 segment의 rejoin progress로
+   사용한다. suffix-safe stop point가 없으면 dynamic reject다.
+9. goal까지 남은 길이가 부족하면 `GOAL_DWELL` 후보를 만들지 않고 `REJOIN_DWELL`만
    평가한다.
-8. left/right 모두 생성하고 첫 성공에서 중단하지 않는다.
+10. left/right 모두 생성하고 첫 성공에서 중단하지 않는다.
 
 `0.70m` 또는 기존 witness의 약 `0.80m`를 고정 offset으로 사용하지 않는다. 두 값은 search
 grid 안의 후보일 수 있지만 정답으로 주입하지 않는다.
@@ -340,7 +377,7 @@ grid 안의 후보일 수 있지만 정답으로 주입하지 않는다.
 
 ```text
 linear target [m/s]: 0.10, 0.15, 0.20, 0.25, 0.30
-angular target [rad/s]: -0.80, -0.60, -0.40, 0, 0.40, 0.60, 0.80
+common angular magnitude [rad/s]: 0.40, 0.60, 0.80
 control period: 0.05 s
 reverse target: R2 v1 pass template에서 비활성
 ```
@@ -349,6 +386,8 @@ reverse target: R2 v1 pass template에서 비활성
 - 각속도는 기존 witness의 simulation-only `1.60rad/s²` 제한을 사용한다.
 - 선속도 방향을 바꾸기 전에는 실제 `v=0`을 거친다.
 - in-place turn은 허용하되 `v=0`, `w!=0`으로 명시한다.
+- candidate 하나는 모든 translation phase에 공통 linear target 하나를 사용한다. 모든 turn은
+  공통 angular magnitude 하나를 사용하고 부호는 목표 heading의 shortest turn으로 결정한다.
 - 각 phase는 target pose·heading tolerance 또는 episode 시간에 도달할 때 종료한다.
 - current twist로 pose를 적분한 다음 다음 tick twist를 갱신하는 기존 20Hz convention을
   유지한다.
@@ -423,13 +462,20 @@ candidate_storage                   = streaming, best+diagnostics만 보존
 wall_clock_timeout                  = 판정에 사용하지 않음
 ```
 
-- limit은 manifest와 result hash에 포함한다.
-- limit 도달 시 `RESOURCE_LIMIT`이며 해 부재가 아니다.
-- 실행시간이 길면 episode별 process 병렬화를 사용할 수 있지만 candidate 순서는 바꾸지
+- logical candidate·expansion limit은 manifest와 result hash에 포함한다.
+- count limit 도달 시 `RESOURCE_LIMIT`이며 해 부재나 Python 성능 실패가 아니다.
+- Python 실행이 오래 걸린다는 이유만으로 아직 평가하지 않은 후보를 불법·unsafe 또는
+  `NO_WITNESS`로 세지 않는다.
+- 독립 episode와 frozen ordinal의 독립 candidate shard는 process 병렬화할 수 있다. shard는
+  서로 겹치지 않는 연속 범위이고 내부 순서는 직렬이며, parent는 gap·overlap·duplicate 없이
+  동일 objective key로 환원한다.
+- worker 수·shard 크기·completion 순서가 candidate count, 선택 witness, validation hash와
+  semantic hash를 바꾸면 실패다.
+- watchdog timeout, OOM, worker crash, 사용자의 중단과 I/O 오류는
+  `INFRASTRUCTURE_INCOMPLETE`다. partial을 보존하되 `RESOURCE_LIMIT`이나 search 결과로 봉인하지
   않는다.
-- 한 episode 내부 search·validation은 결정론적 직렬 순서다.
-- wall-clock hang 방지 watchdog을 추가하더라도 `RESOURCE_LIMIT`과 별도 infrastructure failure로
-  기록한다.
+- wall-clock·worker·CPU·RSS·cache 관측값은 별도 operational metadata이며 semantic hash와
+  완료조건에서 제외한다.
 - public development 결과를 본 뒤 limit을 바꾸면 새 audit version·config hash로 전체 public을
   다시 실행한다. 좋은 episode에만 다른 limit을 적용하지 않는다.
 
@@ -588,6 +634,12 @@ manifest 필수 항목:
 - output schema version
 - hidden 사용 `false`
 
+다음 운영 metadata는 기록할 수 있지만 R2 semantic hash와 판정에는 포함하지 않는다.
+
+- Python wall-clock, worker 수·shard 크기와 process 완료 순서
+- CPU 사용률, peak RSS, page fault와 warm/cold cache 구분
+- host·Python version과 중단·재개 진단
+
 PNG에는 static·forbidden·reference·Actor ground-truth trajectory·witness·departure·overtake·
 rejoin을 표시한다. PNG는 사람이 확인하는 보조물이며 JSON 판정을 대체하지 않는다.
 
@@ -611,6 +663,9 @@ rejoin을 표시한다. PNG는 사람이 확인하는 보조물이며 JSON 판�
 - category label 변경이 search 결과를 바꿈
 - known forbidden·wait-only golden에서 pass false positive
 
+Python이 느리다는 사실, 낮은 CPU 사용률, cache miss, 긴 pytest 실행시간 자체는 hard failure가
+아니다.
+
 ### 정상 음성 결과
 
 - explicit forbidden에서 pass 미생성
@@ -628,6 +683,8 @@ rejoin을 표시한다. PNG는 사람이 확인하는 보조물이며 JSON 판�
 - Gaussian coverage가 확률적 안전 보장이 아님
 - profile replay가 authority·controller 실행 증거가 아님
 - 가상 차체와 open-loop Actor만 사용
+- Python 하네스 wall-clock은 native 실시간 자격 증거가 아님
+- timeout·OOM·worker crash·사용자 중단이 있으면 해당 실행은 infrastructure incomplete
 
 ## 11. 시험 명세
 
@@ -641,40 +698,42 @@ rejoin을 표시한다. PNG는 사람이 확인하는 보조물이며 JSON 판�
 6. candidate 순서와 process completion 순서가 selected witness를 바꾸지 않음
 7. left/right mirror에서 rigid-transform 동등 결과
 8. `0.70m` 또는 legacy command ticks가 search 정답으로 하드코딩되지 않음
+9. elapsed·worker·shard·CPU metadata를 바꿔도 semantic hash와 판정이 같음
+10. watchdog 중단·worker crash를 `RESOURCE_LIMIT`·`NO_WITNESS`로 오분류하지 않음
 
 ### 11.2 Witness·validator 적대시험
 
-9. 기존 same-direction-wide positive 자동 witness 통과
-10. pose 한 점 측면 변조의 운동학 실패
-11. 20Hz timestamp 한 점 변조 실패
-12. 선·각속도와 가감속 초과 실패
-13. static·forbidden 침범 실패
-14. 200Hz 사이 충돌을 20Hz endpoint만으로 놓치지 않음
-15. 실제 Actor clearance `0.08m` 경계 통과·미달 실패
-16. overtake 전 rejoin 또는 Actor 소멸 뒤 잘못된 pass 판정 실패
-17. rejoin `0.50s` 미만 실패
-18. terminal 실제 정지·dwell 누락 실패
+11. 기존 same-direction-wide positive 자동 witness 통과
+12. pose 한 점 측면 변조의 운동학 실패
+13. 20Hz timestamp 한 점 변조 실패
+14. 선·각속도와 가감속 초과 실패
+15. static·forbidden 침범 실패
+16. 200Hz 사이 충돌을 20Hz endpoint만으로 놓치지 않음
+17. 실제 Actor clearance `0.08m` 경계 통과·미달 실패
+18. overtake 전 rejoin 또는 Actor 소멸 뒤 잘못된 pass 판정 실패
+19. rejoin `0.50s` 미만 실패
+20. terminal 실제 정지·dwell 누락 실패
 
 ### 11.3 공개 corpus 시험
 
-19. v6 feasible replica 5개에서 ground-truth pass witness 자동 발견
-20. same-direction-narrow에서 pass false positive `0`
-21. v6 wait 5개에서 wait·follow 또는 정당한 hold
-22. v6 dynamic-change 2개에서 두 위험의 순서와 재정지 evidence
-23. legacy no-safe golden analytic 음성 판정
-24. legacy observation-invalid golden의 `OBSERVATION_UNDECIDABLE`
-25. Ideal replay는 deterministic exact input
-26. Normal replay의 READY·Capsule·limitation 기록
-27. Stress low-confidence·dropout을 우회 성공으로 가장하지 않음
-28. serial과 process-parallel episode 결과 동일
+21. v6 feasible replica 5개에서 ground-truth pass witness 자동 발견
+22. same-direction-narrow에서 pass false positive `0`
+23. v6 wait 5개에서 wait·follow 또는 정당한 hold
+24. v6 dynamic-change 2개에서 두 위험의 순서와 재정지 evidence
+25. legacy no-safe golden analytic 음성 판정
+26. legacy observation-invalid golden의 `OBSERVATION_UNDECIDABLE`
+27. Ideal replay는 deterministic exact input
+28. Normal replay의 READY·Capsule·limitation 기록
+29. Stress low-confidence·dropout을 우회 성공으로 가장하지 않음
+30. serial과 process-parallel episode 결과 동일
 
 ### 11.4 출력·회귀
 
-29. JSON schema·self hash·manifest hash 검증
-30. 기존 output 비덮어쓰기
-31. partial 결과가 final evidence로 봉인되지 않음
-32. graphically empty/negative 결과도 PNG 생성
-33. 표적 시험, Ruff, compileall과 최신 전체 회귀 통과
+31. JSON schema·self hash·manifest hash 검증
+32. 기존 output 비덮어쓰기
+33. partial·infrastructure incomplete 결과가 final evidence로 봉인되지 않음
+34. graphically empty/negative 결과도 PNG 생성
+35. 표적 시험, Ruff, compileall과 최신 전체 회귀 통과
 
 ## 12. R2 완료조건
 
@@ -689,6 +748,7 @@ rejoin을 표시한다. PNG는 사람이 확인하는 보조물이며 JSON 판�
 - `NO_WITNESS`, resource limit과 일반 infeasible을 구분
 - ground-truth feasible과 profile observation decidable을 분리
 - serial/process 결과 결정론
+- Python wall-clock·CPU·memory·cache metadata가 evidence 판정을 바꾸지 않음
 - JSON·Markdown·PNG 비덮어쓰기 산출물 생성
 - 표적·전체 회귀와 코드 품질 검사 통과
 - hidden·controller·gate·안전 수치·제품 결정을 변경하지 않음
@@ -713,7 +773,10 @@ NO_WITNESS_IN_STRUCTURED_TEMPLATE
 → R3 bounded 공간 oracle 입력
 
 RESOURCE_LIMIT
-→ search config·성능 문제, 불가능 판정 금지
+→ 동결한 structured-search work bound 도달, Python timing failure나 불가능 판정 금지
+
+INFRASTRUCTURE_INCOMPLETE
+→ partial 보존·재실행 또는 재개, search taxonomy·알고리즘 판정 금지
 ```
 
 다음 상황에서는 R3 구현 전에 중단하고 보고한다.
@@ -759,7 +822,7 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
 
 ### 14.1 현재 구현 checkpoint — 2026-08-13
 
-두 번째 구현 묶음까지 다음을 완료했다.
+현재까지 다음을 완료했다.
 
 - `dynamic_witness_contracts.py`: label-free `WitnessWorldSnapshot`, 명시적
   `ManeuverConstraintSpec`, witness·검색 상태·objective·result 계약
@@ -789,6 +852,8 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
   [`관측·예측 프로필 재생 상세 명세`](13-witness-profile-replay.md)에 따라 대표 public
   witness의 Ideal·Normal·Stress 상태 trace, 최초 READY 지연, 지연 witness ground-truth
   재검증과 post-apply Capsule 검사를 구현했다.
+- public PASS 완전탐색 wall-clock과 전체 pytest 실행시간은 운영 진단으로만 기록했고,
+  witness·taxonomy·안전·R2 완료 판정에는 사용하지 않았다.
 
 `tests/test_dynamic_witness_search.py`의 현재 14개 pytest case는 full-duration hold, wait→follow
 순서, label·oracle 비누출, 결정론적 hash·count, resource limit, nonzero initial twist와 공개
@@ -802,7 +867,7 @@ controller 실행·제품 알고리즘 채택의 증거로 사용하지 않는�
 
 - profile replay를 공개 13+6 전체 taxonomy 결과에 연결하는 영구 audit
 - 공개 13+6 taxonomy 판정과 영구 자동 audit
-- JSON·PNG·process-parallel runner
+- 공개 13+6 JSON·PNG·process-parallel audit runner
 
 따라서 현재 checkpoint는 `R2 완료`가 아니다. 수동 witness를 새 검색 결과로 가장하거나
 `NO_WITNESS`를 공간·시간 불가능으로 해석하지 않는다.
@@ -813,3 +878,7 @@ clearance와 pass time이 달라져 재검증에 실패했다. Ideal Capsule con
 predicted minimum clearance도 약 `0.07427m`로 동결 `0.08m`보다 작았다. 이는 현재
 ground-truth search가 observation readiness를 시간축에 포함하지 않았다는 R2 결합 공백이며,
 안전 수치 완화나 controller 실패 결론의 근거가 아니다.
+
+Python 실행속도, CPU 점유율, memory와 cache 상태는 이 결론을 만들지 않았다. `2.00s`는
+관측 warmup의 `T_sim`이고, 실제 연산 deadline·CPU·memory·cache 자격은 R7 native(C++)
+qualification 전까지 미측정이다.
