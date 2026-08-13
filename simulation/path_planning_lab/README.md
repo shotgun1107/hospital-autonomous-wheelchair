@@ -28,16 +28,25 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 
 ### 동적 지역 기동 연구 R2 진행 상태 — 2026-08-13
 
-R1 prediction 계약 감사 뒤 R2의 첫 구현 묶음으로 공개 episode용 label-free
-`WitnessWorldSnapshot`, 명시적 maneuver constraint, 검색 결과 계약과 독립 ground-truth
-witness validator를 추가했다. 새 validator는 기존 corpus의 private 판정기를 재사용하지 않고
-20 Hz 운동학·가감속, 200 Hz 정적·금지구역·정확한 Actor 원 clearance, ordered
-departure→overtake→rejoin과 terminal dwell을 검사한다. 기존 same-direction-wide 수동
-positive 5개는 이 독립 경로에서도 통과한다.
+R1 prediction 계약 감사 뒤 R2의 두 번째 구현 묶음까지 공개 episode용 label-free
+`WitnessWorldSnapshot`, 명시적 maneuver constraint, 검색 결과 계약, 독립 ground-truth
+witness validator와 `HOLD_ONLY`·`WAIT_AND_FOLLOW` structured search를 추가했다. WAIT/HOLD
+search는 category·oracle 없이 Actor 활성 사건의 deterministic anchor, 20 Hz reference follow와
+정확한 Actor 원의 terminal-stopping guard를 사용하고, 모든 선택 후보를 별도의 200 Hz
+validator로 다시 검사한다. `HOLD_ONLY`는 episode 전체 정지를 요구하며,
+`WAIT_AND_FOLLOW`는 terminal dwell을 제외한 실제 wait 뒤 `0.10m` 이상 후속 progress를
+요구한다. resource limit, 후보 count bucket, validator version·validation hash와 wall-clock을
+제외한 semantic hash도 결과 계약에 포함한다.
 
-structured WAIT/HOLD·PASS 자동 탐색, profile replay, 공개 13+6 taxonomy audit와
-JSON·PNG runner는 아직 구현하지 않았다. 따라서 이 상태는 R2 완료나 online controller
-우회 증거가 아니며 hidden은 사용하지 않는다.
+`test_dynamic_witness_search.py`의 현재 14개 pytest case가 이 subset을 검사한다. 후보는 초기
+제동과 최소 wait를 반영한 effective departure tick으로 중복 제거하며, 전체 witness를 쌓지
+않고 최적 WAIT·HOLD만 유지한다. validator는 5 ms grid 밖 Actor 활성 사건도 exact sample로
+추가한다. 별도의
+2026-08-13 읽기 전용 수동 감사에서는 v6 공개 `13/13`과 legacy golden `6/6`의 selected
+witness가 독립 validator를 통과했다. 이는 체크인된 전체 taxonomy audit나 영구 CI 근거가
+아니며 category 정답, online controller 실행 또는 제품 채택을 뜻하지 않는다.
+`PASS_LEFT/PASS_RIGHT`, profile replay, JSON·PNG reporting과 process-parallel runner는 아직
+구현하지 않았으므로 R2는 미완료다. hidden은 생성·열람·실행하지 않았다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 

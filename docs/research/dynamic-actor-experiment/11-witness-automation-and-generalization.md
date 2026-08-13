@@ -3,7 +3,7 @@
 ## 1. 상태와 목적
 
 - 작성일: `2026-08-13`
-- 상태: 상세 명세 동결, 1차 구현 완료(계약·projection·독립 validator), 자동 탐색 미구현
+- 상태: 상세 명세 동결, 2차 구현 checkpoint(WAIT/HOLD structured search), R2 미완료
 - 상위 단계: [R1~R7 Master Specification](10-dynamic-local-maneuver-research-master-spec.md)
 - 선행 gate: `R1 완료`
 - 실행 범위: Python `simulation_only`, 공개 corpus만 사용
@@ -251,6 +251,7 @@ WitnessSearchResult
 - selected_witness or null
 - termination_reason
 - deterministic objective tuple
+- validator version + selected validation hash
 - elapsed_nonqualification_ns
 - content_hash excluding wall-clock
 ```
@@ -362,6 +363,17 @@ reverse target: R2 v1 pass template에서 비활성
 Actor active 시작·종료, reference 투영 순서가 바뀔 수 있는 시각과 observation readiness
 변화는 event anchor로 기록하지만, 정답 category는 사용하지 않는다.
 
+현재 구현된 WAIT/HOLD subset은 `t=0`, 실제 비terminal wait 최소값, 각 Actor의 활성 시작·종료와
+그 다음 20 Hz tick을 결정론적 departure anchor로 사용한다. reference polyline의 각 segment를
+20 Hz에서 가감속·정지·제자리 정렬하며 따라가고, 매 이동 후보에는 정확한 ground-truth Actor
+원에 대한 terminal-stopping guard를 먼저 적용한다. 이 guard는 최종 판정기가 아니며, 생성된
+witness는 아래 독립 200 Hz validator를 다시 통과해야 한다.
+
+`HOLD_ONLY`는 짧은 terminal dwell이 아니라 `t=0`부터 episode 종료까지 같은 초기 pose에서
+실제 정지를 유지해야 한다. `WAIT_AND_FOLLOW`는 terminal dwell과 별개의 실제 비terminal wait
+뒤 reference progress가 최소 `0.10m` 더 증가해야 한다. 단순히 먼저 이동한 뒤 terminal 직전에
+멈추는 궤적은 wait→follow witness로 인정하지 않는다.
+
 ground-truth search는 Actor의 정확한 trajectory를 사용한다. observation-conditioned replay는
 탐색 뒤 별도 단계에서 수행한다. noisy observation seed에 맞춰 ground-truth witness geometry를
 튜닝하지 않는다.
@@ -435,6 +447,8 @@ R2 template는 완전한 pose-space 탐색이 아니다. `NO_WITNESS_IN_STRUCTUR
 11. rejoin 상태가 연속 `>=0.50s`
 12. terminal 실제 정지와 `>=0.50s` 동일 pose dwell
 13. episode duration 안의 종료
+14. `HOLD_ONLY`의 episode 전체 정지 유지
+15. `WAIT_AND_FOLLOW`의 terminal dwell 제외 실제 wait와 그 뒤 `>=0.10m` 후속 progress
 
 평가기 hard clearance는 online prediction shape가 아니라 정확한 ground-truth Actor circle을
 사용한다. online predictor와 독립성을 유지한다.
@@ -734,7 +748,7 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
 
 ### 14.1 현재 구현 checkpoint — 2026-08-13
 
-첫 구현 묶음은 다음까지만 완료했다.
+두 번째 구현 묶음까지 다음을 완료했다.
 
 - `dynamic_witness_contracts.py`: label-free `WitnessWorldSnapshot`, 명시적
   `ManeuverConstraintSpec`, witness·검색 상태·objective·result 계약
@@ -745,12 +759,32 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
 - 기존 same-direction-wide 공개 positive 5개를 새 독립 validator로 재검증
 - pose·timestamp·가속·terminal dwell·provenance·no-passing·Actor clearance 변조와
   20 Hz endpoint 사이 위험을 거부하는 적대 시험
+- `dynamic_witness_search.py`: label·oracle을 받지 않는 `HOLD_ONLY`와
+  `WAIT_AND_FOLLOW` structured search
+- Actor 활성 사건 기반 departure anchor, 20 Hz reference-follow 합성, 정확한 Actor 원의
+  terminal-stopping guard와 최종 독립 validator 재검증
+- episode 전체를 덮는 `HOLD_ONLY`, terminal dwell과 분리한 실제 비terminal wait, wait 뒤
+  `0.10m` 이상 후속 progress 순서 검증
+- `RESOURCE_LIMIT`과 template no-witness 분리, 후보 수 bucket 합계, validator version과 선택
+  validation hash 결박, wall-clock 제외 semantic result hash
+- 초기 제동과 최소 wait를 반영한 effective departure tick 정규화·중복 제거, 전체 후보를
+  보관하지 않고 best WAIT·best HOLD만 유지하는 streaming 평가
+- 5 ms grid 밖 Actor 활성 시작·종료 시각도 exact evaluation sample로 삽입해 순간 출현
+  clearance 위반을 놓치지 않는 검증
+
+`tests/test_dynamic_witness_search.py`의 현재 14개 pytest case는 full-duration hold, wait→follow
+순서, label·oracle 비누출, 결정론적 hash·count, resource limit, nonzero initial twist와 공개
+직선·코너·다중 Actor 대표 사례를 검사한다. 또한 2026-08-13 읽기 전용 수동 감사에서 v6 공개
+`13/13`과 legacy golden `6/6`의 선택 witness가 독립 validator를 통과했다. 이 `13+6` 결과는
+아직 체크인된 전체 공개 audit runner나 영구 CI 시험이 아니며, taxonomy 정답 일치·online
+controller 실행·제품 알고리즘 채택의 증거로 사용하지 않는다. hidden은 생성·열람·실행하지
+않았다.
 
 아직 구현하지 않은 범위는 다음과 같다.
 
-- WAIT/HOLD와 PASS structured template 자동 생성·탐색
+- `PASS_LEFT/PASS_RIGHT` structured geometry·kinematics 자동 탐색
 - profile별 prediction·observation replay
-- 공개 13+6 전체 taxonomy audit
+- 공개 13+6 taxonomy 판정과 영구 자동 audit
 - JSON·PNG·process-parallel runner
 
 따라서 현재 checkpoint는 `R2 완료`가 아니다. 수동 witness를 새 검색 결과로 가장하거나

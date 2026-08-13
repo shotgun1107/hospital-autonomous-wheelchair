@@ -404,6 +404,95 @@ def test_200hz_validator_catches_between_tick_actor_clearance(feasible_episode) 
     assert "actor_clearance_violation" in result.failures
 
 
+def test_validator_samples_exact_off_grid_actor_appearance_time(
+    feasible_episode,
+) -> None:
+    profile = VIRTUAL_DOLL_WHEELCHAIR_V0_1
+    pose = feasible_episode.initial_state.pose
+    actor = DynamicCorpusActor(
+        actor_id="off-grid-appearance-actor",
+        active_from_s=0.002,
+        active_until_s=0.50,
+        start_position=Point2D(
+            pose.x
+            + profile.collision_length_m / 2.0
+            + 0.18
+            + profile.minimum_clearance_m
+            - 0.0001,
+            pose.y,
+        ),
+        velocity=Vector2D(0.50, 0.0),
+    )
+    world, witness = _stationary_hold_contract(feasible_episode, actor)
+
+    result = validate_ground_truth_witness(world, witness)
+
+    assert not result.passed
+    assert result.metrics.minimum_actor_clearance_m is not None
+    assert result.metrics.minimum_actor_clearance_m < profile.minimum_clearance_m
+    assert "actor_clearance_violation" in result.failures
+
+
+def test_validator_samples_exact_inclusive_off_grid_actor_end_time(
+    feasible_episode,
+) -> None:
+    profile = VIRTUAL_DOLL_WHEELCHAIR_V0_1
+    pose = feasible_episode.initial_state.pose
+    actor = DynamicCorpusActor(
+        actor_id="off-grid-inclusive-end-actor",
+        active_from_s=0.0,
+        active_until_s=0.002,
+        start_position=Point2D(
+            pose.x
+            + profile.collision_length_m / 2.0
+            + 0.18
+            + profile.minimum_clearance_m
+            + 0.0009,
+            pose.y,
+        ),
+        velocity=Vector2D(-0.50, 0.0),
+    )
+    world, witness = _stationary_hold_contract(feasible_episode, actor)
+
+    result = validate_ground_truth_witness(world, witness)
+
+    assert not result.passed
+    assert result.metrics.minimum_actor_clearance_m is not None
+    assert result.metrics.minimum_actor_clearance_m < profile.minimum_clearance_m
+    assert "actor_clearance_violation" in result.failures
+
+
+def test_actor_event_timestamp_is_not_rounded_out_of_its_active_interval(
+    feasible_episode,
+) -> None:
+    profile = VIRTUAL_DOLL_WHEELCHAIR_V0_1
+    pose = feasible_episode.initial_state.pose
+    active_until_s = 0.4048999999996
+    exact_unsafe_clearance_m = profile.minimum_clearance_m - 0.0001
+    actor = DynamicCorpusActor(
+        actor_id="sub-picosecond-event-rounding-actor",
+        active_from_s=0.0,
+        active_until_s=active_until_s,
+        start_position=Point2D(
+            pose.x
+            + profile.collision_length_m / 2.0
+            + 0.18
+            + exact_unsafe_clearance_m
+            + 0.50 * active_until_s,
+            pose.y,
+        ),
+        velocity=Vector2D(-0.50, 0.0),
+    )
+    world, witness = _stationary_hold_contract(feasible_episode, actor)
+
+    result = validate_ground_truth_witness(world, witness)
+
+    assert not result.passed
+    assert result.metrics.minimum_actor_clearance_m is not None
+    assert result.metrics.minimum_actor_clearance_m <= exact_unsafe_clearance_m
+    assert "actor_clearance_violation" in result.failures
+
+
 def test_declared_event_time_must_match_independent_measurement(
     feasible_episode,
 ) -> None:

@@ -172,6 +172,7 @@ def validate_ground_truth_witness(
     samples = _validate_motion_and_build_samples(world, witness, failures)
     geometry = _validate_geometry_and_events(world, witness, samples, failures)
     terminal_dwell_s = _validate_terminal(world, witness, failures)
+    _validate_kind_semantics(world, witness, samples, failures)
 
     path_length_m = sum(
         hypot(right.pose.x - left.pose.x, right.pose.y - left.pose.y)
@@ -258,18 +259,36 @@ def _validate_motion_and_build_samples(
             if not _poses_close(expected_pose, right.pose):
                 failures.append("kinematic_pose_mismatch")
             subdivisions = max(1, ceil(duration_s / contract.evaluator_period_s))
-            for subdivision in range(subdivisions):
-                offset_s = min(
+            evaluation_times_s = {
+                left.time_s
+                + min(
                     duration_s,
                     subdivision * contract.evaluator_period_s,
                 )
+                for subdivision in range(subdivisions)
+            }
+            for actor in world.actors:
+                for event_time_s in (actor.active_from_s, actor.active_until_s):
+                    if left.time_s <= event_time_s < right.time_s:
+                        evaluation_times_s.add(event_time_s)
+            for sample_time_s in sorted(evaluation_times_s):
+                offset_s = sample_time_s - left.time_s
                 samples.append(
                     _ValidationSample(
-                        time_s=left.time_s + offset_s,
+                        time_s=sample_time_s,
                         pose=_integrate_pose(left.pose, left.twist, offset_s),
                         twist=left.twist,
                     )
                 )
+    final_twist = witness.points[-1].twist
+    if not (
+        -profile.max_reverse_speed_mps - 1e-9
+        <= final_twist.linear
+        <= profile.max_forward_speed_mps + 1e-9
+    ):
+        failures.append("linear_speed_exceeded")
+    if abs(final_twist.angular) > profile.max_angular_speed_radps + 1e-9:
+        failures.append("angular_speed_exceeded")
     samples.append(
         _ValidationSample(
             time_s=witness.points[-1].time_s,
@@ -475,6 +494,8 @@ def _validate_terminal(
         if final_heading_error > _REJOIN_HEADING_TOLERANCE_RAD:
             failures.append("terminal_rejoin_heading_exceeded")
     elif witness.terminal_mode is WitnessTerminalMode.SAFE_HOLD:
+        if abs(final.time_s - world.duration_s) > _TIME_TOLERANCE_S:
+            failures.append("safe_hold_does_not_cover_world")
         if any(
             not _twist_stopped(point.twist)
             or not _poses_close(point.pose, world.initial_state.pose)
@@ -482,6 +503,84 @@ def _validate_terminal(
         ):
             failures.append("safe_hold_moved")
     return terminal_dwell_s
+
+
+def _validate_kind_semantics(
+    world: WitnessWorldSnapshot,
+    witness: AutomatedWitness,
+    samples: tuple[_ValidationSample, ...],
+    failures: list[str],
+) -> None:
+    if witness.kind is not WitnessKind.WAIT_AND_FOLLOW:
+        return
+    projections = tuple(
+        _project_to_reference(sample.pose, world.reference_path) for sample in samples
+    )
+    if max((projection.distance_m for projection in projections), default=0.0) > (
+        _REJOIN_DISTANCE_M + 1e-9
+    ):
+        failures.append("wait_follow_left_reference_corridor")
+    initial_progress_m = projections[0].progress_m
+    final_progress_m = projections[-1].progress_m
+    if final_progress_m <= initial_progress_m + 0.10:
+        failures.append("wait_follow_has_no_forward_progress")
+    stopped_duration_s = 0.0
+    maximum_stopped_duration_s = 0.0
+    qualified_wait_end_indices: list[int] = []
+    terminal_start_s = witness.points[-1].time_s - witness.terminal_dwell_s
+    for index, (left, right) in enumerate(
+        zip(samples, samples[1:], strict=False)
+    ):
+        if left.time_s >= terminal_start_s - _TIME_TOLERANCE_S:
+            break
+        duration_s = right.time_s - left.time_s
+        if _twist_stopped(left.twist):
+            stopped_duration_s += duration_s
+            maximum_stopped_duration_s = max(
+                maximum_stopped_duration_s,
+                stopped_duration_s,
+            )
+        else:
+            if stopped_duration_s >= _REJOIN_DWELL_S - 1e-12:
+                qualified_wait_end_indices.append(index)
+            stopped_duration_s = 0.0
+    if maximum_stopped_duration_s < _REJOIN_DWELL_S - 1e-12:
+        failures.append("wait_follow_has_no_actual_wait")
+    elif not any(
+        _progressed_after_wait(
+            samples,
+            projections,
+            wait_end_index=wait_end_index,
+            terminal_start_s=terminal_start_s,
+        )
+        for wait_end_index in qualified_wait_end_indices
+    ):
+        failures.append("wait_follow_did_not_progress_after_wait")
+    if witness.terminal_mode not in (
+        WitnessTerminalMode.GOAL_DWELL,
+        WitnessTerminalMode.REJOIN_DWELL,
+    ):
+        failures.append("wait_follow_terminal_mode_invalid")
+
+
+def _progressed_after_wait(
+    samples: tuple[_ValidationSample, ...],
+    projections: tuple[_ReferenceProjection, ...],
+    *,
+    wait_end_index: int,
+    terminal_start_s: float,
+) -> bool:
+    progress_at_wait_end_m = projections[wait_end_index].progress_m
+    return any(
+        sample.time_s < terminal_start_s - _TIME_TOLERANCE_S
+        and sample.twist.linear > 1e-12
+        and projection.progress_m >= progress_at_wait_end_m + 0.10 - 1e-12
+        for sample, projection in zip(
+            samples[wait_end_index:],
+            projections[wait_end_index:],
+            strict=True,
+        )
+    )
 
 
 def _find_sustained_rejoin(

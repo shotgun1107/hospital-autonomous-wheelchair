@@ -581,6 +581,8 @@ class WitnessSearchResult:
     termination_reason: str
     deterministic_objective: WitnessObjective | None
     elapsed_nonqualification_ns: int
+    validator_version: str = WITNESS_VALIDATOR_VERSION
+    selected_validation_hash: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, WitnessSearchStatus):
@@ -594,6 +596,8 @@ class WitnessSearchResult:
             )
         ):
             raise ValueError("witness search result identity must not be empty")
+        if self.validator_version != WITNESS_VALIDATOR_VERSION:
+            raise ValueError("unsupported witness validator version")
         counts = (
             self.generated_count,
             self.geometry_pruned_count,
@@ -608,8 +612,16 @@ class WitnessSearchResult:
             raise ValueError("WITNESS_FOUND must carry exactly one selected witness")
         if found != (self.deterministic_objective is not None):
             raise ValueError("WITNESS_FOUND must carry one deterministic objective")
+        if found != (self.selected_validation_hash is not None):
+            raise ValueError("WITNESS_FOUND must carry one validation hash")
         if found:
             assert self.selected_witness is not None
+            assert self.selected_validation_hash is not None
+            if len(self.selected_validation_hash) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in self.selected_validation_hash
+            ):
+                raise ValueError("selected validation hash must be lowercase SHA-256")
             if any(
                 (
                     self.selected_witness.source_projection_hash
@@ -627,7 +639,7 @@ class WitnessSearchResult:
             self.geometry_pruned_count
             + self.dynamic_rejected_count
             + self.validated_count
-            > self.generated_count
+            != self.generated_count
         ):
             raise ValueError("witness search result counts are inconsistent")
 
@@ -645,6 +657,8 @@ class WitnessSearchResult:
             "selected_witness": self.selected_witness,
             "termination_reason": self.termination_reason,
             "deterministic_objective": self.deterministic_objective,
+            "validator_version": self.validator_version,
+            "selected_validation_hash": self.selected_validation_hash,
         }
         return canonical_content_hash(payload)
 
