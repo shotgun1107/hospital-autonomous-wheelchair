@@ -3,7 +3,7 @@
 ## 1. 상태와 목적
 
 - 작성일: `2026-08-13`
-- 상태: 구현 전 상세 명세
+- 상태: 상세 명세 동결, 1차 구현 완료(계약·projection·독립 validator), 자동 탐색 미구현
 - 상위 단계: [R1~R7 Master Specification](10-dynamic-local-maneuver-research-master-spec.md)
 - 선행 gate: `R1 완료`
 - 실행 범위: Python `simulation_only`, 공개 corpus만 사용
@@ -731,3 +731,27 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
 8. 전체 회귀와 독립 읽기 전용 감사
 
 이 순서는 연구 구현 순서이며 최종 제품 경로 알고리즘을 확정하지 않는다.
+
+### 14.1 현재 구현 checkpoint — 2026-08-13
+
+첫 구현 묶음은 다음까지만 완료했다.
+
+- `dynamic_witness_contracts.py`: label-free `WitnessWorldSnapshot`, 명시적
+  `ManeuverConstraintSpec`, witness·검색 상태·objective·result 계약
+- `project_public_witness_world()`: `GOLDEN`·`DEVELOPMENT`만 허용하고 원본 episode ID,
+  category, family·orientation label, oracle, 기존 witness와 controller 자료를 제외한 projection
+- `dynamic_witness_validation.py`: 검색 코드와 기존 private corpus validator를 호출하지 않는
+  exact ground-truth Actor 원·200 Hz hard validator
+- 기존 same-direction-wide 공개 positive 5개를 새 독립 validator로 재검증
+- pose·timestamp·가속·terminal dwell·provenance·no-passing·Actor clearance 변조와
+  20 Hz endpoint 사이 위험을 거부하는 적대 시험
+
+아직 구현하지 않은 범위는 다음과 같다.
+
+- WAIT/HOLD와 PASS structured template 자동 생성·탐색
+- profile별 prediction·observation replay
+- 공개 13+6 전체 taxonomy audit
+- JSON·PNG·process-parallel runner
+
+따라서 현재 checkpoint는 `R2 완료`가 아니다. 수동 witness를 새 검색 결과로 가장하거나
+`NO_WITNESS`를 공간·시간 불가능으로 해석하지 않는다.

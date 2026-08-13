@@ -70,9 +70,10 @@ batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용
 후속 지역 기동 연구의 전체 단계·gate·hidden 수명주기는
 [`R1~R7 master specification`](../../docs/research/dynamic-actor-experiment/10-dynamic-local-maneuver-research-master-spec.md)을
 따른다. 이 번호는 제품 경로분석 단계나 기존 동적 Actor 구현 단계와 다른 연구 단계다.
-R2의 구현 전 상세 계약은
+R2의 상세 계약은
 [`witness 자동화·일반화 명세`](../../docs/research/dynamic-actor-experiment/11-witness-automation-and-generalization.md)에
-있으며 아직 L1 구현 증거는 없다.
+있다. 현재는 label-free 계약·projection과 독립 ground-truth validator까지만 L1으로
+연결됐고 structured 자동 탐색·profile replay·전체 공개 audit은 미구현이다.
 
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
 |---|---|---|---|
@@ -84,6 +85,14 @@ R2의 구현 전 상세 계약은
 | `DYN-PRED-AUDIT-001` | 결정론적 Actor 운동 계약과 Gaussian 관측 coverage를 별도 판정한다. 공개 motion 위반과 Ideal 관측·Capsule miss만 hard failure이고 Normal·Stress의 `2σ` miss는 통계적 limitation이다. | [09-prediction-contract-audit.md](../../docs/research/dynamic-actor-experiment/09-prediction-contract-audit.md), [dynamic_prediction_audit.py](src/hospital_path_lab/dynamic_prediction_audit.py), `tests/test_dynamic_prediction_audit.py::test_public_audit_separates_motion_and_statistical_coverage` | 연결됨, L1. 실제 사람 운동·센서·확률적 안전 보장이 아니다. |
 | `DYN-PRED-AUDIT-002` | 공개 v6 `GOLDEN`·`DEVELOPMENT` 13개만 허용하고 hidden 입력을 거부한다. 같은 입력은 같은 semantic 결과 hash를 만들며 기존 output을 덮어쓰지 않는다. | [run_prediction_contract_audit.py](scripts/run_prediction_contract_audit.py), `tests/test_dynamic_prediction_audit.py::test_public_audit_is_deterministic`, `::test_public_audit_rejects_hidden_input`, `::test_writer_preserves_evidence_and_refuses_overwrite` | 연결됨, L1. 최신 실측은 별도 고유 output에 보존하며 저장소에 대용량 결과를 커밋하지 않는다. |
 | `DYN-PRED-AUDIT-003` | 공개 motion에 나타나지 않은 가속·감속·정지·회전은 미검증 limitation으로 명시하고, synthetic auditor에서 제한 감속·정지는 허용하되 순간 회전·측면 이탈은 거부한다. | [dynamic_prediction_audit.py](src/hospital_path_lab/dynamic_prediction_audit.py), `tests/test_dynamic_prediction_audit.py::test_motion_contract_accepts_bounded_deceleration_and_stop`, `::test_motion_contract_rejects_heading_change_and_lateral_motion` | 연결됨, L1. public corpus 일반화를 주장하지 않으며 해당 장면은 후속 공개 corpus 명세 대상이다. |
+
+### DYN-WIT-R2 — 공개 feasible-witness 자동화 기반
+
+| ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
+|---|---|---|---|
+| `DYN-WIT-001` | 검색 입력은 공개 `GOLDEN`·`DEVELOPMENT`만 허용하고 category, family·orientation label, oracle, 기존 witness, progressable·blocking 정보와 controller 결과를 제외한 `WitnessWorldSnapshot`만 사용한다. 지도·Actor ID도 원본 관리 ID가 아닌 projected content에 결박한다. | [dynamic_witness_contracts.py](src/hospital_path_lab/dynamic_witness_contracts.py), `tests/test_dynamic_witness_contracts.py::test_public_projection_is_label_and_oracle_free`, `::test_legacy_label_changes_do_not_change_projection_semantics`, `::test_hidden_projection_is_rejected_before_content_is_exposed` | 연결됨, L1. ground-truth Actor trajectory는 offline search·oracle 전용이며 online controller 입력이 아니다. |
+| `DYN-WIT-002` | no-passing과 allowed-region은 category에서 추론하지 않고 별도 `ManeuverConstraintSpec`과 hash로 입력한다. 검색 상태는 found, structured-template no-witness, resource-limit, invalid-input을 구분하고 wall-clock은 semantic hash에서 제외한다. | [dynamic_witness_contracts.py](src/hospital_path_lab/dynamic_witness_contracts.py), `tests/test_dynamic_witness_contracts.py::test_explicit_policy_is_hashed_without_category_inference`, `::test_search_result_semantic_hash_excludes_wall_clock` | 계약 연결, L1. 검색기는 아직 구현하지 않았다. |
+| `DYN-WIT-003` | 최종 validator는 검색 pruning·objective와 기존 corpus private validator를 호출하지 않고 20 Hz 운동학·가감속, 200 Hz static·forbidden·exact Actor 원 clearance, ordered departure→overtake→재합류와 terminal dwell을 재검증한다. | [dynamic_witness_validation.py](src/hospital_path_lab/dynamic_witness_validation.py), `tests/test_dynamic_witness_validation.py::test_legacy_positive_is_reproduced_by_independent_validator`, `::test_all_five_public_feasible_replicas_pass_ground_truth_validation`, `::test_200hz_validator_catches_between_tick_actor_clearance`, pose·timestamp·가속·dwell·provenance·policy 적대 시험 | 연결됨, L1. 기존 수동 witness 5개의 의미를 독립 재현했을 뿐 자동 witness 발견·전체 공개 taxonomy·online 실행 증거는 아니다. |
 
 ## DYN-STAGE3 — 동적 safety gate·권한·시간
 

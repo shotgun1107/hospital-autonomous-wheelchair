@@ -26,6 +26,19 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
+### 동적 지역 기동 연구 R2 진행 상태 — 2026-08-13
+
+R1 prediction 계약 감사 뒤 R2의 첫 구현 묶음으로 공개 episode용 label-free
+`WitnessWorldSnapshot`, 명시적 maneuver constraint, 검색 결과 계약과 독립 ground-truth
+witness validator를 추가했다. 새 validator는 기존 corpus의 private 판정기를 재사용하지 않고
+20 Hz 운동학·가감속, 200 Hz 정적·금지구역·정확한 Actor 원 clearance, ordered
+departure→overtake→rejoin과 terminal dwell을 검사한다. 기존 same-direction-wide 수동
+positive 5개는 이 독립 경로에서도 통과한다.
+
+structured WAIT/HOLD·PASS 자동 탐색, profile replay, 공개 13+6 taxonomy audit와
+JSON·PNG runner는 아직 구현하지 않았다. 따라서 이 상태는 R2 완료나 online controller
+우회 증거가 아니며 hidden은 사용하지 않는다.
+
 ### v6 재자격 진행 상태 — 2026-08-11
 
 현재는 [v6 보정·재자격 명세](../../docs/research/dynamic-actor-experiment/v6-correction-and-requalification.md)에
