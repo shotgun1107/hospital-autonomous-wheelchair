@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import atan2, ceil, cos, hypot, isfinite, pi, sin
 
 from hospital_path_lab.collision import (
@@ -32,6 +32,7 @@ _DEPARTURE_THRESHOLD_M = 0.10
 _REJOIN_DISTANCE_M = 0.10
 _REJOIN_HEADING_TOLERANCE_RAD = 10.0 * pi / 180.0
 _REJOIN_DWELL_S = 0.50
+_PROJECTION_TIE_TOLERANCE_M = 1e-12
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,19 +123,36 @@ class _ReferenceProjection:
     progress_m: float
     signed_offset_m: float
     tangent_yaw: float
+    segment_index: int
+    segment_length_m: float
+    ambiguous: bool
 
 
 def validate_ground_truth_witness(
     world: WitnessWorldSnapshot,
     witness: AutomatedWitness,
+    *,
+    strict_declarations: bool = False,
+    _strict_pass_semantics: bool | None = None,
 ) -> GroundTruthWitnessValidation:
-    """Validate one witness without using category, oracle or prediction data."""
+    """Validate one witness without using category, oracle or prediction data.
+
+    Measurement validation (the default) permits a draft witness with no event
+    declarations and returns independently measured events in ``metrics``.  A
+    canonical PASS witness must then be checked with ``strict_declarations=True``;
+    that mode requires every declaration and compares it to the measurement.
+    """
 
     if not isinstance(world, WitnessWorldSnapshot):
         raise TypeError("world must be a WitnessWorldSnapshot")
     if not isinstance(witness, AutomatedWitness):
         raise TypeError("witness must be an AutomatedWitness")
 
+    strict_pass_semantics = (
+        strict_declarations
+        if _strict_pass_semantics is None
+        else _strict_pass_semantics
+    )
     failures: list[str] = []
     if witness.source_projection_hash != world.source_projection_hash:
         failures.append("source_projection_hash_mismatch")
@@ -170,7 +188,14 @@ def validate_ground_truth_witness(
         failures.append("witness_exceeds_world_duration")
 
     samples = _validate_motion_and_build_samples(world, witness, failures)
-    geometry = _validate_geometry_and_events(world, witness, samples, failures)
+    geometry = _validate_geometry_and_events(
+        world,
+        witness,
+        samples,
+        failures,
+        strict_declarations=strict_declarations,
+        strict_pass_semantics=strict_pass_semantics,
+    )
     terminal_dwell_s = _validate_terminal(world, witness, failures)
     _validate_kind_semantics(world, witness, samples, failures)
 
@@ -218,6 +243,58 @@ def validate_ground_truth_witness(
         failures=unique_failures,
         metrics=metrics,
     )
+
+
+def canonicalize_and_validate_ground_truth_pass(
+    world: WitnessWorldSnapshot,
+    draft: AutomatedWitness,
+) -> tuple[AutomatedWitness | None, GroundTruthWitnessValidation]:
+    """Measure and strictly validate one declaration-free PASS in one sweep.
+
+    The expensive 200 Hz geometry and event pass is run once with every strict
+    PASS semantic enabled.  When that succeeds, the independently measured
+    event times are bound into a canonical witness and the returned validation
+    is rebound to that canonical content hash.  This is equivalent to the old
+    measurement-then-strict two-pass sequence without repeating geometry.
+    """
+
+    if not isinstance(draft, AutomatedWitness):
+        raise TypeError("draft must be an AutomatedWitness")
+    if draft.kind not in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT):
+        raise ValueError("canonical PASS validation requires a PASS witness")
+    if (
+        draft.departure_time_s is not None
+        or draft.pass_times_by_actor
+        or draft.rejoin_started_at_s is not None
+        or draft.rejoin_confirmed_at_s is not None
+    ):
+        raise ValueError("canonical PASS validation requires an undeclared draft")
+
+    measured = validate_ground_truth_witness(
+        world,
+        draft,
+        _strict_pass_semantics=True,
+    )
+    if not measured.passed:
+        return None, measured
+    canonical = replace(
+        draft,
+        departure_time_s=measured.metrics.departure_time_s,
+        pass_times_by_actor=measured.metrics.pass_times_by_actor,
+        rejoin_started_at_s=measured.metrics.rejoin_started_at_s,
+        rejoin_confirmed_at_s=measured.metrics.rejoin_confirmed_at_s,
+    )
+    strict = GroundTruthWitnessValidation(
+        schema_version=measured.schema_version,
+        validator_version=measured.validator_version,
+        source_projection_hash=measured.source_projection_hash,
+        world_content_hash=measured.world_content_hash,
+        witness_content_hash=canonical.semantic_content_hash,
+        passed=True,
+        failures=(),
+        metrics=measured.metrics,
+    )
+    return canonical, strict
 
 
 def _validate_motion_and_build_samples(
@@ -304,6 +381,9 @@ def _validate_geometry_and_events(
     witness: AutomatedWitness,
     samples: tuple[_ValidationSample, ...],
     failures: list[str],
+    *,
+    strict_declarations: bool,
+    strict_pass_semantics: bool,
 ) -> dict[str, object]:
     profile = world.kinematic_contract.vehicle_profile
     grid = world.grid.to_grid_map()
@@ -332,12 +412,9 @@ def _validate_geometry_and_events(
     max_deviation = 0.0
     max_left = 0.0
     max_right = 0.0
-    departure_time_s: float | None = None
-    actor_initially_ahead: set[str] = set()
-    pass_times: dict[str, float] = {}
+    departure_index: int | None = None
     projections: list[tuple[_ValidationSample, _ReferenceProjection]] = []
 
-    required_actor_ids = set(witness.required_pass_actor_ids)
     for sample_index, sample in enumerate(samples):
         next_time_s = (
             samples[sample_index + 1].time_s
@@ -369,10 +446,10 @@ def _validate_geometry_and_events(
         max_left = max(max_left, projection.signed_offset_m)
         max_right = max(max_right, -projection.signed_offset_m)
         if (
-            departure_time_s is None
+            departure_index is None
             and projection.distance_m > _DEPARTURE_THRESHOLD_M
         ):
-            departure_time_s = sample.time_s
+            departure_index = len(projections) - 1
 
         for actor in world.actor_states_at(min(sample.time_s, world.duration_s)):
             actor_speed = actor.velocity.magnitude
@@ -388,34 +465,26 @@ def _validate_geometry_and_events(
             )
             if clearance < profile.minimum_clearance_m - 1e-9:
                 failures.append("actor_clearance_violation")
-            if actor.actor_id not in required_actor_ids:
-                continue
-            actor_projection = _project_to_reference(
-                Pose2D(actor.position.x, actor.position.y, 0.0),
-                world.reference_path,
-            )
-            order_m = actor_projection.progress_m - projection.progress_m
-            longitudinal_extent_m = (
-                profile.collision_length_m / 2.0 + actor.radius_m
-            )
-            if order_m > longitudinal_extent_m:
-                actor_initially_ahead.add(actor.actor_id)
-            elif (
-                actor.actor_id in actor_initially_ahead
-                and actor.actor_id not in pass_times
-                and order_m < -longitudinal_extent_m
-                and departure_time_s is not None
-            ):
-                pass_times[actor.actor_id] = sample.time_s
+
+    departure_time_s = (
+        projections[departure_index][0].time_s
+        if departure_index is not None
+        else None
+    )
+    pass_times: dict[str, float] = {}
+    if witness.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT):
+        pass_times = _measure_ordered_passes(
+            world,
+            witness,
+            projections,
+            departure_index=departure_index,
+            failures=failures,
+        )
 
     if witness.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT):
         if departure_time_s is None:
             failures.append("pass_departure_missing")
-        if witness.kind is WitnessKind.PASS_LEFT and max_left <= _DEPARTURE_THRESHOLD_M:
-            failures.append("pass_left_direction_missing")
-        if witness.kind is WitnessKind.PASS_RIGHT and max_right <= _DEPARTURE_THRESHOLD_M:
-            failures.append("pass_right_direction_missing")
-        if not required_actor_ids.issubset(pass_times):
+        if not set(witness.required_pass_actor_ids).issubset(pass_times):
             failures.append("ordered_overtake_missing")
 
     latest_pass_s = max(pass_times.values(), default=None)
@@ -431,6 +500,34 @@ def _validate_geometry_and_events(
                 failures.append("overtake_before_departure")
             if rejoin_start_s is not None and rejoin_start_s < latest_pass_s:
                 failures.append("rejoin_before_overtake")
+        _validate_pass_side_and_order_retention(
+            world,
+            witness,
+            projections,
+            departure_index=departure_index,
+            pass_times=pass_times,
+            rejoin_confirmed_at_s=rejoin_confirmed_s,
+            failures=failures,
+            enforce_order_retention=strict_pass_semantics,
+        )
+        if strict_pass_semantics:
+            _validate_strict_pass_reference_segment(
+                projections,
+                departure_index=departure_index,
+                pass_times=pass_times,
+                rejoin_started_at_s=rejoin_start_s,
+                rejoin_confirmed_at_s=rejoin_confirmed_s,
+                failures=failures,
+            )
+            _validate_multi_actor_pass_scope(
+                world,
+                witness,
+                projections,
+                departure_index=departure_index,
+                rejoin_started_at_s=rejoin_start_s,
+                rejoin_confirmed_at_s=rejoin_confirmed_s,
+                failures=failures,
+            )
 
     _compare_declared_events(
         witness,
@@ -439,6 +536,7 @@ def _validate_geometry_and_events(
         rejoin_started_at_s=rejoin_start_s,
         rejoin_confirmed_at_s=rejoin_confirmed_s,
         failures=failures,
+        strict_declarations=strict_declarations,
     )
     return {
         "minimum_static_clearance_m": minimum_static,
@@ -452,6 +550,310 @@ def _validate_geometry_and_events(
         "rejoin_started_at_s": rejoin_start_s,
         "rejoin_confirmed_at_s": rejoin_confirmed_s,
     }
+
+
+def _measure_ordered_passes(
+    world: WitnessWorldSnapshot,
+    witness: AutomatedWitness,
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    *,
+    departure_index: int | None,
+    failures: list[str],
+) -> dict[str, float]:
+    """Measure target eligibility and ordered passes from ground truth only."""
+
+    if departure_index is None:
+        return {}
+    profile = world.kinematic_contract.vehicle_profile
+    departure_sample, departure_projection = projections[departure_index]
+    actor_by_id = {actor.actor_binding_id: actor for actor in world.actors}
+    pass_times: dict[str, float] = {}
+    for actor_id in witness.required_pass_actor_ids:
+        actor = actor_by_id.get(actor_id)
+        if actor is None:
+            continue
+        state = actor.state_at(departure_sample.time_s)
+        if state is None:
+            failures.append("target_inactive_at_departure")
+            continue
+        actor_projection = _project_to_reference(
+            Pose2D(state.position.x, state.position.y, 0.0),
+            world.reference_path,
+        )
+        longitudinal_extent_m = profile.collision_length_m / 2.0 + state.radius_m
+        order_m = actor_projection.progress_m - departure_projection.progress_m
+        eligible = True
+        if order_m <= longitudinal_extent_m:
+            failures.append("target_not_ahead_at_departure")
+            eligible = False
+        lane_overlap_limit_m = (
+            profile.collision_width_m / 2.0
+            + state.radius_m
+            + profile.minimum_clearance_m
+        )
+        if abs(actor_projection.signed_offset_m) > lane_overlap_limit_m + 1e-12:
+            failures.append("target_not_lane_overlapping_at_departure")
+            eligible = False
+        tangent_x = cos(actor_projection.tangent_yaw)
+        tangent_y = sin(actor_projection.tangent_yaw)
+        tangent_speed_mps = (
+            state.velocity.x * tangent_x + state.velocity.y * tangent_y
+        )
+        direction_cosine = (
+            tangent_speed_mps / state.velocity.magnitude
+            if state.velocity.magnitude > 1e-6
+            else -1.0
+        )
+        if (
+            state.velocity.magnitude <= 1e-6
+            or tangent_speed_mps <= 0.0
+            or direction_cosine < cos(_REJOIN_HEADING_TOLERANCE_RAD) - 1e-12
+        ):
+            failures.append("target_not_same_direction_at_departure")
+            eligible = False
+        if not eligible:
+            continue
+
+        crossed_without_robot_progress = False
+        for sample, robot_projection in projections[departure_index:]:
+            state = actor.state_at(sample.time_s)
+            if state is None:
+                break
+            actor_projection = _project_to_reference(
+                Pose2D(state.position.x, state.position.y, 0.0),
+                world.reference_path,
+            )
+            order_m = actor_projection.progress_m - robot_projection.progress_m
+            if order_m >= -longitudinal_extent_m:
+                continue
+            robot_progress_m = (
+                robot_projection.progress_m - departure_projection.progress_m
+            )
+            if robot_progress_m < 0.10 - 1e-12:
+                crossed_without_robot_progress = True
+                continue
+            pass_times[actor_id] = sample.time_s
+            break
+        if actor_id not in pass_times and crossed_without_robot_progress:
+            failures.append("ordered_overtake_robot_progress_missing")
+    return pass_times
+
+
+def _validate_pass_side_and_order_retention(
+    world: WitnessWorldSnapshot,
+    witness: AutomatedWitness,
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    *,
+    departure_index: int | None,
+    pass_times: dict[str, float],
+    rejoin_confirmed_at_s: float | None,
+    failures: list[str],
+    enforce_order_retention: bool,
+) -> None:
+    if departure_index is None or not pass_times:
+        return
+    latest_pass_s = max(pass_times.values())
+    side_failed = False
+    for sample, projection in projections[departure_index:]:
+        if sample.time_s > latest_pass_s + _TIME_TOLERANCE_S:
+            break
+        correct_side = (
+            projection.signed_offset_m > _DEPARTURE_THRESHOLD_M
+            if witness.kind is WitnessKind.PASS_LEFT
+            else projection.signed_offset_m < -_DEPARTURE_THRESHOLD_M
+        )
+        if not correct_side:
+            side_failed = True
+            break
+    if rejoin_confirmed_at_s is not None:
+        for sample, projection in projections:
+            if sample.time_s + _TIME_TOLERANCE_S < latest_pass_s:
+                continue
+            if sample.time_s > rejoin_confirmed_at_s + _TIME_TOLERANCE_S:
+                break
+            crossed_opposite_side = (
+                projection.signed_offset_m < -1e-9
+                if witness.kind is WitnessKind.PASS_LEFT
+                else projection.signed_offset_m > 1e-9
+            )
+            if crossed_opposite_side:
+                side_failed = True
+                break
+    if side_failed:
+        failures.append("pass_wrong_side")
+
+    if not enforce_order_retention:
+        return
+    actor_by_id = {actor.actor_binding_id: actor for actor in world.actors}
+    profile = world.kinematic_contract.vehicle_profile
+    for actor_id, pass_time_s in pass_times.items():
+        actor = actor_by_id[actor_id]
+        end_time_s = min(
+            actor.active_until_s,
+            rejoin_confirmed_at_s
+            if rejoin_confirmed_at_s is not None
+            else projections[-1][0].time_s,
+        )
+        for sample, robot_projection in projections:
+            if sample.time_s + _TIME_TOLERANCE_S < pass_time_s:
+                continue
+            if sample.time_s > end_time_s + _TIME_TOLERANCE_S:
+                break
+            state = actor.state_at(sample.time_s)
+            if state is None:
+                continue
+            actor_projection = _project_to_reference(
+                Pose2D(state.position.x, state.position.y, 0.0),
+                world.reference_path,
+            )
+            longitudinal_extent_m = profile.collision_length_m / 2.0 + state.radius_m
+            if (
+                actor_projection.progress_m - robot_projection.progress_m
+                >= -longitudinal_extent_m
+            ):
+                failures.append("post_pass_reversal")
+                break
+
+
+def _validate_strict_pass_reference_segment(
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    *,
+    departure_index: int | None,
+    pass_times: dict[str, float],
+    rejoin_started_at_s: float | None,
+    rejoin_confirmed_at_s: float | None,
+    failures: list[str],
+) -> None:
+    """Bind strict PASS anchors to one unambiguous non-zero segment."""
+
+    if departure_index is None:
+        return
+    anchors = [projections[departure_index][1]]
+    anchor_times = (
+        *pass_times.values(),
+        rejoin_started_at_s,
+        rejoin_confirmed_at_s,
+    )
+    for time_s in anchor_times:
+        if time_s is None:
+            continue
+        projection = _projection_at_time(projections, time_s)
+        if projection is not None:
+            anchors.append(projection)
+    if any(
+        projection.ambiguous or projection.segment_length_m <= 1e-18
+        for projection in anchors
+    ):
+        failures.append("ambiguous_reference_projection")
+        return
+    if len({projection.segment_index for projection in anchors}) != 1:
+        failures.append("pass_reference_segment_mismatch")
+
+
+def _validate_multi_actor_pass_scope(
+    world: WitnessWorldSnapshot,
+    witness: AutomatedWitness,
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    *,
+    departure_index: int | None,
+    rejoin_started_at_s: float | None,
+    rejoin_confirmed_at_s: float | None,
+    failures: list[str],
+) -> None:
+    """Reject a second same-direction lane blocker in the PASS interval."""
+
+    if (
+        departure_index is None
+        or rejoin_started_at_s is None
+        or rejoin_confirmed_at_s is None
+    ):
+        return
+    required = set(witness.required_pass_actor_ids)
+    profile = world.kinematic_contract.vehicle_profile
+    departure_projection = projections[departure_index][1]
+    rejoin_projections = tuple(
+        projection
+        for time_s in (rejoin_started_at_s, rejoin_confirmed_at_s)
+        if (projection := _projection_at_time(projections, time_s)) is not None
+    )
+    if len(rejoin_projections) != 2:
+        return
+    departure_segment = departure_projection.segment_index
+    planned_rejoin_progress_m = max(
+        projection.progress_m for projection in rejoin_projections
+    )
+    for actor in world.actors:
+        if actor.actor_binding_id in required:
+            continue
+        for sample, robot_projection in projections[departure_index:]:
+            if sample.time_s > rejoin_confirmed_at_s + _TIME_TOLERANCE_S:
+                break
+            state = actor.state_at(sample.time_s)
+            if state is None:
+                continue
+            actor_projection = _project_to_reference(
+                Pose2D(state.position.x, state.position.y, 0.0),
+                world.reference_path,
+            )
+            if actor_projection.ambiguous:
+                failures.append("ambiguous_reference_projection")
+                return
+            if actor_projection.segment_index != departure_segment:
+                continue
+            lane_overlap_limit_m = (
+                profile.collision_width_m / 2.0
+                + state.radius_m
+                + profile.minimum_clearance_m
+            )
+            if (
+                abs(actor_projection.signed_offset_m)
+                > lane_overlap_limit_m + 1e-12
+            ):
+                continue
+            tangent_x = cos(actor_projection.tangent_yaw)
+            tangent_y = sin(actor_projection.tangent_yaw)
+            tangent_speed_mps = (
+                state.velocity.x * tangent_x + state.velocity.y * tangent_y
+            )
+            direction_cosine = (
+                tangent_speed_mps / state.velocity.magnitude
+                if state.velocity.magnitude > 1e-6
+                else -1.0
+            )
+            if (
+                state.velocity.magnitude <= 1e-6
+                or tangent_speed_mps <= 0.0
+                or direction_cosine
+                < cos(_REJOIN_HEADING_TOLERANCE_RAD) - 1e-12
+            ):
+                continue
+            longitudinal_extent_m = (
+                profile.collision_length_m / 2.0 + state.radius_m
+            )
+            if (
+                actor_projection.progress_m - robot_projection.progress_m
+                > longitudinal_extent_m
+                and actor_projection.progress_m
+                >= departure_projection.progress_m - 1e-12
+                and actor_projection.progress_m
+                <= planned_rejoin_progress_m + longitudinal_extent_m + 1e-12
+            ):
+                failures.append("multi_actor_pass_out_of_scope")
+                return
+
+
+def _projection_at_time(
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    time_s: float,
+) -> _ReferenceProjection | None:
+    return next(
+        (
+            projection
+            for sample, projection in projections
+            if abs(sample.time_s - time_s) <= _TIME_TOLERANCE_S
+        ),
+        None,
+    )
 
 
 def _validate_terminal(
@@ -617,8 +1019,23 @@ def _compare_declared_events(
     rejoin_started_at_s: float | None,
     rejoin_confirmed_at_s: float | None,
     failures: list[str],
+    strict_declarations: bool,
 ) -> None:
     tolerance_s = 0.005 + 1e-12
+    if strict_declarations and witness.kind in (
+        WitnessKind.PASS_LEFT,
+        WitnessKind.PASS_RIGHT,
+    ):
+        declared_actor_ids = {
+            actor_id for actor_id, _ in witness.pass_times_by_actor
+        }
+        if (
+            witness.departure_time_s is None
+            or witness.rejoin_started_at_s is None
+            or witness.rejoin_confirmed_at_s is None
+            or declared_actor_ids != set(witness.required_pass_actor_ids)
+        ):
+            failures.append("strict_event_declaration_missing")
     pairs = (
         (witness.departure_time_s, departure_time_s, "declared_departure_mismatch"),
         (
@@ -648,11 +1065,11 @@ def _project_to_reference(
     path: tuple[Pose2D, ...],
 ) -> _ReferenceProjection:
     best_distance = float("inf")
-    best_progress = 0.0
-    best_signed = 0.0
-    best_tangent = path[0].yaw
+    candidates: list[_ReferenceProjection] = []
     cumulative_m = 0.0
-    for source, target in zip(path, path[1:], strict=False):
+    for segment_index, (source, target) in enumerate(
+        zip(path, path[1:], strict=False)
+    ):
         dx = target.x - source.x
         dy = target.y - source.y
         length_m = hypot(dx, dy)
@@ -671,19 +1088,62 @@ def _project_to_reference(
         delta_x = pose.x - projected_x
         delta_y = pose.y - projected_y
         distance_m = hypot(delta_x, delta_y)
-        if distance_m < best_distance:
-            tangent_x = dx / length_m
-            tangent_y = dy / length_m
+        tangent_x = dx / length_m
+        tangent_y = dy / length_m
+        projection = _ReferenceProjection(
+            distance_m=distance_m,
+            progress_m=cumulative_m + fraction * length_m,
+            signed_offset_m=tangent_x * delta_y - tangent_y * delta_x,
+            tangent_yaw=atan2(dy, dx),
+            segment_index=segment_index,
+            segment_length_m=length_m,
+            ambiguous=False,
+        )
+        if distance_m < best_distance - _PROJECTION_TIE_TOLERANCE_M:
             best_distance = distance_m
-            best_progress = cumulative_m + fraction * length_m
-            best_signed = tangent_x * delta_y - tangent_y * delta_x
-            best_tangent = atan2(dy, dx)
+            candidates = [projection]
+        elif abs(distance_m - best_distance) <= _PROJECTION_TIE_TOLERANCE_M:
+            candidates.append(projection)
         cumulative_m += length_m
+    if not candidates:
+        return _ReferenceProjection(
+            distance_m=float("inf"),
+            progress_m=0.0,
+            signed_offset_m=0.0,
+            tangent_yaw=path[0].yaw,
+            segment_index=-1,
+            segment_length_m=0.0,
+            ambiguous=True,
+        )
+    candidates.sort(key=lambda projection: (projection.segment_index, projection.progress_m))
+    selected = candidates[0]
+    ambiguous = not _adjacent_collinear_projection_tie(candidates)
     return _ReferenceProjection(
-        distance_m=best_distance,
-        progress_m=best_progress,
-        signed_offset_m=best_signed,
-        tangent_yaw=best_tangent,
+        distance_m=selected.distance_m,
+        progress_m=selected.progress_m,
+        signed_offset_m=selected.signed_offset_m,
+        tangent_yaw=selected.tangent_yaw,
+        segment_index=selected.segment_index,
+        segment_length_m=selected.segment_length_m,
+        ambiguous=ambiguous,
+    )
+
+
+def _adjacent_collinear_projection_tie(
+    candidates: list[_ReferenceProjection],
+) -> bool:
+    if len(candidates) <= 1:
+        return True
+    if any(
+        right.segment_index != left.segment_index + 1
+        for left, right in zip(candidates, candidates[1:], strict=False)
+    ):
+        return False
+    tangent_yaw = candidates[0].tangent_yaw
+    return all(
+        abs(_normalize_angle(candidate.tangent_yaw - tangent_yaw))
+        <= _ANGLE_TOLERANCE_RAD
+        for candidate in candidates[1:]
     )
 
 
@@ -721,5 +1181,6 @@ __all__ = [
     "GROUND_TRUTH_VALIDATION_SCHEMA_VERSION",
     "GroundTruthWitnessMetrics",
     "GroundTruthWitnessValidation",
+    "canonicalize_and_validate_ground_truth_pass",
     "validate_ground_truth_witness",
 ]

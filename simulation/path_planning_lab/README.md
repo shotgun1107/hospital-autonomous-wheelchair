@@ -45,11 +45,18 @@ validator로 다시 검사한다. `HOLD_ONLY`는 episode 전체 정지를 요구
 2026-08-13 읽기 전용 수동 감사에서는 v6 공개 `13/13`과 legacy golden `6/6`의 selected
 witness가 독립 validator를 통과했다. 이는 체크인된 전체 taxonomy audit나 영구 CI 근거가
 아니며 category 정답, online controller 실행 또는 제품 채택을 뜻하지 않는다.
-`PASS_LEFT/PASS_RIGHT`는 구현 전에
-[`R2-PASS 상세 명세`](../../docs/research/dynamic-actor-experiment/12-pass-structured-witness-search.md)로
-후보 공간·종류별 best·독립 검증·표적시험 순서를 분리했다. PASS 코드, profile replay,
-JSON·PNG reporting과 process-parallel runner는 아직 구현하지 않았으므로 R2는 미완료다.
-hidden은 생성·열람·실행하지 않았다.
+`PASS_LEFT/PASS_RIGHT`는
+[`R2-PASS 상세 명세`](../../docs/research/dynamic-actor-experiment/12-pass-structured-witness-search.md)에
+따라 label-free 후보 생성, 종류별 best, 매 이동 tick terminal-stopping guard, 단일 200 Hz
+엄격 검증과 결정론적 process-shard 검색까지 구현했다. 2026-08-13 공개
+`same-direction-wide-r00~r04`의 총 `135,360`후보를 14 process로 완전탐색해 5개 모두 좌·우
+PASS witness를 찾았다. 후보 bucket은 validated `38,660`, dynamic reject `70,318`, geometry
+reject `26,382`로 전체 합계와 일치했다. 같은 작은 공개 파생 입력의 serial·parallel 결과는
+후보 수·선택 witness·validation hash·semantic hash가 동일했다. 기능 실행 wall-clock은 총 약
+`29분 29초`였으며 timing qualification이 아니다. profile replay, 공개 13+6 영구 audit와
+JSON·PNG reporting은 아직 구현하지 않았으므로 R2 전체는 미완료다.
+PASS/WAIT/HOLD 직접 영향권은 `106 passed`, 저장소 전체 회귀는 8개 독립 pytest process로
+분할해 `668 passed`였다. hidden은 생성·열람·실행하지 않았다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 

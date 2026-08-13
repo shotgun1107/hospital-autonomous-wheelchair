@@ -405,13 +405,24 @@ target × side × departure_progress × lateral_offset
 ```text
 max_geometry_candidates_per_episode = 50_000
 max_timed_candidates_per_episode    = 250_000
+max_pass_evaluated_candidates_per_episode = 50_000
 max_points_per_candidate            = episode_tick_count + 1
 ```
 
-episode 하나 안의 후보 평가는 결정론적 직렬 순서를 유지한다. 서로 독립적인 공개 episode는
-process 기반으로 병렬 실행할 수 있으며 결과를 corpus 입력 순서로 재정렬한다. wall-clock은
-semantic hash와 합격 판정에서 제외한다. timing benchmark가 아니므로 CPU contention 시간으로
-알고리즘 자격을 판단하지 않는다.
+후보의 의미상 순서는 frozen serial ordinal로 고정한다. 실제 기능·안전 계산은 이 순서를
+서로 겹치지 않는 연속 candidate shard로 나누어 process 기반으로 병렬 실행할 수 있다. 각
+worker는 자기 shard 안을 직렬 순서로 평가하고, parent는 shard range의 gap·overlap·duplicate가
+0인지와 전체 ordinal coverage가 preflight 후보 수와 같은지 확인한다. 종류별 count는 합산하고
+best는 기존의 `(objective.sort_key, witness.semantic_content_hash)` 최소값으로 환원하므로 process
+완료 순서는 결과에 영향을 주지 않는다. 병합 뒤 선택된 좌·우 witness는 parent에서 strict
+validator를 다시 실행하고 validation hash가 worker 결과와 같은 경우에만 최종 결과로 만든다.
+
+현재 회사 PC의 공개 기능 실행 운영값은 논리 CPU 28개 중 14 process, shard당 최대 2,048
+candidate다. worker 수와 shard 크기는 실행 manifest에만 기록하며 semantic hash·합격 판정에서는
+제외한다. 동시에 메모리에 두는 미완료 shard는 worker 수의 두 배 이하로 제한한다. 서로 독립적인
+공개 episode도 process 기반으로 병렬 실행할 수 있으며 최종 결과는 corpus 입력 순서로
+재정렬한다. wall-clock은 semantic hash와 합격 판정에서 제외한다. timing benchmark가 아니므로
+CPU contention 시간으로 알고리즘 자격을 판단하지 않는다.
 
 limit으로 전체 objective를 끝까지 평가하지 못하면 그 전에 valid candidate를 찾았더라도 final
 selected PASS로 봉인하지 않는다. `generated_count`는 fully specified timed candidate 단위로
@@ -746,3 +757,39 @@ tests/test_dynamic_witness_validation.py
 이 완료조건을 충족해도 R2 전체는 끝나지 않는다. 다음 구현 묶음은 current R1
 `FUNCTIONAL_IDEAL/NORMAL/STRESS` profile replay이며, 그 뒤 공개 13+6 영구 audit,
 JSON·PNG·process-parallel runner를 수행한다.
+
+## 18. 2026-08-13 구현·공개 실행 기록
+
+현재 구현은 다음을 완료했다.
+
+- `PASS_LEFT/RIGHT` label-free structured candidate와 종류별 결과 계약
+- 매 이동 tick exact Actor terminal-stopping guard
+- measurement event와 strict PASS 의미를 한 번의 200 Hz sweep에서 검증하고 canonical event를
+  content hash에 결박
+- frozen candidate ordinal의 contiguous process shard, gap·overlap·duplicate 방지와 parent strict
+  winner 재검증
+- public-derived 작은 입력에서 serial·parallel count, winner, validation hash와 semantic hash 동일
+
+회사 PC의 `20 physical / 28 logical CPU`, 14 worker, shard 최대 2,048개 조건에서 공개
+`same-direction-wide-r00~r04`를 완전탐색했다. 후보 축·안전기준·validator·objective는 줄이거나
+바꾸지 않았다.
+
+| case | candidates | validated | dynamic reject | geometry reject | wall-clock |
+|---|---:|---:|---:|---:|---:|
+| `r00` | 27,360 | 8,184 | 13,922 | 5,254 | 363.475 s |
+| `r01` | 27,180 | 7,697 | 14,305 | 5,178 | 353.870 s |
+| `r02` | 26,820 | 7,096 | 14,022 | 5,702 | 334.890 s |
+| `r03` | 26,820 | 8,210 | 13,622 | 4,988 | 365.783 s |
+| `r04` | 27,180 | 7,473 | 14,447 | 5,260 | 351.468 s |
+| 합계 | 135,360 | 38,660 | 70,318 | 26,382 | 1,769.486 s |
+
+5개 모두 좌·우에서 `WITNESS_FOUND`였고 병합 winner는 parent strict validator와 worker
+validation hash가 일치했다. 이 실행시간은 CPU contention이 포함된 기능 하네스 운영값이며
+wall-clock qualification이 아니다. 대용량 raw output이나 partial shard를 Git 근거로 넣지 않았고
+hidden은 생성·열람·실행하지 않았다. profile replay와 공개 13+6 영구 audit·JSON/PNG reporting은
+후속 R2 묶음으로 남아 있다.
+
+코드 동결 뒤 PASS/WAIT/HOLD 직접 영향권은 `106 passed`였고, 전체 테스트 파일 52개를
+크기 기준 8개 독립 pytest process로 분할한 마지막 전체 회귀는 합계 `668 passed`였다. 과거
+output 폴더의 Windows ACL 때문에 저장소 루트 자동수집은 사용하지 않고 `tests/test_*.py`를
+누락 없이 명시했다. 기존 output은 삭제·수정하지 않았다.

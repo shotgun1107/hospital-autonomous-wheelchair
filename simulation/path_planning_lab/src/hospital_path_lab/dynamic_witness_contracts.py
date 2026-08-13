@@ -29,11 +29,14 @@ from hospital_path_lab.vehicle import (
 
 WITNESS_WORLD_SCHEMA_VERSION = "dynamic-witness-world-v1"
 WITNESS_SCHEMA_VERSION = "automated-dynamic-witness-v1"
-WITNESS_SEARCH_CONFIG_VERSION = "structured-witness-search-v1"
-WITNESS_VALIDATOR_VERSION = "ground-truth-witness-validator-v1"
+WITNESS_SEARCH_CONFIG_VERSION = "structured-witness-search-v2"
+WITNESS_VALIDATOR_VERSION = "ground-truth-witness-validator-v2"
+PASS_STRUCTURED_SEARCH_VERSION = "pass-structured-search-v1"
 WITNESS_CONTROL_PERIOD_S = 0.05
 WITNESS_EVALUATOR_PERIOD_S = 0.005
 WITNESS_MAX_ANGULAR_ACCELERATION_RADPS2 = 1.60
+PASS_MAX_EVALUATED_CANDIDATES_PER_EPISODE = 50_000
+PASS_SAME_DIRECTION_HEADING_TOLERANCE_RAD = 0.17453292519943295
 _PUBLIC_SPLITS = frozenset(
     (DynamicCorpusSplit.GOLDEN, DynamicCorpusSplit.DEVELOPMENT)
 )
@@ -43,6 +46,16 @@ class PassingPolicy(StrEnum):
     UNSPECIFIED = "unspecified"
     ALLOWED = "allowed"
     PROHIBITED = "prohibited"
+
+
+class PassSide(StrEnum):
+    LEFT = "left"
+    RIGHT = "right"
+
+
+class PassSideWaitPolicy(StrEnum):
+    IMMEDIATE = "immediate"
+    UNTIL_TARGET_INACTIVE = "until_target_inactive"
 
 
 class WitnessSearchStatus(StrEnum):
@@ -171,6 +184,20 @@ class WitnessSearchConfig:
         0.60,
         0.80,
     )
+    pass_side_order: tuple[PassSide, ...] = (PassSide.LEFT, PassSide.RIGHT)
+    pass_lateral_step_resolution_multiplier: float = 1.0
+    pass_angular_magnitudes_radps: tuple[float, ...] = (0.40, 0.60, 0.80)
+    pass_side_wait_policies: tuple[PassSideWaitPolicy, ...] = (
+        PassSideWaitPolicy.IMMEDIATE,
+        PassSideWaitPolicy.UNTIL_TARGET_INACTIVE,
+    )
+    pass_minimum_actor_speed_mps: float = 1e-6
+    pass_same_direction_heading_tolerance_rad: float = (
+        PASS_SAME_DIRECTION_HEADING_TOLERANCE_RAD
+    )
+    pass_speed_advantage_epsilon_mps: float = 1e-9
+    pass_synthesis_pose_tolerance_m: float = 0.025
+    pass_synthesis_heading_tolerance_rad: float = 0.025
     control_period_s: float = WITNESS_CONTROL_PERIOD_S
     evaluator_period_s: float = WITNESS_EVALUATOR_PERIOD_S
     maximum_angular_acceleration_radps2: float = (
@@ -179,22 +206,79 @@ class WitnessSearchConfig:
     reverse_enabled: bool = False
     max_geometry_candidates_per_episode: int = 50_000
     max_timed_candidates_per_episode: int = 250_000
+    max_pass_evaluated_candidates_per_episode: int = (
+        PASS_MAX_EVALUATED_CANDIDATES_PER_EPISODE
+    )
 
     def __post_init__(self) -> None:
         if self.config_version != WITNESS_SEARCH_CONFIG_VERSION:
             raise ValueError("unsupported witness search config version")
+        if not isinstance(self.pass_side_order, tuple) or any(
+            not isinstance(side, PassSide) for side in self.pass_side_order
+        ):
+            raise TypeError("PASS side order must contain PassSide values")
+        if not isinstance(self.pass_side_wait_policies, tuple) or any(
+            not isinstance(policy, PassSideWaitPolicy)
+            for policy in self.pass_side_wait_policies
+        ):
+            raise TypeError(
+                "PASS side-wait policies must contain PassSideWaitPolicy values"
+            )
+        if not isinstance(self.pass_angular_magnitudes_radps, tuple) or any(
+            type(value) is not float for value in self.pass_angular_magnitudes_radps
+        ):
+            raise TypeError("PASS angular magnitudes must contain exact float values")
+        frozen_pass_floats = (
+            ("pass_lateral_step_resolution_multiplier", 1.0),
+            ("pass_minimum_actor_speed_mps", 1e-6),
+            (
+                "pass_same_direction_heading_tolerance_rad",
+                PASS_SAME_DIRECTION_HEADING_TOLERANCE_RAD,
+            ),
+            ("pass_speed_advantage_epsilon_mps", 1e-9),
+            ("pass_synthesis_pose_tolerance_m", 0.025),
+            ("pass_synthesis_heading_tolerance_rad", 0.025),
+        )
+        for field_name, expected in frozen_pass_floats:
+            value = getattr(self, field_name)
+            if type(value) is not float:
+                raise TypeError(f"{field_name} must be an exact float")
+            if value != expected:
+                raise ValueError(f"{field_name} must equal its frozen v2 value")
+        if type(self.max_pass_evaluated_candidates_per_episode) is not int:
+            raise TypeError("PASS evaluated candidate limit must be an exact int")
+        if self.max_pass_evaluated_candidates_per_episode <= 0:
+            raise ValueError("PASS evaluated candidate limit must be positive")
+        if (
+            self.max_pass_evaluated_candidates_per_episode
+            != PASS_MAX_EVALUATED_CANDIDATES_PER_EPISODE
+        ):
+            raise ValueError("PASS evaluated candidate limit must equal its frozen v2 value")
         numeric = (
             self.geometry_progress_step_m,
+            self.pass_lateral_step_resolution_multiplier,
+            self.pass_minimum_actor_speed_mps,
+            self.pass_same_direction_heading_tolerance_rad,
+            self.pass_speed_advantage_epsilon_mps,
+            self.pass_synthesis_pose_tolerance_m,
+            self.pass_synthesis_heading_tolerance_rad,
             self.control_period_s,
             self.evaluator_period_s,
             self.maximum_angular_acceleration_radps2,
             *self.linear_targets_mps,
             *self.angular_targets_radps,
+            *self.pass_angular_magnitudes_radps,
         )
         if not all(isfinite(value) for value in numeric):
             raise ValueError("witness search config must be finite")
         if min(
             self.geometry_progress_step_m,
+            self.pass_lateral_step_resolution_multiplier,
+            self.pass_minimum_actor_speed_mps,
+            self.pass_same_direction_heading_tolerance_rad,
+            self.pass_speed_advantage_epsilon_mps,
+            self.pass_synthesis_pose_tolerance_m,
+            self.pass_synthesis_heading_tolerance_rad,
             self.control_period_s,
             self.evaluator_period_s,
             self.maximum_angular_acceleration_radps2,
@@ -212,6 +296,25 @@ class WitnessSearchConfig:
             raise ValueError("linear targets must be non-empty and positive")
         if not self.angular_targets_radps or 0.0 not in self.angular_targets_radps:
             raise ValueError("angular targets must include zero")
+        if self.pass_side_order != (PassSide.LEFT, PassSide.RIGHT):
+            raise ValueError("PASS side order must be exactly LEFT then RIGHT")
+        if self.pass_angular_magnitudes_radps != (0.40, 0.60, 0.80):
+            raise ValueError("PASS angular magnitudes must equal the frozen v2 values")
+        if self.pass_side_wait_policies != (
+            PassSideWaitPolicy.IMMEDIATE,
+            PassSideWaitPolicy.UNTIL_TARGET_INACTIVE,
+        ):
+            raise ValueError("PASS side-wait policies must use the frozen order")
+        if (
+            tuple(sorted(set(self.pass_angular_magnitudes_radps)))
+            != self.pass_angular_magnitudes_radps
+        ):
+            raise ValueError("PASS angular magnitudes must be unique and sorted")
+        if (
+            not self.pass_angular_magnitudes_radps
+            or self.pass_angular_magnitudes_radps[0] <= 0.0
+        ):
+            raise ValueError("PASS angular magnitudes must be non-empty and positive")
 
     @property
     def content_hash(self) -> str:
@@ -568,6 +671,283 @@ class WitnessObjective:
 
 
 @dataclass(frozen=True, slots=True)
+class PassCandidateCounts:
+    generated_count: int
+    geometry_pruned_count: int
+    dynamic_rejected_count: int
+    validated_count: int
+
+    def __post_init__(self) -> None:
+        counts = (
+            self.generated_count,
+            self.geometry_pruned_count,
+            self.dynamic_rejected_count,
+            self.validated_count,
+        )
+        if any(type(value) is not int for value in counts):
+            raise TypeError("PASS candidate counts must be exact integers")
+        if any(value < 0 for value in counts):
+            raise ValueError("PASS candidate counts must not be negative")
+        if (
+            self.geometry_pruned_count
+            + self.dynamic_rejected_count
+            + self.validated_count
+            != self.generated_count
+        ):
+            raise ValueError("PASS candidate counts are inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
+class PassSideSearchResult:
+    side: PassSide
+    status: WitnessSearchStatus
+    reason: str
+    counts: PassCandidateCounts
+    best_witness: AutomatedWitness | None
+    objective: WitnessObjective | None
+    selected_validation_hash: str | None
+    selected_candidate_parameter_hash: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.side, PassSide):
+            raise TypeError("PASS result side must be a PassSide")
+        if not isinstance(self.status, WitnessSearchStatus):
+            raise TypeError("PASS result status must be a WitnessSearchStatus")
+        _require_stable_code("PASS side result reason", self.reason)
+        if not isinstance(self.counts, PassCandidateCounts):
+            raise TypeError("PASS side result counts must be PassCandidateCounts")
+
+        found = self.status is WitnessSearchStatus.WITNESS_FOUND
+        if found != (self.best_witness is not None):
+            raise ValueError("PASS WITNESS_FOUND must carry exactly one best witness")
+        if found != (self.objective is not None):
+            raise ValueError("PASS WITNESS_FOUND must carry exactly one objective")
+        if found != (self.selected_validation_hash is not None):
+            raise ValueError("PASS WITNESS_FOUND must carry one validation hash")
+        if found != (self.selected_candidate_parameter_hash is not None):
+            raise ValueError("PASS WITNESS_FOUND must carry one candidate parameter hash")
+        if found != (self.counts.validated_count > 0):
+            raise ValueError("PASS validated count must agree with WITNESS_FOUND")
+
+        if found:
+            assert self.best_witness is not None
+            assert self.objective is not None
+            assert self.selected_validation_hash is not None
+            assert self.selected_candidate_parameter_hash is not None
+            expected_kind = (
+                WitnessKind.PASS_LEFT
+                if self.side is PassSide.LEFT
+                else WitnessKind.PASS_RIGHT
+            )
+            if self.best_witness.kind is not expected_kind:
+                raise ValueError("PASS witness kind does not match its result side")
+            if len(self.best_witness.required_pass_actor_ids) != 1:
+                raise ValueError("structured PASS v1 requires exactly one target Actor")
+            declared_pass_actor_ids = {
+                actor_id for actor_id, _ in self.best_witness.pass_times_by_actor
+            }
+            if (
+                self.best_witness.departure_time_s is None
+                or self.best_witness.rejoin_started_at_s is None
+                or self.best_witness.rejoin_confirmed_at_s is None
+                or declared_pass_actor_ids
+                != set(self.best_witness.required_pass_actor_ids)
+            ):
+                raise ValueError("selected PASS witness requires canonical event declarations")
+            if self.objective.hard_failure_count != 0:
+                raise ValueError("selected PASS objective must have zero hard failures")
+            _require_sha256(
+                "selected PASS validation hash",
+                self.selected_validation_hash,
+            )
+            _require_sha256(
+                "selected PASS candidate parameter hash",
+                self.selected_candidate_parameter_hash,
+            )
+            expected_parameter_hash = build_pass_candidate_parameter_hash(
+                side=self.side,
+                witness=self.best_witness,
+                objective=self.objective,
+            )
+            if self.selected_candidate_parameter_hash != expected_parameter_hash:
+                raise ValueError(
+                    "selected PASS candidate parameter hash does not match witness"
+                )
+
+        if self.status in (
+            WitnessSearchStatus.RESOURCE_LIMIT,
+            WitnessSearchStatus.INVALID_INPUT,
+        ) and self.counts.generated_count != 0:
+            raise ValueError("PASS preflight failure must not report generated candidates")
+
+    @property
+    def semantic_content_hash(self) -> str:
+        return canonical_content_hash(self)
+
+
+def build_pass_candidate_parameter_hash(
+    *,
+    side: PassSide,
+    witness: AutomatedWitness,
+    objective: WitnessObjective,
+) -> str:
+    """Bind one selected PASS witness to the objective's frozen parameter tuple."""
+
+    if not isinstance(side, PassSide):
+        raise TypeError("PASS candidate side must be a PassSide")
+    if not isinstance(witness, AutomatedWitness):
+        raise TypeError("PASS candidate witness must be an AutomatedWitness")
+    if not isinstance(objective, WitnessObjective):
+        raise TypeError("PASS candidate objective must be a WitnessObjective")
+    return canonical_content_hash(
+        {
+            "side": side,
+            "witness_id": witness.witness_id,
+            "witness_semantic_content_hash": witness.semantic_content_hash,
+            "frozen_parameter_tuple": objective.frozen_parameter_tuple,
+        }
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PassStructuredSearchResult:
+    source_projection_hash: str
+    world_content_hash: str
+    vehicle_profile_hash: str
+    maneuver_policy_hash: str
+    maneuver_policy_revision: int
+    search_config_hash: str
+    search_config_version: str
+    left: PassSideSearchResult
+    right: PassSideSearchResult
+    limitations: tuple[str, ...]
+    elapsed_nonqualification_ns: int
+    pass_search_version: str = PASS_STRUCTURED_SEARCH_VERSION
+    validator_version: str = WITNESS_VALIDATOR_VERSION
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("source projection hash", self.source_projection_hash),
+            ("world content hash", self.world_content_hash),
+            ("vehicle profile hash", self.vehicle_profile_hash),
+            ("maneuver policy hash", self.maneuver_policy_hash),
+            ("search config hash", self.search_config_hash),
+        ):
+            _require_sha256(name, value)
+        if self.maneuver_policy_revision < 0:
+            raise ValueError("maneuver policy revision must not be negative")
+        if self.search_config_version != WITNESS_SEARCH_CONFIG_VERSION:
+            raise ValueError("unsupported PASS search config version")
+        if self.pass_search_version != PASS_STRUCTURED_SEARCH_VERSION:
+            raise ValueError("unsupported PASS structured search version")
+        if self.validator_version != WITNESS_VALIDATOR_VERSION:
+            raise ValueError("unsupported PASS validator version")
+        if self.left.side is not PassSide.LEFT or self.right.side is not PassSide.RIGHT:
+            raise ValueError("PASS side results must be ordered LEFT then RIGHT")
+        if self.elapsed_nonqualification_ns < 0:
+            raise ValueError("PASS elapsed time must not be negative")
+
+        raw_limitations = tuple(self.limitations)
+        if any(not isinstance(limitation, str) for limitation in raw_limitations):
+            raise TypeError("PASS limitations must be strings")
+        limitations = tuple(sorted(set(raw_limitations)))
+        for limitation in limitations:
+            _require_stable_code("PASS limitation", limitation)
+        object.__setattr__(self, "limitations", limitations)
+
+        resource_limited = (
+            self.left.status is WitnessSearchStatus.RESOURCE_LIMIT
+            or self.right.status is WitnessSearchStatus.RESOURCE_LIMIT
+        )
+        if resource_limited and not (
+            self.left.status is WitnessSearchStatus.RESOURCE_LIMIT
+            and self.right.status is WitnessSearchStatus.RESOURCE_LIMIT
+        ):
+            raise ValueError("episode-level PASS resource limit must apply to both sides")
+
+        for side_result in (self.left, self.right):
+            witness = side_result.best_witness
+            if witness is None:
+                continue
+            if (
+                witness.source_projection_hash != self.source_projection_hash
+                or witness.world_content_hash != self.world_content_hash
+                or witness.vehicle_profile_hash != self.vehicle_profile_hash
+                or witness.search_config_hash != self.search_config_hash
+            ):
+                raise ValueError("selected PASS witness provenance does not match result")
+
+    @property
+    def best_pass_left(self) -> AutomatedWitness | None:
+        return self.left.best_witness
+
+    @property
+    def best_pass_right(self) -> AutomatedWitness | None:
+        return self.right.best_witness
+
+    @property
+    def objective_by_side(
+        self,
+    ) -> tuple[tuple[PassSide, WitnessObjective | None], ...]:
+        return (
+            (PassSide.LEFT, self.left.objective),
+            (PassSide.RIGHT, self.right.objective),
+        )
+
+    @property
+    def validation_hash_by_side(
+        self,
+    ) -> tuple[tuple[PassSide, str | None], ...]:
+        return (
+            (PassSide.LEFT, self.left.selected_validation_hash),
+            (PassSide.RIGHT, self.right.selected_validation_hash),
+        )
+
+    @property
+    def status_by_side(
+        self,
+    ) -> tuple[tuple[PassSide, WitnessSearchStatus], ...]:
+        return (
+            (PassSide.LEFT, self.left.status),
+            (PassSide.RIGHT, self.right.status),
+        )
+
+    @property
+    def reason_by_side(self) -> tuple[tuple[PassSide, str], ...]:
+        return (
+            (PassSide.LEFT, self.left.reason),
+            (PassSide.RIGHT, self.right.reason),
+        )
+
+    @property
+    def count_by_side(
+        self,
+    ) -> tuple[tuple[PassSide, PassCandidateCounts], ...]:
+        return (
+            (PassSide.LEFT, self.left.counts),
+            (PassSide.RIGHT, self.right.counts),
+        )
+
+    @property
+    def semantic_content_hash(self) -> str:
+        payload = {
+            "source_projection_hash": self.source_projection_hash,
+            "world_content_hash": self.world_content_hash,
+            "vehicle_profile_hash": self.vehicle_profile_hash,
+            "maneuver_policy_hash": self.maneuver_policy_hash,
+            "maneuver_policy_revision": self.maneuver_policy_revision,
+            "search_config_hash": self.search_config_hash,
+            "search_config_version": self.search_config_version,
+            "left": self.left,
+            "right": self.right,
+            "limitations": self.limitations,
+            "pass_search_version": self.pass_search_version,
+            "validator_version": self.validator_version,
+        }
+        return canonical_content_hash(payload)
+
+
+@dataclass(frozen=True, slots=True)
 class WitnessSearchResult:
     status: WitnessSearchStatus
     source_projection_hash: str
@@ -877,14 +1257,41 @@ def _require_finite_twist(name: str, twist: Twist2D) -> None:
         raise ValueError(f"{name} must be finite")
 
 
+def _require_sha256(name: str, value: str) -> None:
+    if len(value) != 64 or any(
+        character not in "0123456789abcdef" for character in value
+    ):
+        raise ValueError(f"{name} must be lowercase SHA-256")
+
+
+def _require_stable_code(name: str, value: str) -> None:
+    if not value or any(
+        not (
+            character.isascii()
+            and (character.islower() or character.isdigit() or character == "_")
+        )
+        for character in value
+    ):
+        raise ValueError(f"{name} must be a lowercase snake_case code")
+
+
 __all__ = [
     "AutomatedWitness",
     "FROZEN_WITNESS_SEARCH_CONFIG",
     "ManeuverConstraintSpec",
+    "PASS_MAX_EVALUATED_CANDIDATES_PER_EPISODE",
+    "PASS_SAME_DIRECTION_HEADING_TOLERANCE_RAD",
+    "PASS_STRUCTURED_SEARCH_VERSION",
+    "PassCandidateCounts",
+    "PassSide",
+    "PassSideSearchResult",
+    "PassSideWaitPolicy",
+    "PassStructuredSearchResult",
     "PassingPolicy",
     "WITNESS_CONTROL_PERIOD_S",
     "WITNESS_EVALUATOR_PERIOD_S",
     "WITNESS_SCHEMA_VERSION",
+    "WITNESS_SEARCH_CONFIG_VERSION",
     "WITNESS_VALIDATOR_VERSION",
     "WITNESS_WORLD_SCHEMA_VERSION",
     "WitnessActorTrajectory",
@@ -900,5 +1307,6 @@ __all__ = [
     "WitnessTerminalMode",
     "WitnessWorldSnapshot",
     "build_automated_witness",
+    "build_pass_candidate_parameter_hash",
     "project_public_witness_world",
 ]

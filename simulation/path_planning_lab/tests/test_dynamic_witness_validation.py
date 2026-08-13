@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from hospital_path_lab.collision import oriented_footprint_circle_surface_distance
-from hospital_path_lab.contracts import Twist2D
+from hospital_path_lab.contracts import Pose2D, Twist2D
 from hospital_path_lab.dynamic_contracts import Point2D, Vector2D
 from hospital_path_lab.dynamic_corpus import (
     DynamicCorpusActor,
@@ -24,6 +24,7 @@ from hospital_path_lab.dynamic_witness_contracts import (
     project_public_witness_world,
 )
 from hospital_path_lab.dynamic_witness_validation import (
+    canonicalize_and_validate_ground_truth_pass,
     validate_ground_truth_witness,
 )
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1
@@ -105,6 +106,69 @@ def _stationary_hold_contract(template, actor: DynamicCorpusActor):
         points=points,
     )
     return world, witness
+
+
+def _legacy_pass_with_actor(
+    template,
+    actor: DynamicCorpusActor,
+    *,
+    extra_actors: tuple[DynamicCorpusActor, ...] = (),
+    reference_path: tuple[Pose2D, ...] | None = None,
+):
+    episode = DynamicCorpusEpisode(
+        schema_version=template.schema_version,
+        generator_version=template.generator_version,
+        episode_id="synthetic-pass-validator-case",
+        split=template.split,
+        expectation_category=DynamicExpectationCategory.LOCAL_DETOUR_FEASIBLE,
+        seed=template.seed,
+        simulation_only=True,
+        map_id="synthetic-pass-validator-map",
+        mission_id=template.mission_id,
+        duration_s=template.duration_s,
+        corridor_width_m=template.corridor_width_m,
+        map_length_m=template.map_length_m,
+        grid_resolution_m=template.grid_resolution_m,
+        initial_state=template.initial_state,
+        goal_pose=template.goal_pose,
+        reference_path=reference_path or template.reference_path,
+        actors=(actor, *extra_actors),
+        progressable=True,
+        blocking_cleared_at_s=None,
+    )
+    world = project_public_witness_world(episode)
+    legacy = template.oracle_spec.feasible_witness
+    assert legacy is not None
+    witness = build_automated_witness(
+        world,
+        witness_id="synthetic-pass-validator-witness",
+        kind=WitnessKind.PASS_RIGHT,
+        terminal_mode=WitnessTerminalMode.GOAL_DWELL,
+        points=tuple(
+            WitnessPoint(
+                time_s=point.time_s,
+                pose=point.pose,
+                twist=point.twist,
+                source_primitive_id="pass-validator-test",
+            )
+            for point in legacy.points
+        ),
+        required_pass_actor_ids=(world.actors[0].actor_binding_id,),
+        terminal_dwell_s=legacy.terminal_dwell_s,
+    )
+    return world, witness
+
+
+def _with_measured_declarations(world, witness):
+    measurement = validate_ground_truth_witness(world, witness)
+    assert measurement.passed, measurement.failures
+    return replace(
+        witness,
+        departure_time_s=measurement.metrics.departure_time_s,
+        pass_times_by_actor=measurement.metrics.pass_times_by_actor,
+        rejoin_started_at_s=measurement.metrics.rejoin_started_at_s,
+        rejoin_confirmed_at_s=measurement.metrics.rejoin_confirmed_at_s,
+    )
 
 
 def test_legacy_positive_is_reproduced_by_independent_validator(
@@ -512,3 +576,370 @@ def test_validator_does_not_need_original_episode_identity(feasible_episode) -> 
 
     assert result.passed, result.failures
     assert feasible_episode.episode_id not in repr(result)
+
+
+def test_strict_pass_requires_and_accepts_independently_measured_declarations(
+    feasible_episode,
+) -> None:
+    actor = replace(feasible_episode.actors[0], active_until_s=21.0)
+    world, draft = _legacy_pass_with_actor(feasible_episode, actor)
+
+    missing = validate_ground_truth_witness(
+        world,
+        draft,
+        strict_declarations=True,
+    )
+    canonical = _with_measured_declarations(world, draft)
+    strict = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert not missing.passed
+    assert "strict_event_declaration_missing" in missing.failures
+    assert strict.passed, strict.failures
+
+
+def test_one_sweep_canonical_pass_matches_two_pass_strict_result(
+    feasible_episode,
+) -> None:
+    actor = replace(feasible_episode.actors[0], active_until_s=21.0)
+    world, draft = _legacy_pass_with_actor(feasible_episode, actor)
+    expected_witness = _with_measured_declarations(world, draft)
+    expected_validation = validate_ground_truth_witness(
+        world,
+        expected_witness,
+        strict_declarations=True,
+    )
+
+    canonical, validation = canonicalize_and_validate_ground_truth_pass(
+        world,
+        draft,
+    )
+
+    assert canonical == expected_witness
+    assert validation == expected_validation
+
+
+def test_one_sweep_canonical_pass_applies_strict_multi_actor_scope(
+    feasible_episode,
+) -> None:
+    target = replace(feasible_episode.actors[0], active_until_s=21.0)
+    extra_actor = DynamicCorpusActor(
+        actor_id="one-sweep-extra-blocker",
+        active_from_s=0.0,
+        active_until_s=21.0,
+        start_position=Point2D(2.20, target.start_position.y),
+        velocity=Vector2D(0.06, 0.0),
+    )
+    world, draft = _legacy_pass_with_actor(
+        feasible_episode,
+        target,
+        extra_actors=(extra_actor,),
+    )
+
+    canonical, validation = canonicalize_and_validate_ground_truth_pass(
+        world,
+        draft,
+    )
+
+    assert canonical is None
+    assert not validation.passed
+    assert "multi_actor_pass_out_of_scope" in validation.failures
+
+
+def test_strict_event_declaration_tolerance_is_five_milliseconds(
+    feasible_episode,
+) -> None:
+    actor = replace(feasible_episode.actors[0], active_until_s=21.0)
+    world, draft = _legacy_pass_with_actor(feasible_episode, actor)
+    canonical = _with_measured_declarations(world, draft)
+    assert canonical.departure_time_s is not None
+
+    at_boundary = validate_ground_truth_witness(
+        world,
+        replace(
+            canonical,
+            departure_time_s=canonical.departure_time_s + 0.005,
+        ),
+        strict_declarations=True,
+    )
+    outside_boundary = validate_ground_truth_witness(
+        world,
+        replace(
+            canonical,
+            departure_time_s=canonical.departure_time_s + 0.00501,
+        ),
+        strict_declarations=True,
+    )
+
+    assert at_boundary.passed, at_boundary.failures
+    assert not outside_boundary.passed
+    assert "declared_departure_mismatch" in outside_boundary.failures
+
+
+def test_strict_pass_rejects_round_trip_and_nonadjacent_duplicate_reference(
+    feasible_episode,
+) -> None:
+    start, end = feasible_episode.reference_path
+    actor = replace(feasible_episode.actors[0], active_until_s=21.0)
+    round_trip = (start, end, start)
+    duplicate = (
+        start,
+        end,
+        Pose2D(end.x, end.y + 1.0, 0.0),
+        Pose2D(start.x, start.y + 1.0, 0.0),
+        start,
+        end,
+    )
+
+    for reference_path in (round_trip, duplicate):
+        world, draft = _legacy_pass_with_actor(
+            feasible_episode,
+            actor,
+            reference_path=reference_path,
+        )
+        canonical = _with_measured_declarations(world, draft)
+
+        result = validate_ground_truth_witness(
+            world,
+            canonical,
+            strict_declarations=True,
+        )
+
+        assert not result.passed
+        assert "ambiguous_reference_projection" in result.failures
+
+
+def test_strict_pass_requires_departure_pass_and_rejoin_on_same_segment(
+    feasible_episode,
+) -> None:
+    start, end = feasible_episode.reference_path
+    split_reference = (
+        start,
+        Pose2D(2.0, start.y, start.yaw),
+        end,
+    )
+    actor = replace(feasible_episode.actors[0], active_until_s=21.0)
+    world, draft = _legacy_pass_with_actor(
+        feasible_episode,
+        actor,
+        reference_path=split_reference,
+    )
+    canonical = _with_measured_declarations(world, draft)
+
+    result = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert not result.passed
+    assert "pass_reference_segment_mismatch" in result.failures
+
+
+def test_strict_pass_rejects_additional_same_direction_lane_blocker(
+    feasible_episode,
+) -> None:
+    target = replace(feasible_episode.actors[0], active_until_s=21.0)
+    extra_actor = DynamicCorpusActor(
+        actor_id="extra-same-direction-blocker",
+        active_from_s=0.0,
+        active_until_s=21.0,
+        start_position=Point2D(2.20, target.start_position.y),
+        velocity=Vector2D(0.06, 0.0),
+    )
+    world, draft = _legacy_pass_with_actor(
+        feasible_episode,
+        target,
+        extra_actors=(extra_actor,),
+    )
+    canonical = _with_measured_declarations(world, draft)
+
+    result = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert not result.passed
+    assert "multi_actor_pass_out_of_scope" in result.failures
+
+
+def test_strict_pass_allows_rear_same_direction_actor(feasible_episode) -> None:
+    target = replace(feasible_episode.actors[0], active_until_s=21.0)
+    extra_actor = DynamicCorpusActor(
+        actor_id="extra-same-direction-behind",
+        active_from_s=0.0,
+        active_until_s=21.0,
+        start_position=Point2D(-1.00, target.start_position.y),
+        velocity=Vector2D(0.01, 0.0),
+    )
+    world, draft = _legacy_pass_with_actor(
+        feasible_episode,
+        target,
+        extra_actors=(extra_actor,),
+    )
+    canonical = _with_measured_declarations(world, draft)
+
+    result = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert result.passed, result.failures
+
+
+def test_strict_pass_allows_far_ahead_actor_beyond_planned_rejoin(
+    feasible_episode,
+) -> None:
+    target = replace(feasible_episode.actors[0], active_until_s=21.0)
+    extra_actor = DynamicCorpusActor(
+        actor_id="extra-same-direction-far-ahead",
+        active_from_s=0.0,
+        active_until_s=21.0,
+        start_position=Point2D(4.20, target.start_position.y),
+        velocity=Vector2D(0.01, 0.0),
+    )
+    world, draft = _legacy_pass_with_actor(
+        feasible_episode,
+        target,
+        extra_actors=(extra_actor,),
+    )
+    canonical = _with_measured_declarations(world, draft)
+
+    result = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert result.passed, result.failures
+
+
+@pytest.mark.parametrize(
+    ("actor_change", "expected_failure"),
+    (
+        (
+            {"active_from_s": 4.0},
+            "target_inactive_at_departure",
+        ),
+        (
+            {"start_position": Point2D(0.50, 2.32)},
+            "target_not_ahead_at_departure",
+        ),
+        (
+            {"start_position": Point2D(1.518, 2.77)},
+            "target_not_lane_overlapping_at_departure",
+        ),
+        (
+            {"velocity": Vector2D(0.0, 0.0)},
+            "target_not_same_direction_at_departure",
+        ),
+    ),
+)
+def test_pass_target_is_active_ahead_lane_overlapping_and_same_direction(
+    feasible_episode,
+    actor_change,
+    expected_failure,
+) -> None:
+    actor = replace(feasible_episode.actors[0], **actor_change)
+    world, witness = _legacy_pass_with_actor(feasible_episode, actor)
+
+    result = validate_ground_truth_witness(world, witness)
+
+    assert not result.passed
+    assert expected_failure in result.failures
+
+
+def test_pass_kind_requires_selected_side_until_overtake(feasible_episode) -> None:
+    world, witness = _legacy_witness_for_new_contract(feasible_episode)
+    reference_y = world.reference_path[0].y
+    mirrored = replace(
+        witness,
+        points=tuple(
+            replace(
+                point,
+                pose=replace(
+                    point.pose,
+                    y=2.0 * reference_y - point.pose.y,
+                    yaw=-point.pose.yaw,
+                ),
+                twist=replace(point.twist, angular=-point.twist.angular),
+            )
+            for point in witness.points
+        ),
+    )
+
+    result = validate_ground_truth_witness(world, mirrored)
+
+    assert not result.passed
+    assert "pass_wrong_side" in result.failures
+
+
+def test_pass_does_not_round_actor_end_past_raw_off_grid_event(
+    feasible_episode,
+) -> None:
+    actor = replace(feasible_episode.actors[0], active_until_s=19.5353)
+    world, witness = _legacy_pass_with_actor(feasible_episode, actor)
+
+    result = validate_ground_truth_witness(world, witness)
+
+    assert not result.passed
+    assert result.metrics.pass_times_by_actor == ()
+    assert "ordered_overtake_missing" in result.failures
+
+
+def test_strict_pass_rejects_actor_retaking_lead_before_rejoin(
+    feasible_episode,
+) -> None:
+    world, draft = _legacy_witness_for_new_contract(feasible_episode)
+    canonical = _with_measured_declarations(world, draft)
+
+    result = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert not result.passed
+    assert "post_pass_reversal" in result.failures
+
+
+def test_rejoin_and_terminal_dwell_may_share_stationary_time(
+    feasible_episode,
+) -> None:
+    actor = replace(feasible_episode.actors[0], active_until_s=21.0)
+    world, draft = _legacy_pass_with_actor(feasible_episode, actor)
+    stationary = next(
+        point for point in draft.points if point.time_s == pytest.approx(38.90)
+    )
+    shared_dwell_points = tuple(
+        replace(stationary, time_s=stationary.time_s + tick * 0.05)
+        for tick in range(1, 11)
+    )
+    overlap_draft = replace(
+        draft,
+        terminal_mode=WitnessTerminalMode.REJOIN_DWELL,
+        points=(
+            *(point for point in draft.points if point.time_s <= stationary.time_s),
+            *shared_dwell_points,
+        ),
+    )
+    canonical = _with_measured_declarations(world, overlap_draft)
+
+    result = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+
+    assert result.passed, result.failures
+    assert result.metrics.rejoin_started_at_s is not None
+    assert result.metrics.rejoin_confirmed_at_s is not None
+    assert result.metrics.terminal_dwell_observed_s >= 0.50
+    assert canonical.points[-1].time_s < (
+        result.metrics.rejoin_started_at_s + 1.0
+    )
