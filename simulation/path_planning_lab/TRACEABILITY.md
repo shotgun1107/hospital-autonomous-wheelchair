@@ -67,6 +67,10 @@ batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용
 
 ### DYN-DIR-v7 — 방향 고정 합성 Actor 공개-only lane
 
+후속 지역 기동 연구의 전체 단계·gate·hidden 수명주기는
+[`R1~R7 master specification`](../../docs/research/dynamic-actor-experiment/10-dynamic-local-maneuver-research-master-spec.md)을
+따른다. 이 번호는 제품 경로분석 단계나 기존 동적 Actor 구현 단계와 다른 연구 단계다.
+
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
 |---|---|---|---|
 | `DYN-DIR-001` | 동일 stable identity·binding의 최신 20개 unique accepted `observed_velocity`를 평균하고 `norm(v_mean)-2·(max(velocity_sigma)/√20) >= 0.03m/s`일 때만 direction을 lock한다. anchor는 최신 `observed_position`, 위치 sigma는 최신 frame 값이다. stale·invalid·track/binding 변경과 순서 위반은 이전 이력을 폐기한다. | [dynamic_directional_prediction.py](src/hospital_path_lab/dynamic_directional_prediction.py), `tests/test_dynamic_directional_prediction.py::test_direction_locks_only_after_twenty_unique_accepted_tracks_frames`, `::test_duplicate_observation_is_idempotent_and_does_not_grow_history`, `::test_session_identity_change_resets_history_instead_of_mixing_actors`, `::test_stale_invalid_and_unavailable_states_are_explicit_holds` | 연결됨, L1. v6 공개 constant-heading open-loop 원형 Actor만 다루며 실제 사람 방향추정이 아니다. |

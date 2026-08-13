@@ -207,6 +207,12 @@ SIPP는 기존 witness를 대체하기보다 시간 oracle을 자동화·확장�
 
 ## 7. 다음 공개 연구 순서
 
+이 절의 실행 계약은
+[`동적 지역 기동 연구 R1~R7 Master Specification`](../research/dynamic-actor-experiment/10-dynamic-local-maneuver-research-master-spec.md)으로
+구체화한다. 제품 경로분석 단계와 기존 동적 Actor 구현 단계 번호와의 혼동을 막기 위해
+master 명세에서는 아래 단계를 `R1~R7`로 표기한다. 이 문서는 방향과 근거의 정본이고,
+master 명세는 단계별 입력·출력·완료 gate의 정본이다.
+
 ### 1단계 — prediction 계약 감사
 
 - deterministic Actor motion containment와 statistical observation coverage를 분리한다.
