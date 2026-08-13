@@ -134,7 +134,7 @@ def test_pass_search_versions_and_frozen_axes_are_explicit() -> None:
     config = FROZEN_WITNESS_SEARCH_CONFIG
 
     assert WITNESS_SEARCH_CONFIG_VERSION == "structured-witness-search-v2"
-    assert WITNESS_VALIDATOR_VERSION == "ground-truth-witness-validator-v2"
+    assert WITNESS_VALIDATOR_VERSION == "ground-truth-witness-validator-v3"
     assert PASS_STRUCTURED_SEARCH_VERSION == "pass-structured-search-v1"
     assert config.pass_side_order == (PassSide.LEFT, PassSide.RIGHT)
     assert config.pass_lateral_step_resolution_multiplier == 1.0

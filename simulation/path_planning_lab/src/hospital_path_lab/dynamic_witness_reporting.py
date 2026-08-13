@@ -55,6 +55,7 @@ from hospital_path_lab.dynamic_witness_contracts import (
     WitnessWorldSnapshot,
     project_public_witness_world,
 )
+from hospital_path_lab.dynamic_witness_crossing import search_crossing_bypass
 from hospital_path_lab.dynamic_witness_pass import search_pass_structured_parallel
 from hospital_path_lab.dynamic_witness_profile_replay import (
     WITNESS_PROFILE_REPLAY_VERSION,
@@ -66,6 +67,10 @@ from hospital_path_lab.dynamic_witness_search import (
     generate_wait_and_follow_witness,
     search_wait_and_hold,
 )
+from hospital_path_lab.dynamic_witness_restop import (
+    search_multi_hazard_restop,
+    validate_multi_hazard_restop,
+)
 from hospital_path_lab.dynamic_witness_validation import (
     GroundTruthWitnessValidation,
     validate_ground_truth_witness,
@@ -73,11 +78,15 @@ from hospital_path_lab.dynamic_witness_validation import (
 from hospital_path_lab.map_factory import canonical_content_hash
 
 WITNESS_PUBLIC_AUDIT_SCHEMA_VERSION = "dynamic-witness-public-audit-v1"
-WITNESS_PUBLIC_AUDIT_VERSION = "dynamic-witness-public-audit-2026-08-13"
+WITNESS_PUBLIC_AUDIT_VERSION = "dynamic-witness-public-audit-r2a-supplement-v1"
 WITNESS_AUDIT_MANIFEST_SCHEMA_VERSION = "dynamic-witness-audit-manifest-v1"
 WITNESS_AUDIT_OUTPUT_SCHEMA_VERSION = "dynamic-witness-audit-output-v1"
 _PUBLIC_LANES = ("v6_primary", "legacy_mechanism")
 _PASS_KINDS = frozenset((WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT))
+_CROSSING_KINDS = frozenset(
+    (WitnessKind.CROSSING_BYPASS_LEFT, WitnessKind.CROSSING_BYPASS_RIGHT)
+)
+_FEASIBLE_KINDS = _PASS_KINDS | _CROSSING_KINDS
 _SHA256_LENGTH = 64
 _TIME_TOLERANCE_S = 1e-12
 
@@ -362,6 +371,8 @@ def audit_public_witness_episode(
         )
     )
     pass_result = execute_pass(world)
+    crossing_result = search_crossing_bypass(world, search_config=search_config)
+    restop_result = search_multi_hazard_restop(world, search_config=search_config)
 
     roles_by_hash: dict[str, set[str]] = {}
     witnesses_by_hash: dict[str, AutomatedWitness] = {}
@@ -376,6 +387,9 @@ def audit_public_witness_episode(
     add_witness(wait_result.selected_witness, "wait_hold_search_selected")
     add_witness(pass_result.best_pass_left, "pass_left_search_selected")
     add_witness(pass_result.best_pass_right, "pass_right_search_selected")
+    add_witness(crossing_result.left.selected_witness, "crossing_left_search_selected")
+    add_witness(crossing_result.right.selected_witness, "crossing_right_search_selected")
+    add_witness(restop_result.witness, "multi_hazard_restop_selected")
     add_witness(
         _find_multi_hazard_wait_diagnostic(world, search_config),
         "multi_hazard_wait_diagnostic",
@@ -396,7 +410,7 @@ def audit_public_witness_episode(
         validation = validate_ground_truth_witness(
             world,
             witness,
-            strict_declarations=witness.kind in _PASS_KINDS,
+            strict_declarations=witness.kind in _FEASIBLE_KINDS,
         )
         if not validation.passed:
             hard_failures.extend(
@@ -406,6 +420,8 @@ def audit_public_witness_episode(
         expected_validation_hash = _selected_validation_hash(
             wait_result,
             pass_result,
+            crossing_result,
+            restop_result,
             witness,
         )
         if (
@@ -438,6 +454,11 @@ def audit_public_witness_episode(
         for side in (pass_result.left, pass_result.right)
     ):
         hard_failures.append("pass_search_invalid_input")
+    if any(
+        side.status is WitnessSearchStatus.INVALID_INPUT
+        for side in (crossing_result.left, crossing_result.right)
+    ):
+        hard_failures.append("crossing_search_invalid_input")
     limitations.update(pass_result.limitations)
 
     evidence = _evidence_classes(
@@ -472,6 +493,8 @@ def audit_public_witness_episode(
         "source_projection_hash": world.source_projection_hash,
         "wait_hold_search_hash": wait_result.semantic_content_hash,
         "pass_search_hash": pass_result.semantic_content_hash,
+        "crossing_search_hash": crossing_result.semantic_content_hash,
+        "restop_search_hash": restop_result.content_hash,
         "witness_record_hashes": tuple(record.semantic_content_hash for record in records),
         "evidence_classes": evidence,
     }
@@ -799,6 +822,8 @@ class WitnessAuditOutputWriter:
 def _selected_validation_hash(
     wait_result: WitnessSearchResult,
     pass_result: PassStructuredSearchResult,
+    crossing_result,
+    restop_result,
     witness: AutomatedWitness,
 ) -> str | None:
     if (
@@ -812,6 +837,19 @@ def _selected_validation_hash(
             and side.best_witness.semantic_content_hash == witness.semantic_content_hash
         ):
             return side.selected_validation_hash
+    for side in (crossing_result.left, crossing_result.right):
+        if (
+            side.selected_witness is not None
+            and side.selected_witness.semantic_content_hash
+            == witness.semantic_content_hash
+        ):
+            return side.selected_validation_hash
+    if (
+        restop_result.witness is not None
+        and restop_result.validation is not None
+        and restop_result.witness.semantic_content_hash == witness.semantic_content_hash
+    ):
+        return restop_result.validation.base_validation.content_hash
     return None
 
 
@@ -823,7 +861,7 @@ def _evidence_classes(
     observation_fault_replay: ObservationFaultReplay | None,
 ) -> tuple[WitnessEvidenceClass, ...]:
     classes: set[WitnessEvidenceClass] = set()
-    pass_found = any(record.witness.kind in _PASS_KINDS for record in records)
+    pass_found = any(record.witness.kind in _FEASIBLE_KINDS for record in records)
     wait_found = any(record.witness.kind is WitnessKind.WAIT_AND_FOLLOW for record in records)
     hold_found = any(record.witness.kind is WitnessKind.HOLD_ONLY for record in records)
     narrow_proof = _straight_corridor_pass_forbidden(world)
@@ -917,11 +955,10 @@ def _assess_expectation(
             ("observation_undecidable_hold_not_reproduced",),
         )
     if expectation is DynamicExpectationCategory.DYNAMIC_CHANGE_RESTOP:
-        restops = max(
-            (_hazard_restop_count(world, record.witness) for record in wait_records),
-            default=0,
+        matched = any(
+            validate_multi_hazard_restop(world, record.witness).core_passed
+            for record in wait_records
         )
-        matched = restops >= 2
         return (
             ExpectationAssessment.MATCHED if matched else ExpectationAssessment.NOT_FULLY_COVERED,
             () if matched else ("two_distinct_hazard_restops_not_demonstrated",),

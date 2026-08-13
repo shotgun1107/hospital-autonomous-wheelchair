@@ -67,7 +67,14 @@ _SUPPORTED_PROFILES = (
 _USABLE_STATUSES = frozenset(
     (DirectionalPredictionStatus.READY, DirectionalPredictionStatus.EMPTY_FRAME)
 )
-_PASS_KINDS = frozenset((WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT))
+_PASS_KINDS = frozenset(
+    (
+        WitnessKind.PASS_LEFT,
+        WitnessKind.PASS_RIGHT,
+        WitnessKind.CROSSING_BYPASS_LEFT,
+        WitnessKind.CROSSING_BYPASS_RIGHT,
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)

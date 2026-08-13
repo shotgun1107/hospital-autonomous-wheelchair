@@ -30,7 +30,7 @@ from hospital_path_lab.vehicle import (
 WITNESS_WORLD_SCHEMA_VERSION = "dynamic-witness-world-v1"
 WITNESS_SCHEMA_VERSION = "automated-dynamic-witness-v1"
 WITNESS_SEARCH_CONFIG_VERSION = "structured-witness-search-v2"
-WITNESS_VALIDATOR_VERSION = "ground-truth-witness-validator-v2"
+WITNESS_VALIDATOR_VERSION = "ground-truth-witness-validator-v3"
 PASS_STRUCTURED_SEARCH_VERSION = "pass-structured-search-v1"
 WITNESS_CONTROL_PERIOD_S = 0.05
 WITNESS_EVALUATOR_PERIOD_S = 0.005
@@ -68,6 +68,8 @@ class WitnessSearchStatus(StrEnum):
 class WitnessKind(StrEnum):
     PASS_LEFT = "pass_left"
     PASS_RIGHT = "pass_right"
+    CROSSING_BYPASS_LEFT = "crossing_bypass_left"
+    CROSSING_BYPASS_RIGHT = "crossing_bypass_right"
     WAIT_AND_FOLLOW = "wait_and_follow"
     HOLD_ONLY = "hold_only"
 
@@ -86,6 +88,7 @@ class WitnessPhase(StrEnum):
     TURN_OUT = "turn_out"
     MOVE_LATERAL = "move_lateral"
     PASS = "pass"
+    CROSSING_BYPASS = "crossing_bypass"
     TURN_RETURN = "turn_return"
     REJOIN = "rejoin"
     FOLLOW_REFERENCE = "follow_reference"
@@ -580,10 +583,16 @@ class AutomatedWitness:
             raise ValueError("automated witness times must be strictly increasing")
         if len(actor_ids) != len(set(actor_ids)):
             raise ValueError("required pass Actor ids must be unique")
-        if self.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT) and not actor_ids:
-            raise ValueError("pass witness requires at least one Actor binding")
-        if self.kind not in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT) and actor_ids:
-            raise ValueError("non-pass witness must not declare pass Actor ids")
+        actor_bound_kinds = (
+            WitnessKind.PASS_LEFT,
+            WitnessKind.PASS_RIGHT,
+            WitnessKind.CROSSING_BYPASS_LEFT,
+            WitnessKind.CROSSING_BYPASS_RIGHT,
+        )
+        if self.kind in actor_bound_kinds and not actor_ids:
+            raise ValueError("Actor-bound witness requires at least one Actor binding")
+        if self.kind not in actor_bound_kinds and actor_ids:
+            raise ValueError("non-Actor-bound witness must not declare Actor ids")
         if (self.kind is WitnessKind.HOLD_ONLY) != (
             self.terminal_mode is WitnessTerminalMode.SAFE_HOLD
         ):

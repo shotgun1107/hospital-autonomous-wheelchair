@@ -22,6 +22,10 @@ from hospital_path_lab.dynamic_witness_contracts import (
     WitnessTerminalMode,
     WitnessWorldSnapshot,
 )
+from hospital_path_lab.dynamic_witness_events import (
+    crossing_targets,
+    straight_reference_segments,
+)
 from hospital_path_lab.map_factory import canonical_content_hash
 
 GROUND_TRUTH_VALIDATION_SCHEMA_VERSION = "ground-truth-witness-validation-v1"
@@ -33,6 +37,10 @@ _REJOIN_DISTANCE_M = 0.10
 _REJOIN_HEADING_TOLERANCE_RAD = 10.0 * pi / 180.0
 _REJOIN_DWELL_S = 0.50
 _PROJECTION_TIE_TOLERANCE_M = 1e-12
+_PASS_KINDS = frozenset((WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT))
+_CROSSING_KINDS = frozenset(
+    (WitnessKind.CROSSING_BYPASS_LEFT, WitnessKind.CROSSING_BYPASS_RIGHT)
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +180,7 @@ def validate_ground_truth_witness(
     if missing_actor_ids:
         failures.append("required_pass_actor_missing")
     if (
-        witness.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT)
+        witness.kind in _PASS_KINDS
         and world.maneuver_constraints.passing_policy is PassingPolicy.PROHIBITED
     ):
         failures.append("passing_policy_prohibited")
@@ -295,6 +303,41 @@ def canonicalize_and_validate_ground_truth_pass(
         metrics=measured.metrics,
     )
     return canonical, strict
+
+
+def canonicalize_and_validate_ground_truth_crossing_bypass(
+    world: WitnessWorldSnapshot,
+    draft: AutomatedWitness,
+) -> tuple[AutomatedWitness | None, GroundTruthWitnessValidation]:
+    """Measure and strictly bind one declaration-free crossing bypass."""
+
+    if not isinstance(draft, AutomatedWitness):
+        raise TypeError("draft must be an AutomatedWitness")
+    if draft.kind not in _CROSSING_KINDS:
+        raise ValueError("canonical crossing validation requires a crossing witness")
+    if (
+        draft.departure_time_s is not None
+        or draft.pass_times_by_actor
+        or draft.rejoin_started_at_s is not None
+        or draft.rejoin_confirmed_at_s is not None
+    ):
+        raise ValueError("canonical crossing validation requires an undeclared draft")
+    measured = validate_ground_truth_witness(world, draft)
+    if not measured.passed:
+        return None, measured
+    canonical = replace(
+        draft,
+        departure_time_s=measured.metrics.departure_time_s,
+        pass_times_by_actor=measured.metrics.pass_times_by_actor,
+        rejoin_started_at_s=measured.metrics.rejoin_started_at_s,
+        rejoin_confirmed_at_s=measured.metrics.rejoin_confirmed_at_s,
+    )
+    strict = validate_ground_truth_witness(
+        world,
+        canonical,
+        strict_declarations=True,
+    )
+    return (canonical if strict.passed else None), strict
 
 
 def _validate_motion_and_build_samples(
@@ -472,7 +515,7 @@ def _validate_geometry_and_events(
         else None
     )
     pass_times: dict[str, float] = {}
-    if witness.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT):
+    if witness.kind in _PASS_KINDS:
         pass_times = _measure_ordered_passes(
             world,
             witness,
@@ -481,7 +524,16 @@ def _validate_geometry_and_events(
             failures=failures,
         )
 
-    if witness.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT):
+    elif witness.kind in _CROSSING_KINDS:
+        pass_times = _measure_crossing_bypasses(
+            world,
+            witness,
+            projections,
+            departure_index=departure_index,
+            failures=failures,
+        )
+
+    if witness.kind in _PASS_KINDS:
         if departure_time_s is None:
             failures.append("pass_departure_missing")
         if not set(witness.required_pass_actor_ids).issubset(pass_times):
@@ -492,7 +544,7 @@ def _validate_geometry_and_events(
         projections,
         after_s=latest_pass_s,
     )
-    if witness.kind in (WitnessKind.PASS_LEFT, WitnessKind.PASS_RIGHT):
+    if witness.kind in _PASS_KINDS:
         if rejoin_confirmed_s is None:
             failures.append("sustained_rejoin_missing")
         if latest_pass_s is not None and departure_time_s is not None:
@@ -528,6 +580,27 @@ def _validate_geometry_and_events(
                 rejoin_confirmed_at_s=rejoin_confirmed_s,
                 failures=failures,
             )
+    elif witness.kind in _CROSSING_KINDS:
+        if departure_time_s is None:
+            failures.append("crossing_departure_missing")
+        if not set(witness.required_pass_actor_ids).issubset(pass_times):
+            failures.append("active_blocking_bypass_missing")
+        if rejoin_confirmed_s is None:
+            failures.append("crossing_sustained_rejoin_missing")
+        latest_bypass_s = max(pass_times.values(), default=None)
+        if latest_bypass_s is not None and departure_time_s is not None:
+            if not departure_time_s < latest_bypass_s:
+                failures.append("crossing_bypass_before_departure")
+            if rejoin_start_s is not None and rejoin_start_s < latest_bypass_s:
+                failures.append("crossing_rejoin_before_bypass")
+        _validate_crossing_side(
+            witness,
+            projections,
+            departure_index=departure_index,
+            bypass_times=pass_times,
+            rejoin_confirmed_at_s=rejoin_confirmed_s,
+            failures=failures,
+        )
 
     _compare_declared_events(
         witness,
@@ -637,6 +710,91 @@ def _measure_ordered_passes(
         if actor_id not in pass_times and crossed_without_robot_progress:
             failures.append("ordered_overtake_robot_progress_missing")
     return pass_times
+
+
+def _measure_crossing_bypasses(
+    world: WitnessWorldSnapshot,
+    witness: AutomatedWitness,
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    *,
+    departure_index: int | None,
+    failures: list[str],
+) -> dict[str, float]:
+    """Measure progress across a target station while its direct lane is blocked."""
+
+    if departure_index is None:
+        return {}
+    targets = {
+        item.actor_binding_id: item
+        for item in crossing_targets(world)
+        if item.actor_binding_id in witness.required_pass_actor_ids
+    }
+    segments = {item.index: item for item in straight_reference_segments(world)}
+    result: dict[str, float] = {}
+    for actor_id in witness.required_pass_actor_ids:
+        target = targets.get(actor_id)
+        if target is None:
+            failures.append("crossing_target_not_eligible")
+            continue
+        segment = segments[target.segment_index]
+        station = segment.cumulative_start_m + target.crossing_station_progress_m
+        previous_progress: float | None = None
+        for sample, projection in projections[departure_index:]:
+            if projection.segment_index != target.segment_index:
+                previous_progress = projection.progress_m
+                continue
+            if sample.time_s < target.blocking_starts_at_s - _TIME_TOLERANCE_S:
+                previous_progress = projection.progress_m
+                continue
+            if sample.time_s > target.blocking_ends_at_s + _TIME_TOLERANCE_S:
+                break
+            crossed = (
+                previous_progress is not None
+                and previous_progress < station - _PROJECTION_TIE_TOLERANCE_M
+                and projection.progress_m >= station - _PROJECTION_TIE_TOLERANCE_M
+            )
+            if crossed and projection.distance_m > _DEPARTURE_THRESHOLD_M:
+                result[actor_id] = sample.time_s
+                break
+            previous_progress = projection.progress_m
+    return result
+
+
+def _validate_crossing_side(
+    witness: AutomatedWitness,
+    projections: list[tuple[_ValidationSample, _ReferenceProjection]],
+    *,
+    departure_index: int | None,
+    bypass_times: dict[str, float],
+    rejoin_confirmed_at_s: float | None,
+    failures: list[str],
+) -> None:
+    if departure_index is None or not bypass_times:
+        return
+    latest_bypass = max(bypass_times.values())
+    left = witness.kind is WitnessKind.CROSSING_BYPASS_LEFT
+    for sample, projection in projections[departure_index:]:
+        if sample.time_s > latest_bypass + _TIME_TOLERANCE_S:
+            break
+        correct = (
+            projection.signed_offset_m > _DEPARTURE_THRESHOLD_M
+            if left
+            else projection.signed_offset_m < -_DEPARTURE_THRESHOLD_M
+        )
+        if not correct:
+            failures.append("crossing_bypass_wrong_side")
+            break
+    if rejoin_confirmed_at_s is None:
+        return
+    for sample, projection in projections:
+        if sample.time_s + _TIME_TOLERANCE_S < latest_bypass:
+            continue
+        if sample.time_s > rejoin_confirmed_at_s + _TIME_TOLERANCE_S:
+            break
+        opposite = projection.signed_offset_m < -1e-9 if left else projection.signed_offset_m > 1e-9
+        if opposite:
+            failures.append("crossing_bypass_crossed_opposite_side")
+            break
 
 
 def _validate_pass_side_and_order_retention(
@@ -1022,10 +1180,7 @@ def _compare_declared_events(
     strict_declarations: bool,
 ) -> None:
     tolerance_s = 0.005 + 1e-12
-    if strict_declarations and witness.kind in (
-        WitnessKind.PASS_LEFT,
-        WitnessKind.PASS_RIGHT,
-    ):
+    if strict_declarations and witness.kind in (_PASS_KINDS | _CROSSING_KINDS):
         declared_actor_ids = {
             actor_id for actor_id, _ in witness.pass_times_by_actor
         }

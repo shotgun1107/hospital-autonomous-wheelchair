@@ -282,6 +282,14 @@ $testRun = ".\simulation\path_planning_lab\outputs\test-runs\$([guid]::NewGuid()
 
 ## 판정과 산출물
 
+R2-A 표적 보완으로 같은 방향 추월과 별개인 횡단 Actor 좌·우 우회, 그리고 두 위험의
+`실제 정지 → 0.10m 이상 이동 → 별도 재정지 → 회복` offline ground-truth 도구가 추가됐다.
+legacy 표적 2건은 맞춰졌지만 공개 19개 전체 회귀는 아직 실행하지 않았고, 다중 위험 사례의
+R2-B `ideal_capsule_ground_truth_miss`도 남아 있다. 이는 online controller나 제품 알고리즘
+채택 결과가 아니다. 상세 범위는
+[R2-A 보완 문서](../../docs/research/dynamic-actor-experiment/r2a-crossing-and-restop-supplement-2026-08-13.md)를
+따른다.
+
 전역·local·추종 결과를 하나의 종합 점수로 섞지 않는다. `pareto.json`에 역할별
 원시 집계를 저장하며, 실행시간은 p50·p95·p99·최악값을 기록한다. peak memory는
 `tracemalloc` 오버헤드를 전체 시간 분포에 섞지 않기 위해 알고리즘×지도 계열의 첫

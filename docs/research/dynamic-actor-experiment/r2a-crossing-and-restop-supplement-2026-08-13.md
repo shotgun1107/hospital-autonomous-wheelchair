@@ -3,10 +3,11 @@
 ## 1. 문서 상태와 범위
 
 - 작성일: `2026-08-13`
-- 상태: 사용자 검토 대기, 구현 전
+- 상태: 사용자 승인 뒤 표적 구현·검증 완료, 공개 19개 전체 재실행 전
 - 대상: R2-A exact ground-truth path lane의 미해결 2건
 - 선행 증거: `witness-audit-public-20260813-r2-v2-4e4ba0f.zip`
-- 구현·실험 재실행: 미수행
+- 구현: 횡단 우회 search·validator와 ordered restop search·validator 완료
+- 실험 재실행: legacy 표적 2건만 수행, 기존 공개 19개 전체는 미수행
 - R2-B 관측·prediction hard failure 2건: 이 문서에서 수정하지 않음
 - R3 static 공간 oracle: 시작하지 않음
 - hidden, 제품 알고리즘, `G1~G5`, 제품 경로분석 7단계: 시작하지 않음
@@ -439,3 +440,46 @@ invalid_provenance
 → 독립 읽기 전용 감사
 → 사용자 승인 뒤 공개 회귀 범위 결정
 ```
+
+## 7. 표적 구현 결과
+
+사용자는 이 문서의 1~3단계를 승인한 뒤 구현 시작을 명시했다. 구현은 다음 파일에 분리했다.
+
+- `dynamic_witness_events.py`: label-free crossing target과 exact blocking/hazard interval
+- `dynamic_witness_crossing.py`: 좌·우 횡단 우회 후보 생성과 선택
+- `dynamic_witness_restop.py`: `KinematicStopInterval`과 ordered restop 판정·검색
+- `dynamic_witness_validation.py`: 200 Hz crossing 사건 측정·선언·strict 재검증
+
+구현 중 legacy 횡단 사례에서 정지-회전-직선이 반복되는 최초 template는 Actor blocking
+interval 안에 crossing station을 넘지 못함을 확인했다. 따라서 실제 v1 합성기는 동일한 20 Hz
+속도·가감속·각속도 제한 아래 waypoint heading-error를 이용한 연속 곡선 우회로 좁혔다. frozen
+후보 축은 다음과 같다.
+
+```text
+target Actor → side → lateral offset → station 전·후 거리 → common linear target
+```
+
+이는 일반 pose-space 탐색이나 online controller가 아니다. 최종 합격은 검색기의 steering
+판정이 아니라 독립 200 Hz validator가 담당한다.
+
+표적 결과:
+
+| 대상 | 결과 | 핵심 측정 |
+|---|---|---|
+| `legacy_mechanism-14-d796ebd8ba71` | 좌·우 `CROSSING_BYPASS_FOUND`, evaluator `MATCHED` | 각 방향 72개 생성·6개 strict 통과, 좌 bypass `6.280s`, 우 bypass `7.485s`, 이후 0.50s 재합류 확인 |
+| `legacy_mechanism-18-28f0a990202f` | `RESTOP_AND_RECOVERY_PROVEN`, evaluator `MATCHED` | 정지 `0.00~2.10s`, 이동 progress `0.3975m`, 별도 정지 `4.70~6.15s`, 목표 dwell 완료 |
+
+적대 사례로 전체 episode 동안 계속 정지한 witness는
+`continuous_hold_misclassified_as_restop`과 `second_stop_not_distinct`로 실패한다.
+
+표적 통합 audit에서 횡단 사례의 hard failure는 없었다. 다중 위험 사례에는 기존 R2-B 보류
+항목인 `ideal_capsule_ground_truth_miss`가 남았다. R2-A ordered path 증명과 R2-B 관측·prediction
+문제를 합치지 않으며, 이번 구현은 해당 R2-B 문제를 수정하지 않았다.
+
+검증 범위:
+
+- 신규 표적 시험 3개 직접 통과
+- 두 legacy episode의 audit assessment `MATCHED`
+- `compileall` 통과
+- 집 환경에 `pytest`·Ruff가 없어 전체 회귀와 lint는 미실행
+- 기존 R2 ZIP·hidden·공개 19개 전체 output은 재계산하지 않음
