@@ -8,7 +8,7 @@
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
-- 현재 단계: `R1 완료`, `R2 시작 전`
+- 현재 단계: `R1 완료`, `R2 상세 명세 완료·구현 전`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -175,6 +175,7 @@ input_content_hash
 | `OBSERVATION_UNDECIDABLE` | ground truth에서는 가능성을 논할 수 있으나 online 관측으로 판단 불가 | fail-closed 정지 |
 | `NO_SAFE_SOLUTION` | 현재 범위에서 기다림을 포함해 안전한 이동 해가 없음 | 정지·지원 |
 | `INVALID_INPUT` | source·revision·hash·finite·schema 계약 위반 | 실행 거부 |
+| `SEARCH_INCONCLUSIVE` | 구조화된 template에서 witness를 못 찾았거나 resource limit으로 완전 판정 불가 | R3 또는 search 진단으로 전달 |
 
 이 분류는 연구 판정을 위한 상위 taxonomy다. 구체 enum과 직렬화 형식은 `R2` 상세 명세에서
 정의하고 이후 단계에서 의미를 바꾸지 않는다.
@@ -220,6 +221,10 @@ motion transition은 `5,420`, 위반은 `0`, Ideal Capsule은 `26,257/26,257`, N
 Capsule은 `19,170/20,118`이다. Normal miss `948`개는 안전 수치 완화 근거가 아니다.
 
 ## R2 — 기존 Witness 자동화·일반화
+
+상세 구현 계약은
+[`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)를
+따른다.
 
 ### 목적
 
@@ -497,7 +502,7 @@ hidden까지 연구 조건 충족
 | 단계 | 핵심 질문 | 완료 증거 | 현재 상태 | 다음 진입 조건 |
 |---|---|---|---|---|
 | `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 완료 | hard failure 0 |
-| `R2` | 안전한 time-indexed witness를 자동화할 수 있는가? | 자동 witness·음성 판정·taxonomy | 미시작 | R1 완료 |
+| `R2` | 안전한 time-indexed witness를 자동화할 수 있는가? | 자동 witness·음성 판정·taxonomy | 상세 명세 완료·구현 전 | R1 완료 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 미시작 | R2 분류 가능 |
 | `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 미시작 | R2·R3 계약 정리 |
 | `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 미시작 | 검증된 witness·reference |
@@ -558,15 +563,9 @@ hidden까지 연구 조건 충족
 계약이 감사 가능하고, Ideal 입력에서 결정론적 포함이 성립한다는 뜻이다. Normal·Stress의
 통계적 miss와 public corpus에 없는 가속·감속·정지·회전은 그대로 limitation이다.
 
-바로 다음 작업은 `R2` 코드가 아니다. 먼저
-`11-witness-automation-and-generalization.md`에 다음을 확정한다.
-
-- 기존 수동 witness의 정확한 입력·출력과 독립 validator
-- 자동 search space와 resource limit
-- positive·wait-only·forbidden·no-solution golden
-- 공간·시간·관측 실패 taxonomy
-- ordered pass·rejoin·terminal 판정
-- JSON·PNG·비덮어쓰기 산출물
-- R2 완료조건과 R3 진입 gate
+`R2` 상세 명세는
+[`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)로
+완료했다. 바로 다음 작업은 해당 문서 순서에 따라 계약·projection·독립 validator를 먼저
+구현하는 것이다. 자동 search는 그 경계가 시험으로 닫힌 뒤 추가한다.
 
 이 master specification 자체는 지역 수정이나 DWB를 제품 기능으로 채택하지 않는다.

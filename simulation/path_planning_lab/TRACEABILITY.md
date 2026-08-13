@@ -70,6 +70,9 @@ batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용
 후속 지역 기동 연구의 전체 단계·gate·hidden 수명주기는
 [`R1~R7 master specification`](../../docs/research/dynamic-actor-experiment/10-dynamic-local-maneuver-research-master-spec.md)을
 따른다. 이 번호는 제품 경로분석 단계나 기존 동적 Actor 구현 단계와 다른 연구 단계다.
+R2의 구현 전 상세 계약은
+[`witness 자동화·일반화 명세`](../../docs/research/dynamic-actor-experiment/11-witness-automation-and-generalization.md)에
+있으며 아직 L1 구현 증거는 없다.
 
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
 |---|---|---|---|

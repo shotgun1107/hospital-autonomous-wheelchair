@@ -221,6 +221,9 @@ master 명세는 단계별 입력·출력·완료 gate의 정본이다.
 
 ### 2단계 — 기존 witness 자동화·일반화
 
+- 상세 구현 계약은
+  [`R2 witness 자동화·일반화 명세`](../research/dynamic-actor-experiment/11-witness-automation-and-generalization.md)를
+  따른다.
 - 수동 witness를 자동 실행 가능한 공개 oracle로 정리한다.
 - positive, wait-only, forbidden, no-solution 장면을 포함한다.
 - 공간 불가, 시간 불가, 관측상 판단 불가를 서로 다른 결과로 기록한다.

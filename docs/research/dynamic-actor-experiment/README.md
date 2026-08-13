@@ -30,7 +30,13 @@
 아래 표는 2026-08-10에 시작한 동적 Actor 비교실험의 기존 구현 `1~6단계`다. 2026-08-13
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
-현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 witness 자동화·일반화 시작 전`이다.
+현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 witness 자동화·일반화 상세 명세
+완료·구현 전`이다.
+
+R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
+[`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
+정의했다. 현재는 상세 명세 완료·구현 전이며, ground-truth feasible과 관측상 판단 가능,
+실제 controller 실행을 서로 다른 증거로 유지한다.
 
 | 단계 | 상태 |
 |---|---|
