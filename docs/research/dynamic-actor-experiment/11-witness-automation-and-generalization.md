@@ -3,7 +3,8 @@
 ## 1. 상태와 목적
 
 - 작성일: `2026-08-13`
-- 상태: 상세 명세 동결, 2차 구현 checkpoint(WAIT/HOLD structured search), R2 미완료
+- 상태: 상세 명세 동결, 2차 구현 checkpoint(WAIT/HOLD structured search),
+  R2-PASS 구현 전 상세 명세 작성, R2 미완료
 - 상위 단계: [R1~R7 Master Specification](10-dynamic-local-maneuver-research-master-spec.md)
 - 선행 gate: `R1 완료`
 - 실행 범위: Python `simulation_only`, 공개 corpus만 사용
@@ -37,6 +38,11 @@ online_controller_executable
   연속 실행함
 
 R2는 첫째와 둘째를 분리해 기록한다. 셋째는 `R5~R6` 대상이다.
+
+`PASS_LEFT`·`PASS_RIGHT`의 구현 전 세부 계약은
+[`R2-PASS 좌·우 통과 Witness 자동 탐색 상세 명세`](12-pass-structured-witness-search.md)를
+따른다. 후보 종류별 결과 보존, target Actor 결박, 직선 segment template와 구현 순서는 해당
+문서가 이 상위 명세를 구체화한다.
 
 ## 2. 현재 자료의 정확한 상태
 
@@ -380,7 +386,12 @@ ground-truth search는 Actor의 정확한 trajectory를 사용한다. observatio
 
 ### 5.5 결정론적 탐색·선택 순서
 
-후보는 모두 평가한 뒤 다음 objective를 오름차순으로 비교한다.
+현재 WAIT/HOLD checkpoint는 후보를 모두 평가한 뒤 아래 objective를 오름차순으로 비교한다.
+PASS를 추가할 때는 종류 간 단일 최종 1개만 남기지 않고 `PASS_LEFT`, `PASS_RIGHT`,
+`WAIT_AND_FOLLOW`, `HOLD_ONLY`별 best를 각각 보존한다. 그렇지 않으면 짧은 WAIT가 안전한
+PASS의 존재 증거를 지울 수 있다.
+
+같은 kind 안에서는 다음 objective를 오름차순으로 비교한다.
 
 ```text
 1. hard validation failure count
@@ -389,13 +400,13 @@ ground-truth search는 Actor의 정확한 trajectory를 사용한다. observatio
 4. maximum reference deviation
 5. full-stop count
 6. absolute angular travel
-7. kind: WAIT_AND_FOLLOW, PASS_LEFT, PASS_RIGHT, HOLD_ONLY
-8. frozen parameter tuple의 lexicographic order
+7. frozen parameter tuple의 lexicographic order
+8. witness semantic content hash
 ```
 
-hard failure가 하나라도 있는 후보는 선택 대상이 아니다. `WAIT_AND_FOLLOW` 우선 tie-break는
-동일 완료시간·이동비용에서 불필요한 pass를 피하기 위한 연구 규칙이며 제품 운용 우선권을
-확정하지 않는다.
+hard failure가 하나라도 있는 후보는 선택 대상이 아니다. 종류 간 운용 우선순위와 제품 선택은
+R2가 결정하지 않는다. 기존 `WitnessObjective.kind_rank`는 WAIT/HOLD 회귀 호환 필드로 남길 수
+있지만 PASS 존재·taxonomy 판정에는 사용하지 않는다.
 
 같은 입력의 thread/process 완료 순서가 selected witness를 바꾸면 실패다.
 
@@ -771,6 +782,9 @@ search가 기존 helper를 호출해 정답을 가져오거나 private validator
   보관하지 않고 best WAIT·best HOLD만 유지하는 streaming 평가
 - 5 ms grid 밖 Actor 활성 시작·종료 시각도 exact evaluation sample로 삽입해 순간 출현
   clearance 위반을 놓치지 않는 검증
+- 세 번째 구현 묶음의 구현 전 기준으로
+  [`R2-PASS 상세 명세`](12-pass-structured-witness-search.md)를 작성했다. 현재는 동결 후보이며
+  PASS 코드·시험을 구현했다는 뜻이 아니다.
 
 `tests/test_dynamic_witness_search.py`의 현재 14개 pytest case는 full-duration hold, wait→follow
 순서, label·oracle 비누출, 결정론적 hash·count, resource limit, nonzero initial twist와 공개

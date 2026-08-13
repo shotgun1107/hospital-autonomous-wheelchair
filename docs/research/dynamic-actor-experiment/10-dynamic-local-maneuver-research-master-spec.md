@@ -8,7 +8,8 @@
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
-- 현재 단계: `R1 완료`, `R2 계약·projection·독립 validator 구현`, 자동 탐색 미구현
+- 현재 단계: `R1 완료`, `R2 계약·projection·독립 validator·WAIT/HOLD structured search 구현`,
+  `R2-PASS` 구현 전 상세 명세 작성
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의

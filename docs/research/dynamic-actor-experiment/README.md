@@ -30,13 +30,14 @@
 아래 표는 2026-08-10에 시작한 동적 Actor 비교실험의 기존 구현 `1~6단계`다. 2026-08-13
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
-현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 witness 자동화·일반화 상세 명세
-완료·구현 전`이다.
+현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 witness 자동화·일반화의 계약·projection·
+독립 validator·WAIT/HOLD structured search 구현`, `R2-PASS 구현 전 상세 명세 작성` 상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
-정의했다. 현재는 상세 명세 완료·구현 전이며, ground-truth feasible과 관측상 판단 가능,
-실제 controller 실행을 서로 다른 증거로 유지한다.
+정의했다. 좌·우 통과의 후보 공간·종류별 결과·검증·시험 순서는
+[`12-pass-structured-witness-search.md`](12-pass-structured-witness-search.md)에 분리했다.
+ground-truth feasible과 관측상 판단 가능, 실제 controller 실행을 서로 다른 증거로 유지한다.
 
 | 단계 | 상태 |
 |---|---|
@@ -238,8 +239,10 @@ observation 전달과 controller snapshot 순서를 의도적으로 뒤집어도
 | 5 | [평가기와 corpus](05-evaluator-and-corpus.md) | 200 Hz evaluator, fault/dev | hard gate와 재현성 통과 |
 | 6 | [runner·hidden·판정](06-runner-hidden-and-reporting.md) | manifest, hidden, 통계 보고 | 동결 결과 push |
 
-단계는 순서대로 진행한다. 다음 단계 구현을 시작하기 전에 현재 단계의 전용시험과 기존
-전체 회귀시험을 통과시키고 커밋·push한다.
+단계는 순서대로 진행한다. 임시 연구 하네스는 `AGENTS.md`의 실행 규칙에 따라 표적시험,
+대표 공개 사례, 읽기 전용 감사, 공개 병렬 실행을 먼저 수행하고 코드 동결 뒤 마지막 전체
+회귀를 한 번 수행한다. wall-clock timing qualification은 CPU contention 없이 별도 직렬로
+실행한다.
 
 ## 8. 완료 산출물
 

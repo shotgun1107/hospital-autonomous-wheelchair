@@ -45,8 +45,11 @@ validator로 다시 검사한다. `HOLD_ONLY`는 episode 전체 정지를 요구
 2026-08-13 읽기 전용 수동 감사에서는 v6 공개 `13/13`과 legacy golden `6/6`의 selected
 witness가 독립 validator를 통과했다. 이는 체크인된 전체 taxonomy audit나 영구 CI 근거가
 아니며 category 정답, online controller 실행 또는 제품 채택을 뜻하지 않는다.
-`PASS_LEFT/PASS_RIGHT`, profile replay, JSON·PNG reporting과 process-parallel runner는 아직
-구현하지 않았으므로 R2는 미완료다. hidden은 생성·열람·실행하지 않았다.
+`PASS_LEFT/PASS_RIGHT`는 구현 전에
+[`R2-PASS 상세 명세`](../../docs/research/dynamic-actor-experiment/12-pass-structured-witness-search.md)로
+후보 공간·종류별 best·독립 검증·표적시험 순서를 분리했다. PASS 코드, profile replay,
+JSON·PNG reporting과 process-parallel runner는 아직 구현하지 않았으므로 R2는 미완료다.
+hidden은 생성·열람·실행하지 않았다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 
