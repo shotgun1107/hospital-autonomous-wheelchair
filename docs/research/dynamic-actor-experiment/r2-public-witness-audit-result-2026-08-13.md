@@ -44,6 +44,23 @@ simulation/path_planning_lab/outputs/
 `summary.md`, `run_state.complete.json`, `witness_audit_completion.json`과 episode별
 하위 산출물이다.
 
+회사·집 PC 간 재실행 없는 인수를 위해 완료 경로 전체를 다음 ZIP으로 압축해 Git에
+명시적으로 포함했다. 원본 디렉터리는 계속 `.gitignore` 대상이며 ZIP만 추적한다.
+
+```text
+simulation/path_planning_lab/outputs/
+  witness-audit-public-20260813-r2-v2-4e4ba0f.zip
+
+size: 3,657,108 bytes (3.488 MiB)
+SHA-256: 50567b093082a57232e668ef89c0316a426cd936496e465b943fe57efa894266
+```
+
+ZIP에는 19개 episode의 선택 witness 좌표, 좌·우 PASS 선택 결과, 검증·profile replay,
+manifest, complete receipt, JSON·Markdown·PNG가 들어 있다. 135,360개 탈락 후보의 전체
+좌표는 runner가 streaming 평가 뒤 보존하지 않았으므로 ZIP에도 없다. 현재 동결 실행의
+선택 경로와 결과를 확인·재사용하는 데에는 재실행이 필요하지 않지만, 탈락 후보를 새로운
+검증기로 다시 분석하거나 코드·안전 계약·corpus가 바뀌면 새 output 경로에서 재실행한다.
+
 첫 실행은 도구 timeout으로 약 10초 뒤 중단됐다. 해당 경로는 삭제하거나 덮어쓰지 않았고
 `run_state.incomplete.json`과 manifest만 가진 infrastructure evidence로 보존했다.
 
