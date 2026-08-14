@@ -3,7 +3,7 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: 상세 설계 동결 후보, `R5-1 Contract·binding`·`R5-2 Common section executor`·`R5-3 Persistent RPP adapter` 구현 및 직접 영향권 시험 완료
+- 상태: 상세 설계 동결 후보, `R5-1~R5-5` 구현 및 대표 RPP external-gate 종단시험 완료, `R5-6` 미시작
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -466,7 +466,11 @@ RPP adapter 규칙:
 6. `ROTATE`와 `HOLD`는 follower에 넣지 않고 common executor가 처리한다.
 7. RPP는 새로운 lateral detour·side switch·sibling candidate 전환을 만들지 않는다.
 8. command는 current twist에서 한 control period의 가감속 한계를 지킨다.
-9. post-apply pose부터 2.0초·0.05초 구간의 41-pose constant-command rollout을 생성한다.
+9. post-apply pose부터 2.0초·0.05초 구간의 41-pose rollout을 생성한다. 명시적
+   stop/terminal이 없는 translation은 constant-command rollout을 사용하고, 명시적 stop 또는
+   terminal이 앞에 있는 translation은 현재 명령 한 구간 뒤 제한 감속·정지·hold가 가능한
+   fallback rollout을 사용한다. 이 fallback은 shared gate의 terminal stopping 검사를 생략하지
+   않는다.
 10. same tick duplicate는 state를 두 번 진행하지 않고 동일 result를 반환한다.
 
 window마다 goal 감속이 관측되거나 session state가 초기화되면 RPP 기능 실패다.
@@ -909,8 +913,9 @@ persistent_rpp_controller.py
 - lookahead는 current window의 active translation section만 사용하고, progress·tracking error와
   stop remaining은 immutable full reference의 같은 section에서 계산한다. local window 끝 자체는
   감속·완료 근거로 사용하지 않으며 명시적 stop/rotation 경계 또는 terminal에서만 제한 감속한다.
-- 선속도는 차체의 한 tick 가감속 한계, 각속도는 `1.60rad/s²` 한계를 지키며, current twist의
-  `50ms` post-apply pose부터 `2.0s / 0.05s`의 41-pose constant-command rollout을 만든다.
+- 선속도는 차체의 한 tick 가감속 한계, 각속도는 `1.60rad/s²` 한계를 지킨다. current twist의
+  `50ms` post-apply pose부터 `2.0s / 0.05s`의 41-pose rollout을 만들며, 명시적 stop/terminal
+  앞에서는 한 명령 구간 뒤 제한 감속·정지·hold하는 실행 가능한 fallback을 제출한다.
 - planned stop·rotation·terminal dwell·HOLD는 follower가 소비하지 않고 R5-2 executor 결과를
   reference-bound controller result로 변환한다. 같은 tick 동일 입력은 elapsed까지 포함한 cached
   object를 그대로 반환한다.
@@ -920,6 +925,12 @@ persistent_rpp_controller.py
 - 이 시험에서 동일 위치 회전 중 heading을 cursor locality보다 먼저 적용하면 이전 section으로
   projection이 후퇴하는 R4 결함이 드러났다. geometric tie에서는 이전 monotonic cursor를 먼저
   적용하고 그 범위 안에서 heading을 쓰도록 고쳤으며 적대 회귀시험을 추가했다.
+- external gate 장시간 재생에서 tick `89`에 처음 발생한
+  `static_clearance_below_minimum`은 현재 50ms 명령이나 reference window 문제가 아니었다.
+  RPP가 `0.215m` 앞의 명시적 stop을 알고도 2초 동안 현재 속도로 직진하는 rollout을 제출해,
+  gate가 그 끝에 terminal stopping을 붙였을 때 정적 여유가 `0.0745m`로 `0.08m` 기준 아래로
+  내려간 것이 원인이었다. 안전 기준과 gate는 유지하고 planned-stop-aware fallback rollout과
+  적대 회귀를 추가했다.
 - RPP 전용 `8 passed`, R5-1·R5-2·window manager 직접 영향권 합계 `50 passed`, Ruff·compile·
   diff 검사를 통과했다. 기존 follower·R4 contract/builder/validator/public까지 포함한 확장
   영향권은 `124 passed`였다. shared gate, DWB adapter, R5 public 8-case runner, hidden과 전체
@@ -992,14 +1003,17 @@ persistent_controller_pipeline.py
   protective stop flag를 세우지 않아 controller stop count와 `stop_epoch`를 증가시키지 않는다.
   보호정지 확인으로 epoch가 증가한 뒤에는 stale reference로 controller를 다시 호출하지 않고,
   zero proposal을 gate에 전달해 `HOLDING`을 유지한다.
-- representative `wide-straight-left`에서 RPP 60-tick prefix가 외부 gate를 연속 통과했고,
+- representative `wide-straight-left`에서 RPP 60-tick prefix와 전체 종단이 외부 gate를
+  통과했다. 첫 planned stop 이전 false terminal-tail rejection은 재현 후 닫았고, 전체 종단에서
+  tick `417`·simulation time `20.85s`에 완료했으며 external gate rejection·failure는 `0`,
+  최소 정적 여유는 약 `0.15967m`였다. 또한
   실제 persistent DWB 첫 tick의 217-candidate/41-pose 선택 결과도 외부 gate가 다시 검사해
   허용했다. old tick, window hash·epoch 변조, binding 한쪽 누락, 51ms와 stale 입력은 비영점
   새 명령 적용 `0`으로 차단했다.
-- R5-5 전용 `8 passed`, 기존 dynamic safety·authority·timing을 합친 `56 passed`, R5·DWB
-  직접 영향권 `195 passed`를 확인했다.
-  이 단계는 대표 prefix와 fault boundary 증거다. RPP/DWB 8-case 종단 완료, RPP의 추후
-  external gate rejection 원인, full public runner·receipt와 전체 회귀는 R5-6/7에 남아 있다.
+- 이번 수정 뒤 RPP·executor·pipeline·dynamic safety·authority·timing 집중 영향권
+  `80 passed`를 확인했다. 최신 전체 회귀는 실행하지 않았다.
+  이 단계는 대표 RPP 종단과 fault boundary 증거다. RPP/DWB 8-case 종단 완료,
+  full public runner·receipt와 전체 회귀는 R5-6/7에 남아 있다.
   따라서 제품 controller 채택이나 실제 사람 안전 증거가 아니다.
 
 ### R5-6 — Public reporting·runner

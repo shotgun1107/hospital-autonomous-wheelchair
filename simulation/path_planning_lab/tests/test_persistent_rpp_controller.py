@@ -39,6 +39,7 @@ from hospital_path_lab.persistent_rpp_controller import (
     PersistentRppController,
     _compute_translation_command,
     _integrate_pose,
+    _post_apply_bounded_stop_rollout,
     _section_has_upcoming_stop,
 )
 from hospital_path_lab.reference_section_executor import R5_CONTROL_PERIOD_S
@@ -247,6 +248,32 @@ def test_same_tick_duplicate_returns_identical_41_pose_post_apply_rollout() -> N
         R5_CONTROL_PERIOD_S,
     )
     assert first.predicted_trajectory[0].pose == expected_post_apply
+
+
+def test_planned_stop_rollout_applies_one_interval_then_decelerates_and_holds() -> None:
+    context, _seed, reference, _validation, _window = _fixture()
+    start = reference.knots[0].pose
+
+    trajectory = _post_apply_bounded_stop_rollout(
+        start,
+        Twist2D(0.20, 0.08),
+        Twist2D(0.20, 0.08),
+        linear_deceleration_mps2=context.vehicle_profile.max_deceleration_mps2,
+        config=PersistentRppConfig(),
+    )
+
+    assert len(trajectory) == 41
+    assert trajectory[0].twist == Twist2D(0.20, 0.08)
+    assert trajectory[1].twist.linear == pytest.approx(0.175)
+    assert trajectory[1].twist.angular == pytest.approx(0.0)
+    assert trajectory[-1].twist == Twist2D()
+    first_stationary = next(
+        index for index, point in enumerate(trajectory) if point.twist == Twist2D()
+    )
+    assert all(
+        point.pose == trajectory[first_stationary].pose
+        for point in trajectory[first_stationary + 1 :]
+    )
 
 
 def test_same_tick_changed_input_is_a_zero_invalid_reference_result() -> None:

@@ -129,6 +129,70 @@ def test_rpp_runs_a_reference_bound_20hz_prefix_through_the_shared_gate(
     assert pipeline.gate.stop_epoch == public_wide_left.build_context.stop_epoch
 
 
+def test_rpp_reaches_the_first_planned_stop_without_a_false_terminal_tail_rejection(
+    public_wide_left,
+) -> None:
+    pipeline = _pipeline(public_wide_left, PersistentRppController())
+    saw_planned_stop = False
+
+    for _ in range(180):
+        observation, prediction = _fresh_empty(
+            public_wide_left.build_context,
+            pipeline.tick_id,
+        )
+        record = pipeline.step(
+            observation_snapshot=observation,
+            prediction_set=prediction,
+        )
+        assert "static_clearance_below_minimum" not in (
+            record.safety_decision.failure_reasons
+        )
+        assert record.safety_decision.primary_hold_reason is not DynamicHoldReason.GATE_REJECTION
+        if (
+            record.controller_result is not None
+            and record.controller_result.status is PersistentControllerStatus.PLANNED_STOP
+        ):
+            saw_planned_stop = True
+            assert record.safety_decision.proposal_accepted
+            break
+
+    assert saw_planned_stop
+
+
+def test_rpp_completes_public_wide_left_through_the_external_shared_gate(
+    public_wide_left,
+) -> None:
+    pipeline = _pipeline(public_wide_left, PersistentRppController())
+    statuses = []
+
+    for _ in range(700):
+        observation, prediction = _fresh_empty(
+            public_wide_left.build_context,
+            pipeline.tick_id,
+        )
+        record = pipeline.step(
+            observation_snapshot=observation,
+            prediction_set=prediction,
+        )
+        assert record.controller_result is not None
+        statuses.append(record.controller_result.status)
+        assert record.safety_decision.primary_hold_reason is None
+        assert record.safety_decision.failure_reasons == ()
+        assert record.safety_decision.counters.candidate_rejected_by_gate == 0
+        if record.safety_decision.motion_state is DynamicMotionState.COMPLETED:
+            break
+    else:
+        pytest.fail("persistent RPP did not complete through the external shared gate")
+
+    terminal = public_wide_left.reference_set.candidates[0].knots[-1].pose
+    assert PersistentControllerStatus.COMMAND_FOUND in statuses
+    assert PersistentControllerStatus.PLANNED_STOP in statuses
+    assert PersistentControllerStatus.COMPLETED in statuses
+    assert pipeline.robot_state.twist == Twist2D()
+    assert pipeline.robot_state.pose.x == pytest.approx(terminal.x, abs=0.05)
+    assert pipeline.robot_state.pose.y == pytest.approx(terminal.y, abs=0.05)
+
+
 def test_real_dwb_selected_command_is_rechecked_by_the_external_shared_gate(
     public_wide_left,
 ) -> None:

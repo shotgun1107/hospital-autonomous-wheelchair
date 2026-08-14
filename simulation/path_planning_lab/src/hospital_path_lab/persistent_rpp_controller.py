@@ -36,7 +36,7 @@ from hospital_path_lab.reference_section_executor import (
 )
 
 PERSISTENT_RPP_CONTROLLER_NAME = "persistent_rpp_reference"
-PERSISTENT_RPP_CONTROLLER_VERSION = "persistent-rpp-reference-v1"
+PERSISTENT_RPP_CONTROLLER_VERSION = "persistent-rpp-reference-v2"
 PERSISTENT_RPP_LOOKAHEAD_MIN_M = 0.25
 PERSISTENT_RPP_LOOKAHEAD_MAX_M = 0.50
 PERSISTENT_RPP_LOOKAHEAD_VELOCITY_GAIN = 0.75
@@ -220,12 +220,26 @@ class PersistentRppController:
                 decision_trace=(str(error),),
             )
 
-        trajectory = _post_apply_constant_rollout(
-            tick_input.robot_state.pose,
-            tick_input.robot_state.twist,
-            translation.command,
-            self.config,
+        planned_stop_rollout = (
+            translation.explicit_stop_active or translation.terminal_goal_active
         )
+        if planned_stop_rollout:
+            trajectory = _post_apply_bounded_stop_rollout(
+                tick_input.robot_state.pose,
+                tick_input.robot_state.twist,
+                translation.command,
+                linear_deceleration_mps2=(
+                    tick_input.vehicle_profile.max_deceleration_mps2
+                ),
+                config=self.config,
+            )
+        else:
+            trajectory = _post_apply_constant_rollout(
+                tick_input.robot_state.pose,
+                tick_input.robot_state.twist,
+                translation.command,
+                self.config,
+            )
         trace = (
             f"rpp_version={PERSISTENT_RPP_CONTROLLER_VERSION}",
             f"lookahead_x={translation.lookahead_point.x:.12g}",
@@ -240,6 +254,9 @@ class PersistentRppController:
             else f"stop_limited_speed_mps={translation.stop_limited_speed_mps:.12g}",
             f"terminal_goal_active={str(translation.terminal_goal_active).lower()}",
             f"explicit_stop_active={str(translation.explicit_stop_active).lower()}",
+            "rollout_policy=one_step_then_bounded_stop"
+            if planned_stop_rollout
+            else "rollout_policy=constant_command",
             "local_window_endpoint_is_not_goal=true",
         )
         diagnostics = tuple(
@@ -621,6 +638,50 @@ def _post_apply_constant_rollout(
         pose = _integrate_pose(pose, command, config.rollout_step_s)
         points.append(TrajectoryPoint(step * config.rollout_step_s, pose, command))
     return tuple(points)
+
+
+def _post_apply_bounded_stop_rollout(
+    current_pose: Pose2D,
+    current_twist: Twist2D,
+    command: Twist2D,
+    *,
+    linear_deceleration_mps2: float,
+    config: PersistentRppConfig,
+) -> tuple[TrajectoryPoint, ...]:
+    """Project one accepted command interval, then a bounded stop and hold.
+
+    Translation sections with an explicit upcoming stop must not claim that the
+    current command will continue through that stop for the full two-second
+    safety horizon.  The external gate still checks the current apply interval,
+    this conservative executable fallback, and its own terminal-stop tail.
+    """
+
+    if not isfinite(linear_deceleration_mps2) or linear_deceleration_mps2 <= 0.0:
+        raise ValueError("linear deceleration must be finite and positive")
+    pose = _integrate_pose(current_pose, current_twist, config.control_period_s)
+    twist = command
+    points = [TrajectoryPoint(0.0, pose, twist)]
+    steps = int(round(config.rollout_horizon_s / config.rollout_step_s))
+    for step in range(1, steps + 1):
+        pose = _integrate_pose(pose, twist, config.rollout_step_s)
+        twist = Twist2D(
+            _move_toward_zero(
+                twist.linear,
+                linear_deceleration_mps2 * config.rollout_step_s,
+            ),
+            _move_toward_zero(
+                twist.angular,
+                config.angular_deceleration_radps2 * config.rollout_step_s,
+            ),
+        )
+        points.append(TrajectoryPoint(step * config.rollout_step_s, pose, twist))
+    return tuple(points)
+
+
+def _move_toward_zero(value: float, maximum_delta: float) -> float:
+    if abs(value) <= maximum_delta:
+        return 0.0
+    return value - (maximum_delta if value > 0.0 else -maximum_delta)
 
 
 def _integrate_pose(pose: Pose2D, twist: Twist2D, duration_s: float) -> Pose2D:
