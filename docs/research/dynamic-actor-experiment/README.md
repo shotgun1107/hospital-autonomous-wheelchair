@@ -31,8 +31,8 @@
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
-`R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 reference·sliding
-subpath 상세 명세 작성, 구현 미시작` 상태다.
+`R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4-1 reference·sliding
+subpath 계약·해시·revision 수명주기 구현 완료, R4-2 이후 미구현` 상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에

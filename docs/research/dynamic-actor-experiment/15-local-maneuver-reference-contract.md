@@ -3,7 +3,7 @@
 ## 1. 문서 상태와 목적
 
 - 작성일: `2026-08-14`
-- 상태: 구현 전 상세 명세
+- 상태: R4-1 계약·해시·revision 수명주기 구현 완료, R4-2 이후 미구현
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
   - [`R3 bounded spatial oracle`](14-bounded-spatial-oracle.md)
@@ -66,6 +66,20 @@ R4가 수행하지 않는 작업:
 - RPP·DWB 실행 비교
 - hidden 생성·열람·실행
 
+### 2.1 구현 분할과 현재 완료 범위
+
+R4는 한 번에 controller까지 연결하지 않는다.
+
+1. `R4-1`: immutable reference·candidate set·sliding window 계약, semantic hash,
+   maneuver/path/subgoal revision과 session lifecycle
+2. `R4-2`: 검증된 R2/R3 source를 canonical knot·section으로 변환하는 builder
+3. `R4-3`: 독립 reference validator와 source evidence 결박
+4. `R4-4`: sliding window manager와 stale 입력 거부
+5. `R4-5`: public corpus runner·보고서·결정론 검증
+
+현재 구현된 범위는 `R4-1`뿐이다. reference가 존재한다는 사실은 이동 허가, Actor online
+안전성, controller 추종 성공 또는 제품 알고리즘 채택을 의미하지 않는다.
+
 ## 3. 입력과 source 자격
 
 ### 3.1 공통 문맥
@@ -87,6 +101,7 @@ ReferenceBuildContext
   allowed_region_hash
   forbidden_cells
   forbidden_region_hash
+  vehicle_profile
   vehicle_profile_hash
   original_reference_hash
   original_reference
@@ -288,6 +303,8 @@ LocalManeuverReference
 ```text
 LocalManeuverReferenceSet
   schema_version
+  status
+  termination_reason
   build_context_hash
   maneuver_revision
   candidates
@@ -399,6 +416,11 @@ rollout보다 긴 geometric window다. 제품 수치가 아니다.
 
 window는 full reference의 수정 없는 contiguous slice다. controller별 resampling은 R5 adapter의
 별도 hash-bound 파생 결과로 다룬다.
+
+`source_control_tick`은 현재 전달 provenance이며 `window_content_hash`에서는 제외한다. 같은
+slice를 다음 tick에 다시 전달하면 같은 window hash와 subgoal revision을 유지하되, R5는 별도의
+현재 tick 결박으로 오래된 전달을 거부한다. slice·section·terminal marker가 바뀔 때만 window
+hash와 subgoal revision이 함께 바뀐다.
 
 rotation section 진입 전·exit knot를 같은 window에 둔다. rotation 중 translation arc만으로
 다음 section으로 건너뛰지 않으며 실제 회전 완료는 R5가 pose·yaw·twist로 확인한다.
