@@ -3,7 +3,7 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: 상세 설계 동결 후보, `R5-1 Contract·binding` 구현·직접 영향권 시험 완료
+- 상태: 상세 설계 동결 후보, `R5-1 Contract·binding`과 `R5-2 Common section executor` 구현·직접 영향권 시험 완료
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -848,8 +848,8 @@ persistent_controller_contracts.py
 - full reference·window·grid·vehicle·stop epoch·현재 delivery tick을 semantic hash와 exact
   slice로 결박한다. 현재 차단된 R5-B/C evidence는 R5-A 입력으로 수용하지 않는다.
 - planned section stop과 protective hold/no-safe stop을 result flag와 status에서 혼합하지 않는다.
-- 전용 `12 passed`, R4 직접 영향권 합계 `68 passed`, Ruff를 통과했다. 기존 controller는
-  호출하지 않았고 R5-2 이후 구현, public runner, hidden과 전체 회귀는 수행하지 않았다.
+- 전용 `12 passed`, 당시 R4 직접 영향권 합계 `68 passed`, Ruff를 통과했다. 기존 controller는
+  호출하지 않았고 R5-3 이후 구현, public runner, hidden과 전체 회귀는 수행하지 않았다.
 
 ### R5-2 — Common section executor
 
@@ -862,6 +862,27 @@ reference_section_executor.py
 - idempotence와 session reset
 
 완료 Gate: rotation·stop·dwell unit test, 실제 twist feedback 확인.
+
+구현 상태(`2026-08-14`):
+
+- [`reference_section_executor.py`](../../../simulation/path_planning_lab/src/hospital_path_lab/reference_section_executor.py)에
+  translation 위임과 공통 planned stop·rotation·terminal·HOLD 상태기를 구현했다.
+- planned stop은 선속도 `0.50m/s²`, 각속도 `1.60rad/s²` 제한 감속을 사용하고 실제 선·각속도
+  조건을 3개 연속 tick에서 확인한다. 중간에 어느 한쪽이라도 임계값을 넘으면 확인 횟수를
+  초기화한다.
+- rotation은 실제 선속도 정지 뒤 shortest direction으로만 실행하며 각가속·각감속
+  `1.60rad/s²`, 최대 `0.80rad/s`를 지킨다. rotation 위치 이탈과 비원자적 rotation section은
+  protective hold로 종료한다.
+- terminal은 위치·yaw·실제 정지 3 tick을 확인한 뒤 별도 10 tick(`0.50s`) dwell을 채우고,
+  그 다음 tick에만 completion을 보고한다.
+- shared gate가 `BRAKING/HOLDING`이면 executor counter·section을 진행하지 않고 zero command로
+  상태를 보존한다. 이는 새 보호정지 요청이나 이동 허가가 아니다.
+- HOLD는 authorization field나 정지 사실만으로 해제하지 않는다. 새 authorized reference 계약은
+  여전히 미구현이다.
+- 전용 `13 passed`, R5-1·R4 직접 영향권 합계 `81 passed`, Ruff·compile 검사를 통과했다.
+  실제 R4 causal window 재생에서는 window update 중 session reset 추가 없이 terminal까지
+  도달했다. RPP/DWB translation, shared gate 연결, public runner, hidden과 전체 회귀는 수행하지
+  않았다.
 
 ### R5-3 — Persistent RPP adapter
 

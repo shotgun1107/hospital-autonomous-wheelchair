@@ -33,7 +33,7 @@
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
 `R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 public 21/21·ready
 reference 8개·receipt·794 전체 회귀 완료`, `R5 persistent RPP·source-derived DWB 상세 명세와
-R5-1 계약·binding 구현 완료, R5-2 이후 미구현` 상태다.
+R5-1 계약·binding 및 R5-2 공통 section executor 구현 완료, R5-3 이후 미구현` 상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에

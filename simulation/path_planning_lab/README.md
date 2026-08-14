@@ -137,7 +137,15 @@ controller·stateful critic을 reset하지 않는다.
 immutable tick input·reference binding·result·same-tick/session guard를 구현한다. full
 reference와 exact window slice, grid·vehicle·stop epoch·현재 delivery tick을 결박하고 planned
 section stop과 protective stop을 분리한다. 전용 `12 passed`, R4 직접 영향권 합계 `68 passed`를
-확인했다. R5-2 common executor와 RPP/DWB adapter·shared gate 연결은 아직 미구현이다. 먼저 R4
+확인했다.
+[`reference_section_executor.py`](src/hospital_path_lab/reference_section_executor.py)와
+[`test_reference_section_executor.py`](tests/test_reference_section_executor.py)는 R5-2 공통
+translation 위임·planned stop·실제 정지 확인·제자리회전·terminal dwell·HOLD 상태기를
+구현한다. shared gate가 이미 제동·hold 중이면 section과 확인 counter를 진행하지 않는다.
+전용 `13 passed`, R5-1/R4 직접 영향권 합계 `81 passed`를 확인했다. 실제 R4 causal window
+재생도 terminal까지 완료했지만 translation pose는 시험이 주입한 합성 feedback이므로 RPP/DWB
+closed-loop 성공이 아니다. R5-3 RPP와 R5-4 DWB adapter·shared gate 연결은 아직 미구현이다.
+먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를
 닫은 뒤 진행한다. Python wall-clock은 기능 판정에서 제외하며 native timing은 R7 대상이다.
