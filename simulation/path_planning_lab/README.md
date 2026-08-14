@@ -153,9 +153,16 @@ terminal 결과를 reference-bound RPP result로 만든다. 실제 `wide-straigh
 20Hz static closed loop는 `20.75s`에 완료됐고, 최초 reset `1`, window update `4`, 추가 reset `0`,
 최대 tracking error 약 `0.09923m`를 기록했다. 이 과정에서 동일 위치 회전의 projection이 yaw를
 먼저 보아 과거 section으로 후퇴하던 window-manager 결함도 monotonic cursor 우선으로 수정했다.
-RPP 전용 `8 passed`, R5-1·R5-2·window 직접 영향권 `50 passed`를 통과했다. R5-4 DWB adapter,
-shared gate 연결, 8-case public runner와 전체 회귀는 아직 미구현·미실행이다. 기존 follower와
+RPP 전용 `8 passed`, R5-1·R5-2·window 직접 영향권 `50 passed`를 통과했다. 기존 follower와
 R4 contract/builder/validator/public까지 포함한 확장 영향권은 `124 passed`였다.
+[`persistent_adapter.py`](src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py)와
+[`test_persistent_dwb_adapter.py`](tests/test_persistent_dwb_adapter.py)는 R5-4에서 DWB의 full
+session reset과 local scoring-window update를 분리한다. full terminal은 RotateToGoal에 고정하고
+window update는 4개 path critic만 갱신해 Oscillation 상태를 보존한다. 대표 public
+`wide-straight-left` 첫 translation tick은 reset `1`, scoring update `1`, 후보 `217`, 41-pose
+safe selected rollout과 완전한 candidate diagnostics를 반환했다. 전용 `6 passed`, 기존 DWB
+직접 영향권 포함 `130 passed`, 별도 R5 영향권 `50 passed`를 확인했다. shared gate 연결,
+20Hz DWB closed loop, 8-case public runner와 전체 회귀는 아직 미구현·미실행이다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를

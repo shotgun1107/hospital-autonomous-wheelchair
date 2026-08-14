@@ -1,0 +1,333 @@
+from __future__ import annotations
+
+import ast
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from hospital_path_lab.contracts import RobotState, Twist2D
+from hospital_path_lab.dynamic_contracts import (
+    DynamicMotionState,
+    DynamicObservationFrame,
+    DynamicObservationFrameKind,
+)
+from hospital_path_lab.dynamic_observation import (
+    DynamicObservationAvailability,
+    DynamicObservationSnapshot,
+)
+from hospital_path_lab.dynamic_prediction import build_actor_prediction_set
+from hospital_path_lab.local_algorithms.dwb_reference.composition import (
+    SourceDerivedDwbConfig,
+)
+from hospital_path_lab.local_algorithms.dwb_reference.contracts import (
+    DwbGeneratorRequest,
+    DwbPose2D,
+    DwbTwist2D,
+)
+from hospital_path_lab.local_algorithms.dwb_reference.core import (
+    DwbCriticBinding,
+    DwbReferenceCore,
+)
+from hospital_path_lab.local_algorithms.dwb_reference.critics import (
+    DwbCriticGrid,
+    GoalAlignCritic,
+    GoalDistCritic,
+    OscillationCritic,
+    PathAlignCritic,
+    PathDistCritic,
+    RotateToGoalCritic,
+)
+from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
+    PERSISTENT_DWB_CONTROLLER_NAME,
+    PersistentDwbCoreSession,
+    PersistentSourceDerivedDwbController,
+)
+from hospital_path_lab.local_algorithms.dwb_reference.trajectory_generator import (
+    DwbReferenceTrajectoryGenerator,
+)
+from hospital_path_lab.local_reference_reporting import (
+    evaluate_local_reference_public_case,
+    public_local_reference_cases,
+)
+from hospital_path_lab.local_reference_window import LocalReferenceWindowManager
+from hospital_path_lab.persistent_controller_contracts import (
+    PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION,
+    PersistentControllerStatus,
+    PersistentControllerTickInput,
+    build_persistent_reference_binding,
+)
+from hospital_path_lab.reference_section_executor import R5_CONTROL_PERIOD_S
+
+
+@pytest.fixture(scope="module")
+def public_wide_left():
+    case = next(
+        item for item in public_local_reference_cases() if item.public_id == "wide-straight-left"
+    )
+    result = evaluate_local_reference_public_case(case)
+    assert result.hard_failures == ()
+    assert len(result.reference_set.candidates) == 1
+    return result
+
+
+def _fresh_empty_input(context, reference, window, *, tick, pose, twist=None):
+    if twist is None:
+        twist = Twist2D()
+    current = replace(window, source_control_tick=tick)
+    metadata = context.static_grid_snapshot.metadata
+    frame = DynamicObservationFrame(
+        stream_id="r5-public-empty-stream",
+        episode_id="r5-public-empty-episode",
+        episode_seed=metadata.seed,
+        map_id=metadata.map_id,
+        map_revision=metadata.map_revision,
+        observation_revision=metadata.observation_revision,
+        sequence=tick,
+        observed_at_s=tick * R5_CONTROL_PERIOD_S,
+        delivered_at_s=tick * R5_CONTROL_PERIOD_S,
+        frame_kind=DynamicObservationFrameKind.EMPTY,
+        tracks=(),
+        content_hash=f"r5-public-empty-{tick}",
+    )
+    observation = DynamicObservationSnapshot(
+        availability=DynamicObservationAvailability.FRESH,
+        frame=frame,
+        age_s=0.0,
+        failures=(),
+        last_event_was_no_frame=False,
+    )
+    prediction = build_actor_prediction_set(observation)
+    return PersistentControllerTickInput(
+        schema_version=PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION,
+        controller_tick=tick,
+        simulation_time_s=tick * R5_CONTROL_PERIOD_S,
+        full_reference=reference,
+        local_window=current,
+        reference_binding=build_persistent_reference_binding(reference, current),
+        robot_state=RobotState(pose, twist),
+        static_grid_snapshot=context.static_grid_snapshot,
+        validated_observation=observation,
+        actor_prediction_set=prediction,
+        vehicle_profile=context.vehicle_profile,
+        current_gate_motion_state=DynamicMotionState.MOVING,
+        current_gate_stop_epoch=context.stop_epoch,
+        current_resume_authorization_revision=None,
+    )
+
+
+def _session_core():
+    grid = DwbCriticGrid(100, 100, 0.02, 0.0, 0.0, frozenset())
+    rotate = RotateToGoalCritic()
+    oscillation = OscillationCritic()
+    goal_align = GoalAlignCritic(grid)
+    path_align = PathAlignCritic(grid)
+    path_dist = PathDistCritic(grid)
+    goal_dist = GoalDistCritic(grid)
+    bindings = (
+        DwbCriticBinding("rotate_to_goal", rotate, 1.0),
+        DwbCriticBinding("oscillation", oscillation, 1.0),
+        DwbCriticBinding("goal_align", goal_align, 1.0),
+        DwbCriticBinding("path_align", path_align, 1.0),
+        DwbCriticBinding("path_dist", path_dist, 1.0),
+        DwbCriticBinding("goal_dist", goal_dist, 1.0),
+    )
+    core = DwbReferenceCore(DwbReferenceTrajectoryGenerator(), bindings)
+    session = PersistentDwbCoreSession(
+        core,
+        scoring_critics=(goal_align, path_align, path_dist, goal_dist),
+        rotate_to_goal_critic=rotate,
+        oscillation_critic=oscillation,
+    )
+    return session, rotate, oscillation, (goal_align, path_align, path_dist, goal_dist)
+
+
+def test_session_reset_and_scoring_window_lifetimes_are_separate() -> None:
+    session, rotate, oscillation, scoring = _session_core()
+    full = (DwbPose2D(0.0, 0.0, 0.0), DwbPose2D(3.0, 0.0, 0.0))
+    first = (DwbPose2D(0.0, 0.0, 0.0), DwbPose2D(1.0, 0.0, 0.0))
+    second = (DwbPose2D(0.5, 0.0, 0.0), DwbPose2D(1.5, 0.0, 0.0))
+
+    session.begin_reference_session(full, first)
+    rotate.prepare(DwbGeneratorRequest(first[-1], DwbTwist2D(0.0, 0.0)))
+    assert not rotate.in_window
+    request = DwbGeneratorRequest(first[0], DwbTwist2D(0.0, 0.0))
+    oscillation.prepare(request)
+    oscillation.debrief(DwbTwist2D(0.0, 0.2))
+    oscillation.prepare(request)
+    oscillation.debrief(DwbTwist2D(0.0, -0.2))
+    assert oscillation.has_restrictions
+
+    session.update_scoring_window(second)
+
+    assert rotate.path == full
+    assert all(critic.path == second for critic in scoring)
+    assert oscillation.has_restrictions
+    assert session.diagnostics.session_reset_count == 1
+    assert session.diagnostics.scoring_window_update_count == 2
+    assert session.diagnostics.full_terminal_goal == full[-1]
+    assert session.critic_names == (
+        "rotate_to_goal",
+        "oscillation",
+        "goal_align",
+        "path_align",
+        "path_dist",
+        "goal_dist",
+    )
+
+
+def test_same_scoring_window_replay_is_idempotent() -> None:
+    session, _rotate, _oscillation, _scoring = _session_core()
+    full = (DwbPose2D(0.0, 0.0, 0.0), DwbPose2D(3.0, 0.0, 0.0))
+    local = (DwbPose2D(0.0, 0.0, 0.0), DwbPose2D(1.0, 0.0, 0.0))
+    session.begin_reference_session(full, local)
+
+    session.set_path(local)
+    session.update_scoring_window(local)
+
+    assert session.diagnostics.session_reset_count == 1
+    assert session.diagnostics.scoring_window_update_count == 1
+
+
+def test_default_generator_contract_keeps_upstream_zero_insertion_bound() -> None:
+    config = SourceDerivedDwbConfig().generator
+
+    assert config.linear_sample_count == 7
+    assert config.angular_sample_count == 31
+    assert config.rollout_duration_s == 2.0
+    assert config.integration_step_s == 0.05
+    assert config.rollout_step_count == 40
+    assert not config.allow_reverse
+    assert (config.linear_sample_count + 1) * (config.angular_sample_count + 1) == 256
+
+
+def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_left) -> None:
+    context = public_wide_left.build_context
+    reference = public_wide_left.reference_set.candidates[0]
+    validation = public_wide_left.validations[0]
+    pose = reference.knots[0].pose
+    current_context = replace(
+        context,
+        current_robot_pose=pose,
+        control_tick=0,
+        simulation_time_s=0.0,
+        context_content_hash="",
+    )
+    update = LocalReferenceWindowManager().update(current_context, reference, validation)
+    assert update.window is not None
+    tick_input = _fresh_empty_input(
+        context,
+        reference,
+        update.window,
+        tick=0,
+        pose=pose,
+    )
+    controller = PersistentSourceDerivedDwbController()
+
+    result = controller.step(tick_input)
+
+    assert result.status is PersistentControllerStatus.COMMAND_FOUND
+    assert result.controller_name == PERSISTENT_DWB_CONTROLLER_NAME
+    assert controller.step(tick_input) is result
+    assert controller.session_reset_count == 1
+    assert controller.stack_build_count == 1
+    diagnostics = controller.dwb_session_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.session_reset_count == 1
+    assert diagnostics.scoring_window_update_count == 1
+    assert diagnostics.full_terminal_goal == DwbPose2D(
+        reference.knots[-1].pose.x,
+        reference.knots[-1].pose.y,
+        reference.knots[-1].pose.yaw,
+    )
+    assert len(result.predicted_trajectory) == 41
+    assert "candidate_count=217" in result.candidate_diagnostics
+    assert any(item.startswith("legal_candidates=") for item in result.candidate_diagnostics)
+    assert any(
+        item.startswith("selected_candidate_index=") for item in result.candidate_diagnostics
+    )
+    assert "terminal_goal_source=immutable_full_reference" in result.candidate_diagnostics
+    assert "local_window_endpoint_is_not_rotate_goal=true" in result.decision_trace
+    assert controller.selected_safety_evidence is not None
+    assert controller.selected_safety_evidence.safe
+
+    changed = replace(
+        tick_input,
+        robot_state=RobotState(
+            replace(tick_input.robot_state.pose, x=tick_input.robot_state.pose.x + 0.01),
+            tick_input.robot_state.twist,
+        ),
+        tick_input_content_hash="",
+    )
+    rejected = controller.step(changed)
+    assert rejected.status is PersistentControllerStatus.INVALID_REFERENCE_INPUT
+    assert rejected.requested_twist == Twist2D()
+    assert rejected.failure_reason == "same_tick_input_changed"
+
+
+def test_missing_fresh_observation_fails_closed_before_candidate_motion(public_wide_left) -> None:
+    context = public_wide_left.build_context
+    reference = public_wide_left.reference_set.candidates[0]
+    validation = public_wide_left.validations[0]
+    pose = reference.knots[0].pose
+    update = LocalReferenceWindowManager().update(context, reference, validation)
+    assert update.window is not None
+    unavailable = PersistentControllerTickInput(
+        schema_version=PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION,
+        controller_tick=0,
+        simulation_time_s=0.0,
+        full_reference=reference,
+        local_window=update.window,
+        reference_binding=build_persistent_reference_binding(reference, update.window),
+        robot_state=RobotState(pose, Twist2D()),
+        static_grid_snapshot=context.static_grid_snapshot,
+        validated_observation=DynamicObservationSnapshot(
+            availability=DynamicObservationAvailability.UNAVAILABLE,
+            frame=None,
+            age_s=None,
+            failures=(),
+            last_event_was_no_frame=False,
+        ),
+        actor_prediction_set=None,
+        vehicle_profile=context.vehicle_profile,
+        current_gate_motion_state=DynamicMotionState.MOVING,
+        current_gate_stop_epoch=context.stop_epoch,
+        current_resume_authorization_revision=None,
+    )
+
+    result = PersistentSourceDerivedDwbController().step(unavailable)
+
+    assert result.status is PersistentControllerStatus.SECTION_EXECUTION_FAILED
+    assert result.requested_twist == Twist2D()
+    assert result.controller_requested_protective_stop
+    assert result.failure_reason == "fresh_observation_required"
+
+
+def test_persistent_dwb_adapter_has_no_corpus_or_evaluator_label_channel() -> None:
+    module_path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "hospital_path_lab"
+        / "local_algorithms"
+        / "dwb_reference"
+        / "persistent_adapter.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    forbidden = {
+        "dynamic_corpus",
+        "expectation_category",
+        "oracle_spec",
+        "latent_case_id",
+        "hidden_seed",
+        "ground_truth_actor",
+        "feasible_witness",
+        "evaluator",
+    }
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    imported_modules = {
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    }
+
+    assert forbidden.isdisjoint(names | attributes)
+    assert not any(any(token in module for token in forbidden) for module in imported_modules)

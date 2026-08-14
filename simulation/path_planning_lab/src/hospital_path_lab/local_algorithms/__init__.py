@@ -2,6 +2,7 @@
 
 from hospital_path_lab.local_algorithms.dwa import DynamicDwaController, DynamicWindowPlanner
 from hospital_path_lab.local_algorithms.dwb_reference import (
+    PersistentSourceDerivedDwbController,
     SourceDerivedDynamicDwbController,
 )
 from hospital_path_lab.local_algorithms.grid_astar import BoundedGridAStarPlanner
@@ -10,5 +11,6 @@ __all__ = [
     "BoundedGridAStarPlanner",
     "DynamicDwaController",
     "DynamicWindowPlanner",
+    "PersistentSourceDerivedDwbController",
     "SourceDerivedDynamicDwbController",
 ]

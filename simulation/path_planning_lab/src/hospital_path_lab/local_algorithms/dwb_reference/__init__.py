@@ -14,10 +14,19 @@ from .contracts import (
 )
 from .core import DwbCriticBinding, DwbReferenceCore, IllegalTrajectoryError
 from .goal_controller import DwbLatchedGoalController
+from .persistent_adapter import (
+    PERSISTENT_DWB_ADAPTER_VERSION,
+    PERSISTENT_DWB_CONTROLLER_NAME,
+    PersistentDwbCoreSession,
+    PersistentDwbSessionDiagnostics,
+    PersistentSourceDerivedDwbController,
+)
 from .trajectory_generator import DwbReferenceTrajectoryGenerator, sample_velocity_axis
 
 __all__ = [
     "NAV2_NAVIGATION_COMMIT",
+    "PERSISTENT_DWB_ADAPTER_VERSION",
+    "PERSISTENT_DWB_CONTROLLER_NAME",
     "ROS1_NAVIGATION_COMMIT",
     "DwbCriticBinding",
     "DwbGeneratorConfig",
@@ -30,6 +39,9 @@ __all__ = [
     "DwbTwist2D",
     "DwbLatchedGoalController",
     "IllegalTrajectoryError",
+    "PersistentDwbCoreSession",
+    "PersistentDwbSessionDiagnostics",
+    "PersistentSourceDerivedDwbController",
     "SourceDerivedDwbConfig",
     "SourceDerivedDwbController",
     "SourceDerivedDynamicDwbController",

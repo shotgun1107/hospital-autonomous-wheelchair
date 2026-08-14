@@ -932,6 +932,32 @@ local_algorithms/dwb_reference/persistent_adapter.py
 
 완료 Gate: fixed window replay와 대표 public에서 session reset 1회, candidate diagnostics 완결.
 
+구현 상태(`2026-08-14`):
+
+- [`persistent_adapter.py`](../../../simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py)에
+  `persistent_dwb_reference` adapter를 구현했다. `PersistentDwbCoreSession`은
+  `begin_reference_session(full_reference)`와 `update_scoring_window(local_window)`를 분리하며,
+  전자는 전체 critic을 1회 reset하고 후자는 `PathDist`·`PathAlign`·`GoalDist`·`GoalAlign`의
+  저장 path만 갱신한다.
+- `RotateToGoalCritic`은 immutable full reference terminal에만 결박된다. fixed window replay에서
+  local endpoint에 로봇을 놓아도 rotate goal window가 latch되지 않았고, window 변경 뒤에도
+  Oscillation sign-reversal restriction과 full-terminal goal이 유지됐다.
+- 기존 source-derived generator, critic 순서·scale·strict lower-score tie-break와
+  `ProjectDynamicSafetyConstraintCritic`을 그대로 조립한다. nominal rest window는 실제 `217`
+  후보, 후보당 `41` pose이며 zero insertion을 포함한 일반 상한 `256` 계약은 유지한다.
+- 대표 public `wide-straight-left`의 첫 translation tick에서 session reset `1`, scoring-window
+  update `1`, candidate `217`, safe selected candidate와 41-pose rollout을 확인했다. candidate
+  count, legal/illegal/short-circuit count, selected index·score와 critic별 비용은 result
+  diagnostics에 보존한다. 동일 tick 동일 입력은 같은 result object를 반환하고, 동일 tick의
+  다른 입력은 zero protective result로 거부한다.
+- 전용 `6 passed`, 기존 source-derived DWB 직접 영향권을 합친 `130 passed`, 별도 R5
+  contract·executor·RPP·window 영향권 `50 passed`, Ruff·compile·diff 검사를 통과했다. 대표
+  1 tick의 Python wall-clock은 기능 합격 근거가 아니며 native timing은 R7에 남긴다.
+- R5-4는 DWB가 translation 후보를 생성·내부 constraint로 거르는 경계까지만 닫았다. 공통
+  planned stop·rotation·terminal command와 selected DWB command의 external shared-gate 재검사,
+  20Hz closed loop, 8-case public runner, receipt, hidden과 전체 회귀는 R5-5 이후 미구현이다.
+  따라서 제품 controller 채택이나 Actor online 안전 증거가 아니다.
+
 ### R5-5 — Shared gate·functional pipeline
 
 ```text
