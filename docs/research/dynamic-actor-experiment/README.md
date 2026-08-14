@@ -30,9 +30,9 @@
 아래 표는 2026-08-10에 시작한 동적 Actor 비교실험의 기존 구현 `1~6단계`다. 2026-08-13
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
-현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 witness 자동화·일반화의 계약·projection·
-독립 validator·WAIT/HOLD·PASS structured search 구현`, `R2 profile replay 대표 checkpoint 구현`
-상태다.
+현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
+`R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 reference·sliding
+subpath 상세 명세 작성, 구현 미시작` 상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -41,6 +41,10 @@ R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약�
 Ideal·Normal·Stress 관측과 자동 witness의 결합은
 [`13-witness-profile-replay.md`](13-witness-profile-replay.md)에 분리했다.
 ground-truth feasible과 관측상 판단 가능, 실제 controller 실행을 서로 다른 증거로 유지한다.
+R3의 검증된 pose·heading path를 persistent controller용 immutable reference와 revision-bound
+sliding window로 바꾸는 계약은
+[`15-local-maneuver-reference-contract.md`](15-local-maneuver-reference-contract.md)에 정의했다.
+이 reference의 존재는 이동 허가나 controller 추종 성공을 뜻하지 않는다.
 
 | 단계 | 상태 |
 |---|---|

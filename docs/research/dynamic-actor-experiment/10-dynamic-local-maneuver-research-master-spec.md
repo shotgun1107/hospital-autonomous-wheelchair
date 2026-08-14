@@ -10,10 +10,11 @@
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
-- 현재 단계: `R1 narrow prediction 감사 완료`,
-  `R2-A legacy 횡단·재정지 표적 보완 및 691 전체 회귀 통과·공개 19개 전체 audit 미재실행`,
+- 현재 단계: `R1 prediction 계약 감사 완료`,
+  `R2-A 공개 ground-truth witness 감사와 좌·우 PASS 탐색 완료`,
   `R2-B 관측·prediction hard failure 2건으로 후속 보류`,
-  `R3 공간 oracle core L1 구현·719 전체 회귀 통과·public reporting/receipt 미구현`
+  `R3 public 21/21·receipt·729 전체 회귀 완료`,
+  `R4 reference·sliding subpath 상세 명세 작성, 구현 미시작`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -370,6 +371,9 @@ R3 static 공간 oracle을 자동으로 막지 않는다.
 
 ## R4 — 복수 기동 후보와 Reference 계약
 
+상세 구현 계약은
+[`15-local-maneuver-reference-contract.md`](15-local-maneuver-reference-contract.md)를 따른다.
+
 ### 목적
 
 단일 `0.70m` offset과 singleton waypoint 대신, 방향과 재합류 구조를 가진 복수 지역 기동
@@ -568,10 +572,10 @@ hidden까지 연구 조건 충족
 | 단계 | 핵심 질문 | 완료 증거 | 현재 상태 | 다음 진입 조건 |
 |---|---|---|---|---|
 | `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 기존 narrow claim 완료, total Actor coverage는 R2-B 후속 | hard failure 0 |
-| `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 표적 보완 완료: legacy 횡단·재정지 `MATCHED`, 공개 19개 전체 audit 미재실행 | ground-truth hard safety |
+| `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 공개 19개 audit와 좌·우 PASS 탐색 완료, legacy 횡단·재정지 표적 보완 완료 | 검증된 source만 R3·R4 전달 |
 | `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
-| `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | core L1·719 회귀 통과, public reporting·receipt 미구현 | R2-A의 검증·미해결 분류 |
-| `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 미시작 | R2·R3 계약 정리 |
+| `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
+| `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 상세 명세 작성, 구현 미시작 | R2·R3 source 계약과 revision 수명주기 구현 |
 | `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 미시작 | 검증된 witness·reference |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
 | `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 미시작 | R1~R6 기능·안전 증거 완결 |

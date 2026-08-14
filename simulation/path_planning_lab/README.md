@@ -88,6 +88,13 @@ parity PASS로 receipt를 생성했고 전체 회귀는 `729 passed`였다. 상�
 [`R3 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r3-public-spatial-qualification-result-2026-08-14.md)에
 기록했다. 기존 registry의 `state_lattice=deferred` 상태는 변경하지 않는다.
 
+R4 구현 전 상세 계약은
+[`R4 지역 기동 Reference·Sliding Subpath 명세`](../../docs/research/dynamic-actor-experiment/15-local-maneuver-reference-contract.md)에
+정의했다. R3 pose·heading·rotation·rejoin 의미를 immutable full reference로 보존하고,
+같은 maneuver/path에서는 `subgoal_revision`만 바뀌는 sliding window를 제공한다. 다른
+`maneuver_revision`·`path_revision`·`stop_epoch` 또는 session 결과는 거부한다. 현재는 명세만
+작성했으며 builder, validator, window manager, public runner와 R5 연결은 미구현이다.
+
 ### v6 재자격 진행 상태 — 2026-08-11
 
 현재는 [v6 보정·재자격 명세](../../docs/research/dynamic-actor-experiment/v6-correction-and-requalification.md)에
