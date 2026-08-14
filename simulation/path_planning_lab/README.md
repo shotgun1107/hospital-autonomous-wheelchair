@@ -89,22 +89,25 @@ parity PASS로 receipt를 생성했고 전체 회귀는 `729 passed`였다. 상�
 기록했다. 기존 registry의 `state_lattice=deferred` 상태는 변경하지 않는다.
 
 R4 상세 계약과 R4-1 immutable reference·revision 수명주기, R4-2 R3 source 변환, R4-3
-독립 검증 및 R4-4 sliding window manager 구현은
+독립 검증, R4-4 sliding window manager 및 R4-5 public runner 구현은
 [`R4 지역 기동 Reference·Sliding Subpath 명세`](../../docs/research/dynamic-actor-experiment/15-local-maneuver-reference-contract.md)에
 정의했다. 구현 코드는 [`local_reference_contracts.py`](src/hospital_path_lab/local_reference_contracts.py),
 [`local_reference_builder.py`](src/hospital_path_lab/local_reference_builder.py),
 [`local_reference_validation.py`](src/hospital_path_lab/local_reference_validation.py),
-[`local_reference_window.py`](src/hospital_path_lab/local_reference_window.py), 시험은
+[`local_reference_window.py`](src/hospital_path_lab/local_reference_window.py),
+[`local_reference_reporting.py`](src/hospital_path_lab/local_reference_reporting.py), runner는
+[`run_local_reference_public.py`](scripts/run_local_reference_public.py), 시험은
 [`test_local_reference_contracts.py`](tests/test_local_reference_contracts.py)와
 [`test_local_reference_builder.py`](tests/test_local_reference_builder.py),
 [`test_local_reference_validation.py`](tests/test_local_reference_validation.py),
-[`test_local_reference_window.py`](tests/test_local_reference_window.py)에 있다.
+[`test_local_reference_window.py`](tests/test_local_reference_window.py),
+[`test_local_reference_public.py`](tests/test_local_reference_public.py)에 있다.
 R3 pose·heading·rotation·rejoin 의미를 immutable full reference로 보존하고,
 같은 maneuver/path에서는 `subgoal_revision`만 바뀌는 sliding window를 제공한다. 다른
 `maneuver_revision`·`path_revision`·`stop_epoch` 또는 session 결과는 거부한다. R4-2 builder는
 R3의 feasible·독립 검증·hash/provenance가 일치한 결과만 `SPATIAL_ONLY` LEFT/RIGHT reference로
-바꾸며 resource limit·invalid·infeasible을 경로로 승격하지 않는다. R2 temporal evidence 결합,
-public runner와 R5 연결은 미구현이다. R4-3 validator는 builder를 import하지
+바꾸며 resource limit·invalid·infeasible을 경로로 승격하지 않는다. R2 temporal evidence 결합과
+R5 연결은 미구현이다. R4-3 validator는 builder를 import하지
 않고 source primitive·회전/정지 marker·side/rejoin과 5 mm/0.5° oriented swept geometry를
 독립 재검사한다. 전용 14개와 R4/R3 영향권 63개 시험이 통과했고, 대표 public
 `wide-straight-left`는 616개 sample에서 최소 여유 `0.244508m`로 통과했다.
@@ -113,6 +116,11 @@ R4-4 manager는 whole-section contiguous slice만 발행해 회전을 절단하�
 tick·same-tick different input·5 cm 초과 cursor 후퇴·다른 session/path를 fail-closed한다.
 전용 16개, 구현 직후 R4/R3 영향권 77개 시험이 통과했고, 대표 public 23-knot 순회는 같은
 session에서 subgoal revision `0→4`, terminal window `(15..22)`까지 통과했다.
+R4-5는 R3 public 21-case를 같은 순서로 받아 feasible LEFT/RIGHT 8건만 reference 후보로
+변환하고, infeasible·resource·invalid를 각각 `NO_REFERENCE`·`SEARCH_INCONCLUSIVE`·
+`INVALID_INPUT`으로 보존한다. case는 process 병렬화하고 한 session의 window 순회는 직렬로
+유지한다. 전용 9개와 R3/R4 영향권 103개 시험이 통과했다. clean commit에서 전체 21-case,
+serial/process parity, repeat determinism과 qualification receipt를 실행하는 R4-6은 아직 미수행이다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 
