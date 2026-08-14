@@ -1062,8 +1062,13 @@ scripts/run_persistent_controller_public.py
   오분류했다. frozen 3초/0.02m 기준은 유지하고 실제 translation section 안에서 관찰된 최대
   순방향 진행만 계산하도록 원인 계층을 바로잡았다.
 - reporting·DWB critic·adapter·pipeline·executor·safety·authority·timing 집중 영향권
-  `99 passed`, Ruff·compile·diff 검사를 통과했다. public full·receipt·전체 회귀는 아직
-  실행하지 않았고 hidden은 사용하지 않았다.
+  `99 passed`, Ruff·compile·diff 검사를 통과했다.
+- clean public full은 commit `7e22642`에서 `21/21` 실행됐지만 qualification은 실패했고 receipt는
+  생성되지 않았다. ready 8개 R4 reference 모두 reverse translation edge를 한 개 포함하지만 R5
+  DWB는 reverse를 금지하며 RPP도 양의 목표 선속도만 만든다는 계약 불일치가 확인됐다. 왼쪽 3건의
+  완료는 위치 polyline을 큰 방향 전환으로 따라간 결과이므로 reverse 의미 실행 성공으로 세지 않는다.
+  상세 결과는 [R5-A 공개 qualification 결과](r5a-public-persistent-controller-qualification-result-2026-08-14.md)에
+  보존한다. hidden은 사용하지 않았다.
 
 ### R5-7 — 최종 감사·회귀
 

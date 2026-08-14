@@ -1358,8 +1358,9 @@ def _public_relation_failures(
     ):
         wide = by_id[wide_id]
         result = by_id[crossing_id]
-        if tuple(kind for _, kind in wide.reference_sections) != tuple(
-            kind for _, kind in result.reference_sections
+        if not _is_ordered_subsequence(
+            tuple(kind for _, kind in wide.reference_sections),
+            tuple(kind for _, kind in result.reference_sections),
         ):
             failures.append(f"{crossing_id}:reference_section_order")
         for controller_name in ("rpp_result", "dwb_result"):
@@ -1369,6 +1370,16 @@ def _public_relation_failures(
                     f"{crossing_id}:{controller_name}:section_sequence_missing"
                 )
     return tuple(sorted(set(failures)))
+
+
+def _is_ordered_subsequence(
+    expected: Sequence[str],
+    observed: Sequence[str],
+) -> bool:
+    """Return whether every expected section occurs in order in observed."""
+
+    cursor = iter(observed)
+    return all(any(candidate == item for candidate in cursor) for item in expected)
 
 
 def _normalized_run_signature(

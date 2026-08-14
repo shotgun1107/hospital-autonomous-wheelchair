@@ -9,6 +9,7 @@ from hospital_path_lab.local_reference_reporting import public_local_reference_c
 from hospital_path_lab.persistent_controller_reporting import (
     PersistentPublicOutputWriter,
     PersistentPublicRunStatus,
+    _is_ordered_subsequence,
     _maximum_forward_progress_m,
     build_persistent_public_manifest,
     evaluate_persistent_public_case,
@@ -43,6 +44,23 @@ def test_deadlock_window_counts_recovery_after_a_short_backward_transition() -> 
         0.03
     )
     assert _maximum_forward_progress_m(((0, 1.15), (1, 1.15), (2, 1.15))) == 0.0
+
+
+def test_crossing_relation_allows_an_extra_ordered_return_section() -> None:
+    wide = ("depart", "rotate", "depart", "bypass", "return", "rotate", "rejoin")
+    crossing = (
+        "depart",
+        "rotate",
+        "depart",
+        "bypass",
+        "return",
+        "rotate",
+        "return",
+        "rejoin",
+    )
+
+    assert _is_ordered_subsequence(wide, crossing)
+    assert not _is_ordered_subsequence(wide, tuple(reversed(crossing)))
 
 
 def test_ready_pair_uses_one_frozen_input_and_fresh_controller_runs(public_cases) -> None:

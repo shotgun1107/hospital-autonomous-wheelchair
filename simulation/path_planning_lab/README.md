@@ -189,8 +189,12 @@ stop으로 집계하지 않으며, 보호정지 뒤 epoch가 바뀌면 controlle
 non-ready 13개는 controller call 0을 검사한다. 독립 case만 process 병렬화하며 결과는 input
 ordinal로 합친다. tick-1 전체 smoke는 RPP/DWB `8/8`, non-ready 무호출 `13/13`, PNG `21`,
 receipt `0`으로 끝났고, 대표 full pair는 RPP tick `417`, DWB tick `393`, hard failure·planner
-deadlock `0`이었다. 축소·dirty 실행은 partial report만 만들 수 있다. clean public full,
-qualification receipt와 전체 회귀는 아직 실행하지 않았다.
+deadlock `0`이었다. 축소·dirty 실행은 partial report만 만들 수 있다. 이후 commit `7e22642`의
+clean public full은 `21/21` 실행됐지만 qualification에 실패해 receipt를 만들지 않았다. ready 8개
+R4 reference가 모두 reverse translation edge를 포함하는 반면 R5 DWB는 reverse를 금지하고 RPP도
+양의 목표 선속도만 만들기 때문에 R4/R5 실행 계약이 맞지 않았다. 상세 결과는
+[`R5-A 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r5a-public-persistent-controller-qualification-result-2026-08-14.md)에
+보존한다. hidden은 사용하지 않았다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를
