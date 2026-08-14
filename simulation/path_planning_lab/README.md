@@ -144,7 +144,18 @@ translation 위임·planned stop·실제 정지 확인·제자리회전·termina
 구현한다. shared gate가 이미 제동·hold 중이면 section과 확인 counter를 진행하지 않는다.
 전용 `13 passed`, R5-1/R4 직접 영향권 합계 `81 passed`를 확인했다. 실제 R4 causal window
 재생도 terminal까지 완료했지만 translation pose는 시험이 주입한 합성 feedback이므로 RPP/DWB
-closed-loop 성공이 아니다. R5-3 RPP와 R5-4 DWB adapter·shared gate 연결은 아직 미구현이다.
+closed-loop 성공이 아니다.
+
+[`persistent_rpp_controller.py`](src/hospital_path_lab/persistent_rpp_controller.py)와
+[`test_persistent_rpp_controller.py`](tests/test_persistent_rpp_controller.py)는 R5-3에서 current
+window lookahead와 full-reference stop remaining을 분리하고, common executor의 stop·rotation·
+terminal 결과를 reference-bound RPP result로 만든다. 실제 `wide-straight-left` public reference의
+20Hz static closed loop는 `20.75s`에 완료됐고, 최초 reset `1`, window update `4`, 추가 reset `0`,
+최대 tracking error 약 `0.09923m`를 기록했다. 이 과정에서 동일 위치 회전의 projection이 yaw를
+먼저 보아 과거 section으로 후퇴하던 window-manager 결함도 monotonic cursor 우선으로 수정했다.
+RPP 전용 `8 passed`, R5-1·R5-2·window 직접 영향권 `50 passed`를 통과했다. R5-4 DWB adapter,
+shared gate 연결, 8-case public runner와 전체 회귀는 아직 미구현·미실행이다. 기존 follower와
+R4 contract/builder/validator/public까지 포함한 확장 영향권은 `124 passed`였다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를

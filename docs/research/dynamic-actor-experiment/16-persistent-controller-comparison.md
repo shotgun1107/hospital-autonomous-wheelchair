@@ -3,7 +3,7 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: 상세 설계 동결 후보, `R5-1 Contract·binding`과 `R5-2 Common section executor` 구현·직접 영향권 시험 완료
+- 상태: 상세 설계 동결 후보, `R5-1 Contract·binding`·`R5-2 Common section executor`·`R5-3 Persistent RPP adapter` 구현 및 직접 영향권 시험 완료
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -895,6 +895,30 @@ persistent_rpp_controller.py
 - static representative closed loop
 
 완료 Gate: 대표 `wide-straight-left`에서 subgoal update reset 0, terminal 완료.
+
+구현 상태(`2026-08-14`):
+
+- [`persistent_rpp_controller.py`](../../../simulation/path_planning_lab/src/hospital_path_lab/persistent_rpp_controller.py)에
+  common executor를 포함한 `persistent_rpp_reference` adapter를 구현했다.
+- lookahead는 current window의 active translation section만 사용하고, progress·tracking error와
+  stop remaining은 immutable full reference의 같은 section에서 계산한다. local window 끝 자체는
+  감속·완료 근거로 사용하지 않으며 명시적 stop/rotation 경계 또는 terminal에서만 제한 감속한다.
+- 선속도는 차체의 한 tick 가감속 한계, 각속도는 `1.60rad/s²` 한계를 지키며, current twist의
+  `50ms` post-apply pose부터 `2.0s / 0.05s`의 41-pose constant-command rollout을 만든다.
+- planned stop·rotation·terminal dwell·HOLD는 follower가 소비하지 않고 R5-2 executor 결과를
+  reference-bound controller result로 변환한다. 같은 tick 동일 입력은 elapsed까지 포함한 cached
+  object를 그대로 반환한다.
+- 실제 public `wide-straight-left` 20Hz closed loop에서 simulation time `20.75s`에 terminal
+  completion을 확인했다. 최초 session reset은 `1`, same-session window update는 `4`, 추가 reset은
+  `0`, 최대 tracking error는 약 `0.09923m`였다.
+- 이 시험에서 동일 위치 회전 중 heading을 cursor locality보다 먼저 적용하면 이전 section으로
+  projection이 후퇴하는 R4 결함이 드러났다. geometric tie에서는 이전 monotonic cursor를 먼저
+  적용하고 그 범위 안에서 heading을 쓰도록 고쳤으며 적대 회귀시험을 추가했다.
+- RPP 전용 `8 passed`, R5-1·R5-2·window manager 직접 영향권 합계 `50 passed`, Ruff·compile·
+  diff 검사를 통과했다. 기존 follower·R4 contract/builder/validator/public까지 포함한 확장
+  영향권은 `124 passed`였다. shared gate, DWB adapter, R5 public 8-case runner, hidden과 전체
+  회귀는 수행하지 않았다. 따라서 static Python L1 추종 증거이며 Actor online 안전이나 제품
+  채택 증거가 아니다.
 
 ### R5-4 — Persistent source-derived DWB adapter
 

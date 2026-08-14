@@ -386,6 +386,31 @@ def test_nonadjacent_self_overlap_projection_is_ambiguous() -> None:
     assert resolved.cursor_arc_m >= later_left.cumulative_translation_arc_m
 
 
+def test_cursor_hint_precedes_heading_during_in_place_rotation_at_overlap() -> None:
+    _context, _seed, reference, _validation = _fixture()
+    overlapped = deepcopy(reference)
+    first_left = overlapped.knots[10]
+    first_right = overlapped.knots[11]
+    later_left = overlapped.knots[20]
+    later_right = overlapped.knots[21]
+    object.__setattr__(later_left, "pose", first_right.pose)
+    object.__setattr__(later_right, "pose", first_left.pose)
+    midpoint = Pose2D(
+        (first_left.pose.x + first_right.pose.x) / 2.0,
+        (first_left.pose.y + first_right.pose.y) / 2.0,
+        first_left.pose.yaw,
+    )
+
+    resolved = project_reference_cursor(
+        overlapped,
+        midpoint,
+        cursor_hint_m=later_left.cumulative_translation_arc_m,
+    )
+
+    assert not resolved.ambiguous
+    assert resolved.cursor_arc_m >= later_left.cumulative_translation_arc_m
+
+
 def test_window_module_does_not_import_builder_corpus_or_evaluator() -> None:
     module_path = (
         Path(__file__).parents[1] / "src" / "hospital_path_lab" / "local_reference_window.py"

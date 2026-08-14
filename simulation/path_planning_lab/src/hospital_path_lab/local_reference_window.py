@@ -385,12 +385,11 @@ def project_reference_cursor(
         for candidate in candidates
         if abs(candidate[0] - minimum_distance) <= R4_PROJECTION_TIE_TOLERANCE_M
     )
-    minimum_heading_error = min(candidate[8] for candidate in geometrically_tied)
-    tied = tuple(
-        candidate
-        for candidate in geometrically_tied
-        if abs(candidate[8] - minimum_heading_error) <= R4_PROJECTION_TIE_TOLERANCE_M
-    )
+    tied = geometrically_tied
+    # 동일 위치 회전 중에는 robot yaw가 translation tangent 사이를 지나간다. 이때
+    # heading을 먼저 고르면 이미 통과한 비인접 section으로 cursor가 되돌아갈 수 있다.
+    # 같은 위치의 기하 동률은 이전 cursor의 monotonic locality를 먼저 적용하고, 그
+    # 범위 안에서만 heading으로 결정한다.
     if cursor_hint_m is not None and len(tied) > 1:
         monotonic_candidates = tuple(
             candidate
@@ -407,6 +406,12 @@ def project_reference_cursor(
             if abs(abs(candidate[1] - cursor_hint_m) - minimum_cursor_distance)
             <= R4_PROJECTION_TIE_TOLERANCE_M
         )
+    minimum_heading_error = min(candidate[8] for candidate in tied)
+    tied = tuple(
+        candidate
+        for candidate in tied
+        if abs(candidate[8] - minimum_heading_error) <= R4_PROJECTION_TIE_TOLERANCE_M
+    )
     for index, first in enumerate(tied):
         for second in tied[index + 1 :]:
             dot = first[4] * second[4] + first[5] * second[5]
