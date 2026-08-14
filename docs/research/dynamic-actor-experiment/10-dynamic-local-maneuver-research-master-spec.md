@@ -16,7 +16,7 @@
   `R3 public 21/21·receipt·729 전체 회귀 완료`,
   `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
   `R5-1~R5-6 구현·1차 clean public qualification 실패`,
-  `R4 v2 signed reference 구현·draft public 21/21 통과, R5 v2 제한 후진 구현 미시작`
+  `R4 v2 signed reference clean public 21/21·receipt 완료, R5 v2 제한 후진 구현 미시작`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -581,7 +581,7 @@ hidden까지 연구 조건 충족
 | `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 공개 19개 audit와 좌·우 PASS 탐색 완료, legacy 횡단·재정지 표적 보완 완료 | 검증된 source만 R3·R4 전달 |
 | `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
-| `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` 구현·독립 검증·draft public `21/21` 통과, clean receipt 전 | clean public receipt 뒤 R5 전달 |
+| `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` clean public `21/21`, ready 8, relation failure 0, receipt 완료 | R5 v2 signed controller 전달 |
 | `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-1~R5-6 구현, 1차 clean public FAIL·receipt 0. R4 v2 입력에서 v1 RPP 추적오차 한계 초과를 별도 진단, R5 v2 제한 후진 미구현 | v2 signed static tracking 통과, R5-B/C는 R2 temporal·observation gate 필요 |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
 | `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 미시작 | R1~R6 기능·안전 증거 완결 |
@@ -674,7 +674,7 @@ R5-A 첫 clean public 실행에서 ready 8개 모두 reverse edge를 포함하�
 source primitive의 signed `travel_direction`을 명시하고 R5 v2가 해당 reverse section에서만
 최대 `0.10m/s` 후진하도록 보정한다. 기존 v1 결과와 receipt는 보존한다.
 
-현재 다음 구현 후보는 R4 v2 clean receipt 뒤 R5 v2 signed static reference tracking이다. R5-B temporal Actor와
+현재 다음 구현 후보는 R5 v2 signed static reference tracking이다. R5-B temporal Actor와
 R5-C observation-integrated lane은 R2 evidence 결합과 R2-B hard failure를 닫기 전 시작하지 않는다.
 따라서 R2-B를 통과하기 전에는
 perception-integrated R6, hidden과 제품 안전 주장을 허용하지 않는다.

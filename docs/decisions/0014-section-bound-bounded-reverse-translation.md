@@ -3,7 +3,7 @@
 - 상태: 사용자 승인 — 개인 연구 명세, 팀·제품 합의 전
 - 날짜: `2026-08-14`
 - 범위: R3→R4→R5 Python `simulation_only` 연구 계약
-- 구현 상태: R4 v2 signed reference 구현·draft public audit 통과, R5 v2 controller 미구현
+- 구현 상태: R4 v2 signed reference 구현·clean public qualification 완료, R5 v2 controller 미구현
 
 ## 배경
 

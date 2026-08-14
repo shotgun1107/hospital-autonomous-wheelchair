@@ -109,8 +109,8 @@ R3의 feasible·독립 검증·hash/provenance가 일치한 결과만 `SPATIAL_O
 바꾸며 resource limit·invalid·infeasible을 경로로 승격하지 않는다. R4 완료 당시에는 R2
 temporal evidence 결합과 R5 controller 실행 연결이 미구현이었으나, R5-1~R5-6에서 controller와
 public runner 연결을 진행했다. 다만 첫 clean qualification은 실패했고, section-bound signed
-direction을 추가하는 R4 v2 계약·builder·독립 validator·hash·reporting은 구현됐고 draft public
-audit `21/21`을 통과했다. R5 v2 controller·executor는 아직 구현하지 않았다. R4-3 validator는 builder를 import하지
+direction을 추가하는 R4 v2 계약·builder·독립 validator·hash·reporting은 구현됐고 clean public
+qualification `21/21`과 receipt 생성을 완료했다. R5 v2 controller·executor는 아직 구현하지 않았다. R4-3 validator는 builder를 import하지
 않고 source primitive·회전/정지 marker·side/rejoin과 5 mm/0.5° oriented swept geometry를
 독립 재검사한다. 전용 14개와 R4/R3 영향권 63개 시험이 통과했고, 대표 public
 `wide-straight-left`는 616개 sample에서 최소 여유 `0.244508m`로 통과했다.
@@ -201,7 +201,8 @@ R4 reference가 모두 reverse translation edge를 포함하는 반면 R5 DWB는
 primitive의 `travel_direction`을 명시하고, R5 v2 RPP·DWB는 reverse section에서만 최대
 `0.10m/s` 후진하며 방향 전환 전 실제 정지 3 tick과 뒤쪽 shared-gate 검사를 요구한다. 명세는
 [`ADR 0014`](../../docs/decisions/0014-section-bound-bounded-reverse-translation.md)에 두었다. R4 v2는
-구현·draft public audit까지 끝났고 clean receipt 생성 전이며, R5 v2 실행 구현은 시작하지 않았다.
+clean public qualification과 receipt까지 끝났으며, R5 v2 실행 구현은 시작하지 않았다. 결과는
+[`R4 v2 공개 qualification`](../../docs/research/dynamic-actor-experiment/r4v2-public-signed-reference-qualification-result-2026-08-14.md)에 보존한다.
 hidden은 사용하지 않았다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
