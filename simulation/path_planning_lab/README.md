@@ -125,6 +125,17 @@ qualification receipt 생성 및 전체 회귀 `794 passed`를 확인했다. 상
 [`R4 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r4-public-local-reference-qualification-result-2026-08-14.md)에
 기록했다.
 
+R5 구현 전 상세 계약은
+[`R5 Persistent Controller 비교 명세`](../../docs/research/dynamic-actor-experiment/16-persistent-controller-comparison.md)와
+[`ADR 0013`](../../docs/decisions/0013-common-reference-section-executor.md)에 작성했다. RPP와
+source-derived DWB는 같은 R4 full reference·가상 차체·shared gate를 사용하되 translation
+추종만 서로 다르게 계산한다. R4의 planned stop·제자리회전·terminal dwell은 공통 section
+executor가 수행한다. local window 끝은 최종 goal이 아니며, same-session window 갱신은
+controller·stateful critic을 reset하지 않는다. 현재 코드는 이 R5 adapter·executor·reference
+binding을 아직 구현하지 않았다. 먼저 R4 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
+검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를
+닫은 뒤 진행한다. Python wall-clock은 기능 판정에서 제외하며 native timing은 R7 대상이다.
+
 ### v6 재자격 진행 상태 — 2026-08-11
 
 현재는 [v6 보정·재자격 명세](../../docs/research/dynamic-actor-experiment/v6-correction-and-requalification.md)에

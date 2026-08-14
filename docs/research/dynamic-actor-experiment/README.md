@@ -31,9 +31,9 @@
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
-`R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4-1 reference·sliding
-subpath 계약·revision 수명주기와 R4-2 R3 source→canonical builder 구현 완료, R4-3 이후
-미구현` 상태다.
+`R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 public 21/21·ready
+reference 8개·receipt·794 전체 회귀 완료`, `R5 persistent RPP·source-derived DWB 상세 명세
+작성, 구현 미시작` 상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -46,6 +46,10 @@ R3의 검증된 pose·heading path를 persistent controller용 immutable referen
 sliding window로 바꾸는 계약은
 [`15-local-maneuver-reference-contract.md`](15-local-maneuver-reference-contract.md)에 정의했다.
 이 reference의 존재는 이동 허가나 controller 추종 성공을 뜻하지 않는다.
+같은 reference를 persistent RPP와 source-derived DWB가 실행하는 계약, 공통 stop·rotation
+section executor, full terminal과 local window의 분리 및 reference-bound shared gate 검사는
+[`16-persistent-controller-comparison.md`](16-persistent-controller-comparison.md)에 정의했다.
+현재 구현 가능한 것은 static `R5-A`뿐이며 temporal·observation-integrated R5-B/C는 차단 상태다.
 
 | 단계 | 상태 |
 |---|---|
