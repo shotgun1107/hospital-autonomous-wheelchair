@@ -14,6 +14,7 @@ from hospital_path_lab.local_reference_builder import (
     LOCAL_REFERENCE_BUILDER_VERSION,
     LocalReferenceSourceError,
     SpatialReferenceSource,
+    _primitive_travel_direction,
     build_spatial_local_reference,
     build_spatial_reference_set,
     project_validated_spatial_seed,
@@ -27,6 +28,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceEvidenceLevel,
     ReferenceKnotRole,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.spatial_oracle_contracts import (
@@ -307,6 +309,62 @@ def test_builder_preserves_rotation_sections_arc_and_spatial_only_limit() -> Non
     assert reference.source_temporal_evidence_hash is None
     assert "spatial_only_no_ordered_overtake_claim" in reference.limitations
     assert reference.reference_content_hash == reference.expected_content_hash
+
+
+def test_builder_splits_signed_direction_and_marks_both_transitions_stopped() -> None:
+    source, context = _source()
+    seed = project_validated_spatial_seed(context, source)
+    forward_indices = tuple(
+        index
+        for index, primitive in enumerate(seed.primitive_sequence)
+        if primitive.kind is SpatialPrimitiveKind.FORWARD_ONE_TRANSLATION
+    )
+    reverse_index = forward_indices[len(forward_indices) // 2]
+    primitives = list(seed.primitive_sequence)
+    primitives[reverse_index] = replace(
+        primitives[reverse_index],
+        kind=SpatialPrimitiveKind.REVERSE_ONE_TRANSLATION,
+    )
+    signed_seed = replace(seed, primitive_sequence=tuple(primitives), seed_content_hash="")
+
+    reference = build_spatial_local_reference(
+        context,
+        signed_seed,
+        maneuver_revision=9,
+        path_revision=4,
+    )
+
+    reverse = next(
+        section
+        for section in reference.sections
+        if section.travel_direction is ReferenceTravelDirection.REVERSE
+    )
+    previous = reference.sections[reverse.section_index - 1]
+    following = reference.sections[reverse.section_index + 1]
+    assert previous.travel_direction is ReferenceTravelDirection.FORWARD
+    assert following.travel_direction is ReferenceTravelDirection.FORWARD
+    assert previous.exit_requires_stopped
+    assert reverse.entry_requires_stopped
+    assert reverse.exit_requires_stopped
+    assert following.entry_requires_stopped
+    assert ReferenceKnotRole.STOP_MARKER in reference.knots[previous.last_knot_index].knot_roles
+    assert ReferenceKnotRole.STOP_MARKER in reference.knots[reverse.first_knot_index].knot_roles
+    assert ReferenceKnotRole.STOP_MARKER in reference.knots[reverse.last_knot_index].knot_roles
+    assert ReferenceKnotRole.STOP_MARKER in reference.knots[following.first_knot_index].knot_roles
+
+
+def test_anchor_connector_is_a_stopped_noncommand_connector() -> None:
+    forward = SpatialPrimitive(
+        SpatialPrimitiveKind.ANCHOR_CONNECTOR,
+        Pose2D(0.0, 0.0, 0.0),
+        Pose2D(0.02, 0.0, 0.0),
+        None,
+        None,
+    )
+    lateral = replace(forward, end_pose=Pose2D(0.0, 0.02, 0.0))
+
+    assert _primitive_travel_direction(forward) is ReferenceTravelDirection.NONE
+    assert _primitive_travel_direction(lateral) is ReferenceTravelDirection.NONE
 
 
 def test_left_and_right_sources_build_distinct_deterministic_candidates() -> None:

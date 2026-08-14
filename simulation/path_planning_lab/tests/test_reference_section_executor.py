@@ -31,6 +31,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceKnotRole,
     ReferenceSection,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.local_reference_validation import validate_local_maneuver_reference
 from hospital_path_lab.local_reference_window import LocalReferenceWindowManager
@@ -189,6 +190,7 @@ def _wait_reference(context, template: LocalManeuverReference) -> LocalManeuverR
         ReferenceSection(
             section_index=0,
             section_kind=ReferenceSectionKind.HOLD,
+            travel_direction=ReferenceTravelDirection.NONE,
             first_knot_index=0,
             last_knot_index=0,
             entry_requires_stopped=True,
@@ -198,6 +200,7 @@ def _wait_reference(context, template: LocalManeuverReference) -> LocalManeuverR
         ReferenceSection(
             section_index=1,
             section_kind=ReferenceSectionKind.FOLLOW_ORIGINAL,
+            travel_direction=ReferenceTravelDirection.FORWARD,
             first_knot_index=1,
             last_knot_index=2,
             entry_requires_stopped=False,

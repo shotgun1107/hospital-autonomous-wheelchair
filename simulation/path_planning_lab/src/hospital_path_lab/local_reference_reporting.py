@@ -57,13 +57,13 @@ from hospital_path_lab.spatial_oracle_reporting import (
     public_spatial_cases,
 )
 
-LOCAL_REFERENCE_PUBLIC_CATALOG_VERSION = "local-reference-public-catalog-v1"
-LOCAL_REFERENCE_PUBLIC_REPORT_VERSION = "local-reference-public-report-v1"
-LOCAL_REFERENCE_PUBLIC_MANIFEST_VERSION = "local-reference-public-manifest-v1"
-LOCAL_REFERENCE_PUBLIC_RECEIPT_VERSION = "local-reference-public-receipt-v1"
+LOCAL_REFERENCE_PUBLIC_CATALOG_VERSION = "local-reference-public-catalog-v2"
+LOCAL_REFERENCE_PUBLIC_REPORT_VERSION = "local-reference-public-report-v2"
+LOCAL_REFERENCE_PUBLIC_MANIFEST_VERSION = "local-reference-public-manifest-v2"
+LOCAL_REFERENCE_PUBLIC_RECEIPT_VERSION = "local-reference-public-receipt-v2"
 LOCAL_REFERENCE_PUBLIC_CASE_COUNT = SPATIAL_PUBLIC_CASE_COUNT
 LOCAL_REFERENCE_PUBLIC_MANEUVER_REVISION = 1
-LOCAL_REFERENCE_PUBLIC_PATH_REVISION = 1
+LOCAL_REFERENCE_PUBLIC_PATH_REVISION = 2
 LOCAL_REFERENCE_PUBLIC_STOP_EPOCH = 1
 _RELATION_TOLERANCE_M = 0.02 + 1e-9
 _SHA256_LENGTH = 64
@@ -900,6 +900,16 @@ def _relation_failures(
             section.section_kind for section in right.sections
         ):
             failures.append(f"{label}:section_kinds")
+        left_directions = tuple(section.travel_direction for section in left.sections)
+        right_directions = tuple(section.travel_direction for section in right.sections)
+        directions_match = (
+            sorted(direction.value for direction in left_directions)
+            == sorted(direction.value for direction in right_directions)
+            if label.endswith("_mirror")
+            else left_directions == right_directions
+        )
+        if not directions_match:
+            failures.append(f"{label}:travel_directions")
         if len(left.knots) != len(right.knots):
             failures.append(f"{label}:knot_count")
         if (

@@ -3,7 +3,7 @@
 ## 1. 문서 상태와 목적
 
 - 작성일: `2026-08-14`
-- 상태: R4 v1 구현·공개 qualification·전체 회귀 완료, R4 v2 signed direction 보완 명세 승인·미구현
+- 상태: R4 v1 구현·공개 qualification·전체 회귀 완료, R4 v2 signed direction 구현·draft 공개 audit `21/21` 통과, clean receipt 생성 전
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
   - [`R3 bounded spatial oracle`](14-bounded-spatial-oracle.md)
@@ -461,12 +461,14 @@ rotation section 진입 전·exit knot를 같은 window에 둔다. rotation 중 
 ### R3
 
 - path/primitive 길이 관계를 재검사한다.
-- anchor connector는 source anchor 의미를 유지한다.
+- anchor connector는 source anchor 의미를 유지한다. 기하 변위로 전진·후진을 추론하지 않고
+  `travel_direction=NONE`인 비실행 연결 구간으로 보존하며, 변위가 있으면 양 끝 정지 표식을
+  요구한다.
 - translation primitive는 translation knot/section이 되며 R4 v2에서
   `travel_direction=FORWARD|REVERSE`를 source primitive로부터 그대로 기록한다.
 - rotation primitive는 동일 위치 entry/exit knot와 `ROTATE` section이 된다.
 - 한 translation section에는 한 방향만 허용한다. forward/reverse가 바뀌면 section을 분리하며
-  `ROTATE`, `HOLD`와 zero-length anchor는 `travel_direction=NONE`이다.
+  `ROTATE`, `HOLD`와 모든 abstract anchor connector는 `travel_direction=NONE`이다.
 - direction은 pose displacement에서 추측하지 않고 source primitive kind와 exact 대응한다.
 - reverse는 limitation에도 남기되, R5 Python 연구의 실행 허용은 ADR 0014를 따른다. 실제 제품
   후진 허용은 결정하지 않는다.
@@ -693,6 +695,23 @@ R4-6 대표 public→감사→전체 public→회귀       실행 전 재산정
 - category·oracle·ground truth·hidden이 builder/controller 입력에 누출되지 않는다.
 - `SPATIAL_ONLY`, `GROUND_TRUTH_TEMPORAL`, observation 미완료를 구분한다.
 - 영향권 시험과 구현 뒤 마지막 전체 회귀가 통과한다.
+
+### R4 v2 구현 상태 — clean qualification 전
+
+- schema·contract·reference set·window·builder·validator·reporting version을 v2로 올리고
+  `path_revision=2`로 분리했다.
+- translation primitive는 `FORWARD` 또는 `REVERSE`, 회전·HOLD와 R3의 추상
+  `ANCHOR_CONNECTOR`는 `NONE`으로 기록한다.
+- `ANCHOR_CONNECTOR`의 기하 변위에서 전진·후진을 추측하지 않는다. 변위가 있는 connector는
+  양 끝 `STOP_MARKER`와 stopped entry/exit가 있는 비실행 연결 구간으로만 허용한다.
+- forward↔reverse 경계와 사이의 `NONE` 구간은 양쪽 정지 요구와 stop marker가 없으면 계약과
+  독립 validator가 모두 거부한다.
+- R4 전용 contracts·builder·validator·window·public 시험은 `69 passed`다.
+- dirty-tree draft public audit는 21개 전체, ready 8·no-reference 11·inconclusive 1·invalid 1,
+  relation failure 0으로 `PASS`했다. clean commit에 결박된 receipt는 아직 만들지 않았다.
+- 기존 R5 v1 RPP는 signed reference 실행 자격이 없으며 대표 입력에서 기존 `0.10m` 추적오차
+  한계를 `0.000510m` 초과했다. 임계값을 완화하지 않고 해당 시험을 R5 v2 전까지 명시적
+  `xfail` 진단으로 둔다.
 
 ## 17. R5 전달과 중단조건
 

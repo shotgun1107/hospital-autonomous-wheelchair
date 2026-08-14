@@ -3,7 +3,7 @@
 - 상태: 사용자 승인 — 개인 연구 명세, 팀·제품 합의 전
 - 날짜: `2026-08-14`
 - 범위: R3→R4→R5 Python `simulation_only` 연구 계약
-- 구현 상태: 미구현
+- 구현 상태: R4 v2 signed reference 구현·draft public audit 통과, R5 v2 controller 미구현
 
 ## 배경
 
@@ -35,6 +35,10 @@ ROTATE/HOLD     → translation v = 0
 1. R4 v2는 각 translation section에 `travel_direction=FORWARD|REVERSE`를 명시한다.
 2. 한 section 안에 forward와 reverse를 섞지 않는다. 방향이 바뀌면 section을 분리한다.
 3. 방향 source는 R3 primitive metadata이며 pose 기하에서 사후 추측하지 않는다.
+   `FORWARD_ONE_TRANSLATION`과 `REVERSE_ONE_TRANSLATION`만 signed translation이다.
+   R3의 `ANCHOR_CONNECTOR`는 격자 시작·종료를 잇는 추상 연결 증거이므로 방향을 추론하지 않고
+   `NONE`인 비실행 연결 구간으로 보존한다. 실제 변위가 있는 connector는 양 끝 정지 표식이
+   있을 때만 R4 reference에 남긴다.
 4. RPP와 DWB는 active section의 방향 밖에 있는 nonzero 선속도 후보를 만들거나 선택하지 않는다.
 5. forward↔reverse 전환 전 common executor가 제한 감속과 실제 정지 3 tick을 확인한다.
 6. reverse는 기존 `0.10m/s` 상한, 선가속·감속 한계와 50ms 적용 지연을 그대로 사용한다.

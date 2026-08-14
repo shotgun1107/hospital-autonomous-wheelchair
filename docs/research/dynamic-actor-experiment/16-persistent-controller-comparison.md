@@ -4,7 +4,7 @@
 
 - 작성일: `2026-08-14`
 - 상태: `R5-1~R5-6` 구현, R5-A 1차 public full qualification 실패·receipt 미생성,
-  v2 section-bound 제한 후진 보완 명세 사용자 승인·구현 미시작
+  R4 v2 signed reference 구현·draft audit 통과, R5 v2 section-bound 제한 후진 구현 미시작
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -1100,7 +1100,8 @@ scripts/run_persistent_controller_public.py
 ### R5 v2 — Section-bound 제한 후진 계약 보정
 
 - 사용자 연구 방향: 제한 후진 허용
-- 상태: 명세 승인, 구현·시험·재qualification 미시작
+- 상태: R4 v2 signed reference 구현·draft public audit 통과, R5 v2 controller·executor 구현과
+  재qualification 미시작
 - R4 v2가 source primitive에 결박된 `travel_direction`을 발행한다.
 - RPP·DWB는 reverse section에서만 최대 `0.10m/s` 음의 선속도를 사용할 수 있다.
 - common executor는 forward↔reverse 전환 전 실제 정지 3 tick을 확인한다.

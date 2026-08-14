@@ -24,8 +24,8 @@ from hospital_path_lab.local_reference_contracts import (
 from hospital_path_lab.local_reference_validation import LocalReferenceValidation
 from hospital_path_lab.map_factory import canonical_content_hash
 
-LOCAL_REFERENCE_WINDOW_MANAGER_VERSION = "local-reference-window-manager-v1"
-LOCAL_REFERENCE_WINDOW_UPDATE_SCHEMA_VERSION = "local-reference-window-update-v1"
+LOCAL_REFERENCE_WINDOW_MANAGER_VERSION = "local-reference-window-manager-v2"
+LOCAL_REFERENCE_WINDOW_UPDATE_SCHEMA_VERSION = "local-reference-window-update-v2"
 R4_WINDOW_CONTROL_PERIOD_S = 0.05
 R4_REAR_CONTEXT_ARC_M = 0.10
 R4_MINIMUM_FORWARD_WINDOW_ARC_M = 0.60

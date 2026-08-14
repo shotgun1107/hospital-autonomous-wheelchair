@@ -15,6 +15,7 @@ from hospital_path_lab.local_reference_contracts import (
     LocalManeuverKind,
     ReferenceKnotRole,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.local_reference_validation import (
     LOCAL_REFERENCE_VALIDATOR_VERSION,
@@ -137,6 +138,26 @@ def test_source_primitive_mapping_loss_is_detected() -> None:
 
     assert not result.passed
     assert "source_primitive_mapping_mismatch" in result.failure_codes
+
+
+def test_signed_direction_tamper_is_rejected_after_hashes_are_recomputed() -> None:
+    context, seed, reference = _deepcopy_reference()
+    section = next(
+        item
+        for item in reference.sections
+        if item.travel_direction is ReferenceTravelDirection.FORWARD
+        and item.source_primitive_indices
+    )
+    object.__setattr__(section, "travel_direction", ReferenceTravelDirection.REVERSE)
+    object.__setattr__(section, "section_content_hash", section.expected_content_hash)
+    object.__setattr__(reference, "reference_content_hash", reference.expected_content_hash)
+
+    result = validate_local_maneuver_reference(context, reference, spatial_seed=seed)
+
+    assert not result.passed
+    assert "source_primitive_direction_mismatch" in result.failure_codes
+    assert "direction_transition_stop_missing" in result.failure_codes
+    assert "reference_hash_mismatch" not in result.failure_codes
 
 
 def test_source_path_pose_tamper_is_detected() -> None:

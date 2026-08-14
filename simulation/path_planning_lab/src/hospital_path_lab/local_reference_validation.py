@@ -31,6 +31,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceEvidenceLevel,
     ReferenceKnotRole,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
     SpatialReferenceSeed,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
@@ -40,8 +41,8 @@ from hospital_path_lab.spatial_oracle_contracts import (
     spatial_path_content_hash,
 )
 
-LOCAL_REFERENCE_VALIDATION_SCHEMA_VERSION = "local-reference-validation-v1"
-LOCAL_REFERENCE_VALIDATOR_VERSION = "local-reference-validator-v1"
+LOCAL_REFERENCE_VALIDATION_SCHEMA_VERSION = "local-reference-validation-v2"
+LOCAL_REFERENCE_VALIDATOR_VERSION = "local-reference-validator-v2"
 R4_TRANSLATION_SWEEP_STEP_M = 0.005
 R4_ROTATION_SWEEP_STEP_RAD = pi / 360.0
 
@@ -479,6 +480,8 @@ def _validate_structure(
     ):
         failures.add("rejoin_marker_lost")
 
+    _validate_travel_directions(knots, sections, spatial_seed, failures)
+
     if spatial_seed is None:
         return
     if len(spatial_seed.primitive_sequence) != len(spatial_seed.pose_heading_path) - 1:
@@ -533,6 +536,115 @@ def _validate_structure(
             continue
         if not _poses_close(knot.pose, spatial_seed.pose_heading_path[knot.source_path_index]):
             failures.add("source_path_index_mismatch")
+
+
+def _validate_travel_directions(
+    knots: tuple[object, ...],
+    sections: tuple[object, ...],
+    spatial_seed: SpatialReferenceSeed | None,
+    failures: set[str],
+) -> None:
+    previous_travel: object | None = None
+    intermediaries: list[object] = []
+    for section in sections:
+        try:
+            section_knots = knots[section.first_knot_index : section.last_knot_index + 1]
+            movement_present = any(
+                _pose_distance(left.pose, right.pose) > R4_COMPARISON_TOLERANCE
+                for left, right in zip(section_knots, section_knots[1:], strict=False)
+            )
+            direction = section.travel_direction
+            if not isinstance(direction, ReferenceTravelDirection):
+                failures.add("section_travel_direction_mismatch")
+                continue
+            if direction is ReferenceTravelDirection.NONE:
+                primitive_indices = tuple(section.source_primitive_indices)
+                abstract_connector = (
+                    spatial_seed is not None
+                    and bool(primitive_indices)
+                    and all(
+                        0 <= index < len(spatial_seed.primitive_sequence)
+                        and spatial_seed.primitive_sequence[index].kind
+                        is SpatialPrimitiveKind.ANCHOR_CONNECTOR
+                        for index in primitive_indices
+                    )
+                )
+                if movement_present and (
+                    not abstract_connector
+                    or not section.entry_requires_stopped
+                    or not section.exit_requires_stopped
+                    or ReferenceKnotRole.STOP_MARKER not in section_knots[0].knot_roles
+                    or ReferenceKnotRole.STOP_MARKER not in section_knots[-1].knot_roles
+                    or any(
+                        ReferenceKnotRole.ANCHOR not in knot.knot_roles
+                        for knot in section_knots
+                    )
+                ):
+                    failures.add("section_travel_direction_mismatch")
+                if previous_travel is not None:
+                    intermediaries.append(section)
+                continue
+            if section.section_kind in (
+                ReferenceSectionKind.ROTATE,
+                ReferenceSectionKind.HOLD,
+            ):
+                failures.add("section_travel_direction_mismatch")
+            if (
+                previous_travel is not None
+                and previous_travel.travel_direction is not direction
+            ):
+                previous_last = knots[previous_travel.last_knot_index]
+                current_first = knots[section.first_knot_index]
+                if (
+                    not previous_travel.exit_requires_stopped
+                    or not section.entry_requires_stopped
+                    or ReferenceKnotRole.STOP_MARKER not in previous_last.knot_roles
+                    or ReferenceKnotRole.STOP_MARKER not in current_first.knot_roles
+                ):
+                    failures.add("direction_transition_stop_missing")
+                for intermediary in intermediaries:
+                    first = knots[intermediary.first_knot_index]
+                    last = knots[intermediary.last_knot_index]
+                    if (
+                        not intermediary.entry_requires_stopped
+                        or not intermediary.exit_requires_stopped
+                        or ReferenceKnotRole.STOP_MARKER not in first.knot_roles
+                        or ReferenceKnotRole.STOP_MARKER not in last.knot_roles
+                    ):
+                        failures.add("direction_transition_stop_missing")
+            previous_travel = section
+            intermediaries = []
+        except (AttributeError, IndexError, TypeError, ValueError):
+            failures.add("section_travel_direction_mismatch")
+
+    if spatial_seed is None:
+        return
+    for section in sections:
+        for primitive_index in getattr(section, "source_primitive_indices", ()):
+            if not 0 <= primitive_index < len(spatial_seed.primitive_sequence):
+                continue
+            try:
+                expected = _source_primitive_travel_direction(
+                    spatial_seed.primitive_sequence[primitive_index]
+                )
+            except ValueError:
+                failures.add("source_primitive_direction_ambiguous")
+                continue
+            if section.travel_direction is not expected:
+                failures.add("source_primitive_direction_mismatch")
+
+
+def _source_primitive_travel_direction(primitive: object) -> ReferenceTravelDirection:
+    kind = primitive.kind
+    if kind is SpatialPrimitiveKind.FORWARD_ONE_TRANSLATION:
+        return ReferenceTravelDirection.FORWARD
+    if kind is SpatialPrimitiveKind.REVERSE_ONE_TRANSLATION:
+        return ReferenceTravelDirection.REVERSE
+    if kind in _ROTATION_KINDS:
+        return ReferenceTravelDirection.NONE
+    if kind is not SpatialPrimitiveKind.ANCHOR_CONNECTOR:
+        raise ValueError("unsupported source primitive direction")
+    return ReferenceTravelDirection.NONE
 
 
 def _validate_side_and_rejoin(

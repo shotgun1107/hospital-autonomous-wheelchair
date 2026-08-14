@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import atan2, cos, hypot, isfinite, sin
 from time import perf_counter_ns
 
@@ -27,6 +27,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceSection,
     ReferenceSectionKind,
     ReferenceSourceRejection,
+    ReferenceTravelDirection,
     ReferenceValidity,
     SpatialReferenceSeed,
 )
@@ -41,7 +42,7 @@ from hospital_path_lab.spatial_oracle_contracts import (
     spatial_path_content_hash,
 )
 
-LOCAL_REFERENCE_BUILDER_VERSION = "local-reference-builder-v1"
+LOCAL_REFERENCE_BUILDER_VERSION = "local-reference-builder-v2"
 _TOLERANCE = 1e-9
 _ROTATION_KINDS = frozenset(
     (SpatialPrimitiveKind.ROTATE_LEFT_45, SpatialPrimitiveKind.ROTATE_RIGHT_45)
@@ -449,28 +450,52 @@ class _GeometryBuilder:
         movement_kind: ReferenceSectionKind,
     ) -> None:
         group: list[int] = []
-        current_kind: ReferenceSectionKind | None = None
+        current_key: tuple[ReferenceSectionKind, ReferenceTravelDirection] | None = None
         for primitive_index in primitive_indices:
             primitive = self.seed.primitive_sequence[primitive_index]
             kind = (
                 ReferenceSectionKind.ROTATE if _primitive_is_rotation(primitive) else movement_kind
             )
-            if group and kind is not current_kind:
-                self.add_group(tuple(group), current_kind)  # type: ignore[arg-type]
+            direction = _primitive_travel_direction(primitive)
+            key = (kind, direction)
+            if group and key != current_key:
+                assert current_key is not None
+                self.add_group(tuple(group), current_key[0], current_key[1])
                 group = []
             group.append(primitive_index)
-            current_kind = kind
+            current_key = key
         if group:
-            self.add_group(tuple(group), current_kind)  # type: ignore[arg-type]
+            assert current_key is not None
+            self.add_group(tuple(group), current_key[0], current_key[1])
 
     def add_group(
         self,
         primitive_indices: tuple[int, ...],
         kind: ReferenceSectionKind,
+        direction: ReferenceTravelDirection | None = None,
     ) -> int:
         if not primitive_indices:
             raise ValueError("primitive group must not be empty")
         section_index = len(self.sections)
+        primitive_directions = {
+            _primitive_travel_direction(self.seed.primitive_sequence[index])
+            for index in primitive_indices
+        }
+        if direction is None:
+            if len(primitive_directions) != 1:
+                raise LocalReferenceSourceError("mixed_travel_direction_section")
+            direction = next(iter(primitive_directions))
+        elif primitive_directions != {direction}:
+            raise LocalReferenceSourceError("source_primitive_direction_mismatch")
+        abstract_connector = direction is ReferenceTravelDirection.NONE and all(
+            self.seed.primitive_sequence[index].kind is SpatialPrimitiveKind.ANCHOR_CONNECTOR
+            for index in primitive_indices
+        )
+        if direction is ReferenceTravelDirection.NONE and not (
+            abstract_connector or kind is ReferenceSectionKind.ROTATE
+        ):
+            raise LocalReferenceSourceError("unsupported_none_direction_section")
+        direction_transition = self._prepare_direction_transition(direction)
         first_primitive = primitive_indices[0]
         first_pose = self.seed.pose_heading_path[first_primitive]
         first_roles: tuple[ReferenceKnotRole, ...]
@@ -479,10 +504,17 @@ class _GeometryBuilder:
                 ReferenceKnotRole.ROTATION_ENTRY,
                 ReferenceKnotRole.STOP_MARKER,
             )
+        elif abstract_connector:
+            first_roles = (
+                ReferenceKnotRole.ANCHOR,
+                ReferenceKnotRole.STOP_MARKER,
+            )
         else:
             first_roles = (ReferenceKnotRole.TRANSLATION,)
             if not self.knots:
                 first_roles = (ReferenceKnotRole.ANCHOR, *first_roles)
+            if direction_transition:
+                first_roles = (*first_roles, ReferenceKnotRole.STOP_MARKER)
         self._append_knot(first_pose, first_primitive, section_index, first_roles)
         for offset, primitive_index in enumerate(primitive_indices):
             primitive = self.seed.primitive_sequence[primitive_index]
@@ -491,7 +523,11 @@ class _GeometryBuilder:
                 primitive.end_pose.x - primitive.start_pose.x,
                 primitive.end_pose.y - primitive.start_pose.y,
             )
-            roles = (ReferenceKnotRole.TRANSLATION,)
+            roles = (
+                (ReferenceKnotRole.ANCHOR, ReferenceKnotRole.STOP_MARKER)
+                if abstract_connector
+                else (ReferenceKnotRole.TRANSLATION,)
+            )
             if kind is ReferenceSectionKind.ROTATE:
                 roles = (
                     (ReferenceKnotRole.ROTATION_EXIT, ReferenceKnotRole.STOP_MARKER)
@@ -499,21 +535,24 @@ class _GeometryBuilder:
                     else (ReferenceKnotRole.ROTATION_ENTRY,)
                 )
             if kind is ReferenceSectionKind.REJOIN and offset == len(primitive_indices) - 1:
-                roles = (
-                    ReferenceKnotRole.TRANSLATION,
-                    ReferenceKnotRole.REJOIN,
-                    ReferenceKnotRole.STOP_MARKER,
-                )
+                roles = (*roles, ReferenceKnotRole.REJOIN, ReferenceKnotRole.STOP_MARKER)
             self._append_knot(end_pose, primitive_index + 1, section_index, roles)
         self.sections.append(
             ReferenceSection(
                 section_index=section_index,
                 section_kind=kind,
+                travel_direction=direction,
                 first_knot_index=len(self.knots) - len(primitive_indices) - 1,
                 last_knot_index=len(self.knots) - 1,
-                entry_requires_stopped=kind is ReferenceSectionKind.ROTATE,
-                exit_requires_stopped=kind
-                in (ReferenceSectionKind.ROTATE, ReferenceSectionKind.REJOIN),
+                entry_requires_stopped=(
+                    kind is ReferenceSectionKind.ROTATE
+                    or abstract_connector
+                    or direction_transition
+                ),
+                exit_requires_stopped=(
+                    kind in (ReferenceSectionKind.ROTATE, ReferenceSectionKind.REJOIN)
+                    or abstract_connector
+                ),
                 source_primitive_indices=primitive_indices,
             )
         )
@@ -534,6 +573,7 @@ class _GeometryBuilder:
             ReferenceSection(
                 section_index=section_index,
                 section_kind=kind,
+                travel_direction=ReferenceTravelDirection.NONE,
                 first_knot_index=len(self.knots) - 1,
                 last_knot_index=len(self.knots) - 1,
                 entry_requires_stopped=False,
@@ -542,6 +582,51 @@ class _GeometryBuilder:
             )
         )
         return section_index
+
+    def _prepare_direction_transition(
+        self,
+        direction: ReferenceTravelDirection,
+    ) -> bool:
+        if direction is ReferenceTravelDirection.NONE:
+            return False
+        previous_index = next(
+            (
+                index
+                for index in range(len(self.sections) - 1, -1, -1)
+                if self.sections[index].travel_direction is not ReferenceTravelDirection.NONE
+            ),
+            None,
+        )
+        if previous_index is None:
+            return False
+        previous = self.sections[previous_index]
+        if previous.travel_direction is direction:
+            return False
+
+        self.sections[previous_index] = replace(
+            previous,
+            exit_requires_stopped=True,
+            section_content_hash="",
+        )
+        self._add_stop_marker(previous.last_knot_index)
+        for index in range(previous_index + 1, len(self.sections)):
+            section = self.sections[index]
+            self.sections[index] = replace(
+                section,
+                entry_requires_stopped=True,
+                exit_requires_stopped=True,
+                section_content_hash="",
+            )
+            self._add_stop_marker(section.first_knot_index)
+            self._add_stop_marker(section.last_knot_index)
+        return True
+
+    def _add_stop_marker(self, knot_index: int) -> None:
+        knot = self.knots[knot_index]
+        self.knots[knot_index] = replace(
+            knot,
+            knot_roles=(*knot.knot_roles, ReferenceKnotRole.STOP_MARKER),
+        )
 
     def _append_knot(
         self,
@@ -633,6 +718,19 @@ def _primitive_is_rotation(primitive: SpatialPrimitive) -> bool:
     return primitive.kind in _ROTATION_KINDS or (
         distance <= _TOLERANCE and heading_change > _TOLERANCE
     )
+
+
+def _primitive_travel_direction(primitive: SpatialPrimitive) -> ReferenceTravelDirection:
+    if primitive.kind is SpatialPrimitiveKind.FORWARD_ONE_TRANSLATION:
+        return ReferenceTravelDirection.FORWARD
+    if primitive.kind is SpatialPrimitiveKind.REVERSE_ONE_TRANSLATION:
+        return ReferenceTravelDirection.REVERSE
+    if primitive.kind in _ROTATION_KINDS:
+        return ReferenceTravelDirection.NONE
+    if primitive.kind is not SpatialPrimitiveKind.ANCHOR_CONNECTOR:
+        raise LocalReferenceSourceError("unsupported_source_primitive_direction")
+
+    return ReferenceTravelDirection.NONE
 
 
 def _pose_distance(left: object, right: object) -> float:

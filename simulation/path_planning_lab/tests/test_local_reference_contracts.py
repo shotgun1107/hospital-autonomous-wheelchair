@@ -33,6 +33,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceSection,
     ReferenceSectionKind,
     ReferenceSourceRejection,
+    ReferenceTravelDirection,
     ReferenceUpperDisposition,
     ReferenceValidity,
     SpatialReferenceSeed,
@@ -175,6 +176,7 @@ def _pass_geometry() -> tuple[tuple[ReferenceKnot, ...], tuple[ReferenceSection,
         ReferenceSection(
             section_index=index,
             section_kind=kind,
+            travel_direction=ReferenceTravelDirection.FORWARD,
             first_knot_index=index,
             last_knot_index=index,
             entry_requires_stopped=False,
@@ -270,6 +272,7 @@ def _wait_reference(*, maneuver_revision: int = 5) -> LocalManeuverReference:
         ReferenceSection(
             0,
             ReferenceSectionKind.HOLD,
+            ReferenceTravelDirection.NONE,
             0,
             0,
             True,
@@ -279,6 +282,7 @@ def _wait_reference(*, maneuver_revision: int = 5) -> LocalManeuverReference:
         ReferenceSection(
             1,
             ReferenceSectionKind.FOLLOW_ORIGINAL,
+            ReferenceTravelDirection.FORWARD,
             1,
             1,
             False,
@@ -468,11 +472,13 @@ def test_wait_reference_requires_hold_before_following_original_path() -> None:
     first = replace(
         reference.sections[0],
         section_kind=ReferenceSectionKind.FOLLOW_ORIGINAL,
+        travel_direction=ReferenceTravelDirection.FORWARD,
         section_content_hash="",
     )
     last = replace(
         reference.sections[1],
         section_kind=ReferenceSectionKind.HOLD,
+        travel_direction=ReferenceTravelDirection.NONE,
         entry_requires_stopped=True,
         section_content_hash="",
     )
@@ -486,6 +492,7 @@ def test_rotate_and_hold_sections_enforce_stopped_geometry_and_markers() -> None
         ReferenceSection(
             0,
             ReferenceSectionKind.ROTATE,
+            ReferenceTravelDirection.NONE,
             0,
             0,
             True,
@@ -516,6 +523,7 @@ def test_rotate_and_hold_sections_enforce_stopped_geometry_and_markers() -> None
     rotate = ReferenceSection(
         0,
         ReferenceSectionKind.ROTATE,
+        ReferenceTravelDirection.NONE,
         0,
         1,
         True,
@@ -579,6 +587,7 @@ def test_rotate_and_hold_sections_enforce_stopped_geometry_and_markers() -> None
     hold = ReferenceSection(
         0,
         ReferenceSectionKind.HOLD,
+        ReferenceTravelDirection.NONE,
         0,
         1,
         True,

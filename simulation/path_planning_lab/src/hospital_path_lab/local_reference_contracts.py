@@ -23,10 +23,10 @@ from hospital_path_lab.spatial_oracle_contracts import (
 )
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
 
-LOCAL_REFERENCE_SCHEMA_VERSION = "local-maneuver-reference-v1"
-LOCAL_REFERENCE_CONTRACT_VERSION = "local-maneuver-reference-contract-v1"
-LOCAL_REFERENCE_SET_SCHEMA_VERSION = "local-maneuver-reference-set-v1"
-LOCAL_REFERENCE_WINDOW_SCHEMA_VERSION = "local-reference-window-v1"
+LOCAL_REFERENCE_SCHEMA_VERSION = "local-maneuver-reference-v2"
+LOCAL_REFERENCE_CONTRACT_VERSION = "local-maneuver-reference-contract-v2"
+LOCAL_REFERENCE_SET_SCHEMA_VERSION = "local-maneuver-reference-set-v2"
+LOCAL_REFERENCE_WINDOW_SCHEMA_VERSION = "local-reference-window-v2"
 REFERENCE_BUILD_CONTEXT_SCHEMA_VERSION = "reference-build-context-v1"
 SPATIAL_REFERENCE_SEED_SCHEMA_VERSION = "spatial-reference-seed-v1"
 TEMPORAL_REFERENCE_EVIDENCE_SCHEMA_VERSION = "temporal-reference-evidence-v1"
@@ -82,6 +82,12 @@ class ReferenceSectionKind(StrEnum):
     RETURN = "return"
     REJOIN = "rejoin"
     HOLD = "hold"
+
+
+class ReferenceTravelDirection(StrEnum):
+    FORWARD = "forward"
+    REVERSE = "reverse"
+    NONE = "none"
 
 
 class ReferenceLifecycleStatus(StrEnum):
@@ -385,6 +391,7 @@ class ReferenceKnot:
 class ReferenceSection:
     section_index: int
     section_kind: ReferenceSectionKind
+    travel_direction: ReferenceTravelDirection
     first_knot_index: int
     last_knot_index: int
     entry_requires_stopped: bool
@@ -399,6 +406,8 @@ class ReferenceSection:
             raise ValueError("section knot range must not be reversed")
         if not isinstance(self.section_kind, ReferenceSectionKind):
             raise TypeError("section_kind must be a ReferenceSectionKind")
+        if not isinstance(self.travel_direction, ReferenceTravelDirection):
+            raise TypeError("travel_direction must be a ReferenceTravelDirection")
         for name in ("entry_requires_stopped", "exit_requires_stopped"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be a bool")
@@ -415,6 +424,11 @@ class ReferenceSection:
         ):
             raise ValueError("ROTATE and HOLD sections require stopped entry and exit")
         if (
+            self.section_kind in (ReferenceSectionKind.ROTATE, ReferenceSectionKind.HOLD)
+            and self.travel_direction is not ReferenceTravelDirection.NONE
+        ):
+            raise ValueError("ROTATE and HOLD sections require NONE travel direction")
+        if (
             self.section_kind is ReferenceSectionKind.ROTATE
             and self.first_knot_index == self.last_knot_index
         ):
@@ -427,6 +441,7 @@ class ReferenceSection:
             {
                 "section_index": self.section_index,
                 "section_kind": self.section_kind,
+                "travel_direction": self.travel_direction,
                 "first_knot_index": self.first_knot_index,
                 "last_knot_index": self.last_knot_index,
                 "entry_requires_stopped": self.entry_requires_stopped,
@@ -1058,6 +1073,8 @@ def _validate_reference_structure(
     expected_first = knots[0].knot_index
     by_knot_index = {knot.knot_index: knot for knot in knots}
     previous_arc = knots[0].cumulative_translation_arc_m
+    previous_travel_section: ReferenceSection | None = None
+    sections_since_travel: list[ReferenceSection] = []
     for section in sections:
         if section.first_knot_index != expected_first:
             raise ValueError("reference sections must cover knots without gaps or overlap")
@@ -1069,6 +1086,23 @@ def _validate_reference_structure(
             by_knot_index[knot_index]
             for knot_index in range(section.first_knot_index, section.last_knot_index + 1)
         )
+        movement_present = any(
+            _pose_distance(left.pose, right.pose) > R4_COMPARISON_TOLERANCE
+            for left, right in zip(section_knots, section_knots[1:], strict=False)
+        )
+        if (
+            section.travel_direction is ReferenceTravelDirection.NONE
+            and movement_present
+            and section.section_kind is not ReferenceSectionKind.HOLD
+            and (
+                not section.entry_requires_stopped
+                or not section.exit_requires_stopped
+                or ReferenceKnotRole.STOP_MARKER not in section_knots[0].knot_roles
+                or ReferenceKnotRole.STOP_MARKER not in section_knots[-1].knot_roles
+                or any(ReferenceKnotRole.ANCHOR not in knot.knot_roles for knot in section_knots)
+            )
+        ):
+            raise ValueError("moving NONE section must be a stopped abstract anchor connector")
         if section.section_kind is ReferenceSectionKind.ROTATE:
             if ReferenceKnotRole.ROTATION_ENTRY not in section_knots[0].knot_roles:
                 raise ValueError("ROTATE section entry knot requires ROTATION_ENTRY role")
@@ -1083,6 +1117,37 @@ def _validate_reference_structure(
                 for knot in section_knots[1:]
             ):
                 raise ValueError("HOLD section knots must remain at one stopped pose")
+        if section.travel_direction is ReferenceTravelDirection.NONE:
+            if previous_travel_section is not None:
+                sections_since_travel.append(section)
+        else:
+            if (
+                previous_travel_section is not None
+                and previous_travel_section.travel_direction is not section.travel_direction
+            ):
+                if not previous_travel_section.exit_requires_stopped:
+                    raise ValueError("travel direction change requires stopped exit")
+                if not section.entry_requires_stopped:
+                    raise ValueError("travel direction change requires stopped entry")
+                previous_last = by_knot_index[previous_travel_section.last_knot_index]
+                current_first = by_knot_index[section.first_knot_index]
+                if (
+                    ReferenceKnotRole.STOP_MARKER not in previous_last.knot_roles
+                    or ReferenceKnotRole.STOP_MARKER not in current_first.knot_roles
+                ):
+                    raise ValueError("travel direction change requires stop markers")
+                for transition in sections_since_travel:
+                    first = by_knot_index[transition.first_knot_index]
+                    last = by_knot_index[transition.last_knot_index]
+                    if (
+                        not transition.entry_requires_stopped
+                        or not transition.exit_requires_stopped
+                        or ReferenceKnotRole.STOP_MARKER not in first.knot_roles
+                        or ReferenceKnotRole.STOP_MARKER not in last.knot_roles
+                    ):
+                        raise ValueError("travel direction change requires stopped intermediary")
+            previous_travel_section = section
+            sections_since_travel = []
         expected_first = section.last_knot_index + 1
     for left, right in zip(knots, knots[1:], strict=False):
         if right.cumulative_translation_arc_m + R4_COMPARISON_TOLERANCE < previous_arc:

@@ -28,6 +28,7 @@ __pycache__/
 .pytest_tmp*/
 .test-run-*/
 .ruff_cache/
+.mplconfig*/
 .coverage
 htmlcov/
 *.egg-info/

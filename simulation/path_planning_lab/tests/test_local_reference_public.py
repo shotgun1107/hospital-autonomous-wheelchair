@@ -11,6 +11,7 @@ import hospital_path_lab.local_reference_reporting as reporting
 from hospital_path_lab.local_reference_contracts import (
     ReferenceBuildStatus,
     ReferenceEvidenceLevel,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.local_reference_reporting import (
     LOCAL_REFERENCE_PUBLIC_CASE_COUNT,
@@ -134,13 +135,23 @@ def test_supported_feasible_case_builds_valid_spatial_reference_and_full_window_
     assert reference.evidence_level is ReferenceEvidenceLevel.SPATIAL_ONLY
     assert validation.passed
     assert sequence.all_ready
-    assert len(sequence.updates) == len(reference.knots) == 23
+    assert len(sequence.updates) == len(reference.knots) == 24
+    assert tuple(section.travel_direction for section in reference.sections) == (
+        ReferenceTravelDirection.NONE,
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.NONE,
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.NONE,
+        ReferenceTravelDirection.REVERSE,
+        ReferenceTravelDirection.NONE,
+        ReferenceTravelDirection.NONE,
+    )
     assert {update.window.reference_session_id for update in sequence.updates} == {
         reference.reference_session_id
     }
     revisions = tuple(update.window.subgoal_revision for update in sequence.updates)
     assert revisions == tuple(sorted(revisions))
-    assert sorted(set(revisions)) == [0, 1, 2, 3, 4]
+    assert sorted(set(revisions)) == [0, 1, 2, 3, 4, 5]
     assert sequence.updates[-1].window.terminal_rejoin_included
 
 
