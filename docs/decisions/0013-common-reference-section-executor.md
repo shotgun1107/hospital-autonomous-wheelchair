@@ -3,6 +3,7 @@
 - 상태: 사용자 개인 연구 방향, 팀 합의 전
 - 날짜: `2026-08-14`
 - 범위: 동적 지역 기동 연구 R5, Python `simulation_only`
+- 후속 보완: [`ADR 0014`](0014-section-bound-bounded-reverse-translation.md)
 
 ## 배경
 
@@ -40,8 +41,11 @@ R4 full reference + current sliding window
 
 다음 경계를 고정한다.
 
-- RPP와 DWB는 translation section만 서로 다른 방식으로 추종한다.
+- RPP와 DWB는 translation section만 서로 다른 방식으로 추종한다. R4 v2 translation section의
+  `travel_direction`은 두 controller에 동일하게 적용한다.
 - `ROTATE`, planned stop, terminal stop·dwell은 같은 executor가 같은 수치로 실행한다.
+- forward↔reverse section 경계에서는 common executor가 먼저 제한 감속하고 실제 정지 3 tick을
+  확인한다. 정지 전 반대 부호 명령을 controller에 위임하지 않는다.
 - planned section stop은 정상 경로 실행이며 보호정지나 `stop_epoch` 증가로 오인하지 않는다.
 - `HOLD`는 자동 release하지 않는다. 위험 해소·빈 관측·경로 존재만으로 다음 section으로
   넘어가지 않는다.

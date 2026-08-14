@@ -75,23 +75,24 @@ source-reference를 검사하면 모두 displacement와 저장 heading의 내적
 포함되는지만 검사하도록 수정했다. 이 수정은 reverse 불일치, controller deadlock, window failure 또는
 qualification 실패를 성공으로 바꾸지 않는다.
 
-## 6. 지금 확정하지 않은 선택
+## 6. 후속 연구 선택
 
-다음 세 방향은 서로 다른 연구 버전이며 자동으로 선택하지 않는다.
+첫 실패 뒤 다음 세 방향을 분리했다.
 
 1. R5에서 reverse를 허용하고 RPP·DWB 모두 signed translation을 구현한다.
 2. reverse primitive를 명시적 rotate→forward→rotate 기동으로 변환하는 새 R4/R5 계약을 만든다.
 3. R3/R4에 forward-only 별도 lattice lane을 만들고 새 public reference set으로 재qualification한다.
 
-실제 휠체어의 후진 허용 정책, 승차감, 후방 센서와 안전 증거가 없으므로 이번 결과만으로 1번을
-채택하지 않는다. 기존 R4 receipt와 이번 실패 output은 덮어쓰지 않는다.
+사용자는 2026-08-14에 1번을 **Python simulation 연구 방향**으로 승인했다. 이에
+[`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)는 R4가 명시한 reverse
+section에서만 최대 `0.10m/s` 제한 후진을 허용한다. 자유 후진, 제품 후진 정책, 실제 사람 탑승
+후진을 승인한 것은 아니다. 기존 R4 receipt와 이번 실패 output은 덮어쓰지 않는다.
 
 ## 7. 다음 게이트
 
-- reverse 처리 정책을 팀 연구 선택으로 명시한다.
-- 선택한 정책은 새 version·새 source hash·새 output 경로로 구현한다.
+- R4 v2 `travel_direction`과 R5 v2 section-bound signed translation을 구현한다.
+- 새 version·새 source hash·새 output 경로를 사용한다.
 - R4/R5 contract·validator·controller·관계시험을 함께 갱신한다.
 - 변경 뒤 ready 전체를 다시 실행한다.
 - hard failure 0과 모든 기능·관계·repeat·process parity를 통과하기 전 receipt를 만들지 않는다.
 - R5-B/C, hidden, 제품 controller 채택, G1~G5와 경로 분석 7단계는 시작하지 않는다.
-

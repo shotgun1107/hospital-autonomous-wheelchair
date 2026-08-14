@@ -32,9 +32,8 @@
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
 `R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 public 21/21·ready
-reference 8개·receipt·794 전체 회귀 완료`, `R5 persistent RPP·source-derived DWB 상세 명세와
-R5-1 계약·binding, R5-2 공통 section executor, R5-3 persistent RPP adapter와 R5-4
-persistent source-derived DWB adapter 구현 완료, R5-5 이후 미구현` 상태다.
+  reference 8개·receipt·794 전체 회귀 완료`, `R5-1~R5-6 구현·1차 clean public FAIL·receipt 0`,
+  `R4/R5 v2 section-bound 제한 후진 명세 승인·구현 미시작` 상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -50,7 +49,10 @@ sliding window로 바꾸는 계약은
 같은 reference를 persistent RPP와 source-derived DWB가 실행하는 계약, 공통 stop·rotation
 section executor, full terminal과 local window의 분리 및 reference-bound shared gate 검사는
 [`16-persistent-controller-comparison.md`](16-persistent-controller-comparison.md)에 정의했다.
-현재 구현 가능한 것은 static `R5-A`뿐이며 temporal·observation-integrated R5-B/C는 차단 상태다.
+첫 R5-A clean 실패에서 R4 ready 8개 모두 reverse edge를 포함하지만 R5 v1 controller는 후진을
+지원하지 않는 계약 충돌이 확인됐다. [`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)는
+R4 v2가 명시한 reverse section에서만 최대 `0.10m/s` 제한 후진을 허용한다. 현재 구현 후보는
+signed static `R5-A`이며 temporal·observation-integrated R5-B/C는 차단 상태다.
 
 | 단계 | 상태 |
 |---|---|

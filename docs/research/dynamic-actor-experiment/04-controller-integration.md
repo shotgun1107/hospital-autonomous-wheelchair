@@ -24,6 +24,10 @@ exact safety API가 apply·rollout·terminal 최초 실패를 구분해 주지 �
 
 이 보정이 공개 기능·직렬 50 ms 자격을 통과하기 전에는 DWA를 승격하지 않는다.
 
+2026-08-14의 [`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)는
+후속 R4/R5 persistent reference 연구에서 section-bound 제한 후진을 허용한다. 이 문서의
+v5/v6 동적 controller `reverse 비활성` 결과는 역사적 회귀 기준선으로 유지하며 소급 변경하지 않는다.
+
 최종 동작보존 회귀에서 실제 corner는 reference `38.998 s` 대비 optimized `0.075 s`,
 multisegment는 `15.474 s` 대비 `0.034 s`였고 controller·진단 digest가 일치했다. 그러나
 기존 Python+NumPy 경로의 5-case×100 직렬 측정은 DWA miss `100/500`, p50

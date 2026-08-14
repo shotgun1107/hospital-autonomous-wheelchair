@@ -3,14 +3,15 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: 상세 설계 동결 후보, `R5-1~R5-6` 구현 및 대표 paired runner 종단시험 완료,
-  R5-A public full qualification 미실행
+- 상태: `R5-1~R5-6` 구현, R5-A 1차 public full qualification 실패·receipt 미생성,
+  v2 section-bound 제한 후진 보완 명세 사용자 승인·구현 미시작
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
   - [`R4 Reference·Sliding Subpath 상세 명세`](15-local-maneuver-reference-contract.md)
   - [`ADR 0012`](../../decisions/0012-persistent-controller-session-for-sliding-subpaths.md)
   - [`ADR 0013`](../../decisions/0013-common-reference-section-executor.md)
+  - [`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)
   - [`경로 안전·권한 흐름`](../../safety/path-safety-authority-flow.md)
 - 팀 전체 합의: 아님
 - 제품 controller 채택: 아님
@@ -162,6 +163,10 @@ stopped_angular_velocity_radps           = 0.02
 stopped_confirmation_ticks              = 3
 terminal_dwell_s                        = 0.50
 ```
+
+`maximum_reverse_speed_mps`는 차체 후진 translation 상한이다. 제자리회전에서 좌우 휠의 구동
+방향이 달라지는 것과 차체 전체의 `v < 0`은 구분한다. v2는 R4가 명시한 reverse section에서만
+이 상한을 사용하며, forward section에서 controller가 임의로 후진해 새 기동을 만들지 않는다.
 
 `tracking_error_limit_m=0.10`은 R5 연구용 기능 threshold다. 이 조건을 통과해도 static·Actor
 clearance `0.08m` hard gate를 대신하지 않는다. 좁은 geometry에서 tracking error는 작아도
@@ -457,7 +462,7 @@ curvature_gain              = 2.0
 
 RPP adapter 규칙:
 
-1. current window의 translation knot만 lookahead polyline으로 사용한다.
+1. current window의 translation knot와 R4 v2 section의 `travel_direction`을 함께 사용한다.
 2. current pose를 full reference의 active translation section에도 투영해 section progress를
    계산한다.
 3. local window 끝은 goal이 아니다.
@@ -466,13 +471,17 @@ RPP adapter 규칙:
 5. current window가 terminal을 포함할 때만 full terminal goal을 활성화한다.
 6. `ROTATE`와 `HOLD`는 follower에 넣지 않고 common executor가 처리한다.
 7. RPP는 새로운 lateral detour·side switch·sibling candidate 전환을 만들지 않는다.
-8. command는 current twist에서 한 control period의 가감속 한계를 지킨다.
+8. command는 current twist에서 한 control period의 가감속 한계를 지킨다. forward section은
+   nonnegative, reverse section은 nonpositive 선속도만 허용한다.
 9. post-apply pose부터 2.0초·0.05초 구간의 41-pose rollout을 생성한다. 명시적
    stop/terminal이 없는 translation은 constant-command rollout을 사용하고, 명시적 stop 또는
    terminal이 앞에 있는 translation은 현재 명령 한 구간 뒤 제한 감속·정지·hold가 가능한
    fallback rollout을 사용한다. 이 fallback은 shared gate의 terminal stopping 검사를 생략하지
    않는다.
 10. same tick duplicate는 state를 두 번 진행하지 않고 동일 result를 반환한다.
+11. reverse lookahead와 curvature는 signed travel direction에 맞춰 계산하고 `-0.10m/s`보다
+    빠른 후진을 만들지 않는다.
+12. active section 방향과 반대 부호의 command가 필요하면 새 경로를 만들지 않고 보수적으로 멈춘다.
 
 window마다 goal 감속이 관측되거나 session state가 초기화되면 RPP 기능 실패다.
 
@@ -490,8 +499,15 @@ nominal angular samples = 31
 rollout horizon         = 2.0s
 integration step        = 0.05s
 pose samples            = 41 including initial pose
-reverse                 = disabled
+forward section         = 0 <= v <= 0.30m/s
+reverse section         = -0.10m/s <= v <= 0
+free sign switching     = disabled
 ```
+
+R5 v1의 `reverse=disabled`는 첫 public 실패를 재현하는 역사적 기준선으로 보존한다. v2는 reverse를
+모든 tick에 자유롭게 열지 않는다. active R4 v2 translation section이 `REVERSE`일 때만 음의 후보를
+생성하고, `FORWARD`일 때는 기존처럼 음의 후보를 생성하지 않는다. 방향 전환 section 경계에서는
+common executor의 실제 정지 확인 전 반대 부호 후보를 활성화하지 않는다.
 
 source-derived velocity iterator는 범위 안의 0이 균등 sample에 없으면 0을 추가할 수 있다.
 따라서 일반 candidate count를 항상 217로 거짓 고정하지 않고 매 tick 실제 axis sample과
@@ -586,6 +602,8 @@ shared gate는 계속 다음을 최종 제한한다.
 - static·forbidden·Actor clearance
 - late/wrong-tick result
 - actual stop·current epoch authorization·safe frames·path/local recheck
+- active section signed direction·reverse 속도 상한·방향 전환 정지 확인
+- reverse current-motion sweep와 뒤쪽 terminal stopping
 
 reference가 valid하다는 사실은 gate 통과나 이동 허가가 아니다.
 
@@ -599,7 +617,7 @@ reference가 valid하다는 사실은 gate 통과나 이동 허가가 아니다.
 3. controller별 R4 window manager를 current pose로 갱신
 4. immutable PersistentControllerTickInput snapshot
 5. common section executor 상태 확인
-6. translation이면 RPP 또는 DWB 계산
+6. translation이면 signed section direction과 실제 정지 전환 조건 확인 뒤 RPP 또는 DWB 계산
 7. planned stop/rotate/terminal이면 common command 생성
 8. reference-bound result 생성
 9. shared safety gate 검사
@@ -623,6 +641,9 @@ stale_or_invalid_nonzero_command        = 0
 reference_binding_mismatch_applied      = 0
 late_or_wrong_tick_command_applied      = 0
 unauthorized_resume                     = 0
+wrong_signed_translation_command         = 0
+direction_change_without_actual_stop     = 0
+reverse_speed_limit_violation            = 0
 nonfinite_or_unhandled_exception        = 0
 ```
 
@@ -773,6 +794,7 @@ Infrastructure failure는 controller 실패나 `NO_PATH`로 바꾸지 않는다.
 
 - straight translation만 있는 reference
 - translation→stop→90° left/right rotation→translation
+- forward translation→실제 정지 3 tick→reverse translation과 반대 순서
 - zero command와 actual stopped의 구분
 - 3-tick actual stop confirmation
 - rotation 전 linear nonzero에서 회전 금지
@@ -791,6 +813,8 @@ Infrastructure failure는 controller 실패나 `NO_PATH`로 바꾸지 않는다.
 - curve speed regulation과 가감속 limit
 - rotation section을 follower가 직접 소비하지 않음
 - deterministic 41-pose rollout
+- reverse section에서만 signed negative command·뒤쪽 41-pose rollout
+- reverse speed `0.10m/s` 상한과 방향 전환 전 actual stop
 
 ### 18.4 Persistent DWB tests
 
@@ -803,6 +827,8 @@ Infrastructure failure는 controller 실패나 `NO_PATH`로 바꾸지 않는다.
 - no-legal taxonomy
 - selected candidate external gate 재검증
 - Python elapsed를 semantic 판정에서 제외
+- section-bound negative velocity sample과 forward section negative sample 금지
+- reverse terminal stopping sweep와 selected candidate external gate 재검증
 
 ### 18.5 Gate fault corpus
 
@@ -984,10 +1010,11 @@ local_algorithms/dwb_reference/persistent_adapter.py
 - 전용 `6 passed`, 기존 source-derived DWB 직접 영향권을 합친 `130 passed`, 별도 R5
   contract·executor·RPP·window 영향권 `50 passed`, Ruff·compile·diff 검사를 통과했다. 대표
   1 tick의 Python wall-clock은 기능 합격 근거가 아니며 native timing은 R7에 남긴다.
-- R5-4는 DWB가 translation 후보를 생성·내부 constraint로 거르는 경계까지만 닫았다. 공통
-  planned stop·rotation·terminal command와 selected DWB command의 external shared-gate 재검사,
-  20Hz closed loop, 8-case public runner, receipt, hidden과 전체 회귀는 R5-5 이후 미구현이다.
-  따라서 제품 controller 채택이나 Actor online 안전 증거가 아니다.
+- R5-4 완료 당시에는 DWB가 translation 후보를 생성·내부 constraint로 거르는 경계까지만
+  닫았고, 공통 planned stop·rotation·terminal command와 selected DWB command의 external
+  shared-gate 재검사, 20Hz closed loop와 public runner는 후속 범위였다. 이후 R5-5·R5-6에서
+  이 연결과 21-case clean public 실행까지 진행했지만 첫 qualification은 실패했고 receipt는
+  발급되지 않았다. hidden·제품 controller 채택·Actor online 안전 증거는 여전히 없다.
 
 ### R5-5 — Shared gate·functional pipeline
 
@@ -1070,6 +1097,16 @@ scripts/run_persistent_controller_public.py
   상세 결과는 [R5-A 공개 qualification 결과](r5a-public-persistent-controller-qualification-result-2026-08-14.md)에
   보존한다. hidden은 사용하지 않았다.
 
+### R5 v2 — Section-bound 제한 후진 계약 보정
+
+- 사용자 연구 방향: 제한 후진 허용
+- 상태: 명세 승인, 구현·시험·재qualification 미시작
+- R4 v2가 source primitive에 결박된 `travel_direction`을 발행한다.
+- RPP·DWB는 reverse section에서만 최대 `0.10m/s` 음의 선속도를 사용할 수 있다.
+- common executor는 forward↔reverse 전환 전 실제 정지 3 tick을 확인한다.
+- reverse rollout과 terminal stopping은 shared gate의 동일 static·forbidden·Actor 검사를 받는다.
+- 기존 R4 v1 receipt와 R5-A 1차 실패 output은 변경하지 않고 새 version·output으로 재실행한다.
+
 ### R5-7 — 최종 감사·회귀
 
 - 직접 영향권 시험
@@ -1123,6 +1160,8 @@ source recheck를 모두 통과할 때만 생성한다.
 - reference/session/stale/late 적용 failure 0
 - subgoal update controller reset 0
 - section order·rotation·terminal 조건 통과
+- signed forward/reverse section과 방향 전환 actual-stop 조건 통과
+- reverse speed·뒤쪽 swept safety 위반 0
 - progressable case completion, planner deadlock 0
 - repeat determinism·serial/process parity 통과
 - source freeze와 clean receipt 생성

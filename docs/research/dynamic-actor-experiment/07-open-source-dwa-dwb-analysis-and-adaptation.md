@@ -103,6 +103,11 @@ safety gate의 5 ms 보간·terminal stopping 검사는 후보 생성기의 대�
 
 기준 소스:
 
+이 값은 source-derived v7의 기존 동적 Actor 비교 기준선이다. 2026-08-14의
+[`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)는 별도 R5 persistent
+reference v2에서 active reverse section에만 제한 후진을 허용한다. v7 결과를 소급 변경하거나 모든
+상태에서 자유 후진을 허용하는 결정이 아니다.
+
 - [ROS 1 `SimpleTrajectoryGenerator`](https://github.com/ros-planning/navigation/blob/f44bb1fc2810399165115cc98b530fe4b9397c18/base_local_planner/src/simple_trajectory_generator.cpp)
 - [Nav2 `LimitedAccelGenerator`](https://github.com/ros-navigation/navigation2/blob/1e8afb17e2e09df443b1870ce0f4ecdee32207fd/nav2_dwb_controller/dwb_plugins/src/limited_accel_generator.cpp)
 - [Nav2 `OneDVelocityIterator`](https://github.com/ros-navigation/navigation2/blob/1e8afb17e2e09df443b1870ce0f4ecdee32207fd/nav2_dwb_controller/dwb_plugins/include/dwb_plugins/one_d_velocity_iterator.hpp)

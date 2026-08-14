@@ -3,12 +3,13 @@
 ## 1. 문서 상태와 목적
 
 - 작성일: `2026-08-14`
-- 상태: R4-1~R4-6 구현·공개 qualification·전체 회귀 완료
+- 상태: R4 v1 구현·공개 qualification·전체 회귀 완료, R4 v2 signed direction 보완 명세 승인·미구현
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
   - [`R3 bounded spatial oracle`](14-bounded-spatial-oracle.md)
   - [`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)
   - [`ADR 0012`](../../decisions/0012-persistent-controller-session-for-sliding-subpaths.md)
+  - [`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)
   - [`경로 안전·권한 흐름`](../../safety/path-safety-authority-flow.md)
 - 실행 범위: Python `simulation_only`, 공개 합성 지도, 가상 차체
 - 팀 합의·제품 알고리즘 채택·`G1~G5`: 미수행
@@ -22,6 +23,10 @@ R3는 Actor와 시간을 제거한 정적 공간에서 pose·heading 경로의 �
 
 > 검증된 지역 기동의 전체 기하·회전·재합류 의미와 provenance를 잃지 않으면서, 같은
 > controller session에 안정적인 sliding local subpath를 제공할 수 있는가?
+
+R4 v1 receipt는 보존한다. R5-A 첫 clean public 실행에서 v1이 reverse를 limitation으로만
+남긴 탓에 실행 방향이 불명확하다는 사실이 확인됐으므로, R4 v2는 아래 signed direction 계약을
+추가하고 새 schema·hash·public receipt로 재검증한다.
 
 reference의 존재·유효성·선택 가능성은 이동 허가가 아니다.
 
@@ -263,6 +268,7 @@ R3의 in-place rotation을 중복 polyline 점으로 조용히 제거하지 않�
 ReferenceSection
   section_index
   section_kind
+  travel_direction
   first_knot_index
   last_knot_index
   entry_requires_stopped
@@ -272,9 +278,14 @@ ReferenceSection
 
 section_kind
   FOLLOW_ORIGINAL | DEPART | ROTATE | BYPASS | RETURN | REJOIN | HOLD
+
+travel_direction
+  FORWARD | REVERSE | NONE
 ```
 
 `ROTATE` section은 entry·exit knot와 stop marker를 하나의 atomic section으로 유지한다.
+평행이동 section은 `FORWARD` 또는 `REVERSE` 하나만 가지며, 부호가 바뀌는 지점에서는
+section을 분리한다. `ROTATE`·`HOLD`와 이동량이 없는 anchor는 `NONE`을 사용한다.
 
 ### 5.3 Full reference
 
@@ -451,9 +462,14 @@ rotation section 진입 전·exit knot를 같은 window에 둔다. rotation 중 
 
 - path/primitive 길이 관계를 재검사한다.
 - anchor connector는 source anchor 의미를 유지한다.
-- translation primitive는 translation knot/section이 된다.
+- translation primitive는 translation knot/section이 되며 R4 v2에서
+  `travel_direction=FORWARD|REVERSE`를 source primitive로부터 그대로 기록한다.
 - rotation primitive는 동일 위치 entry/exit knot와 `ROTATE` section이 된다.
-- reverse는 limitation·metadata에 남긴다. 실제 후진 허용을 결정하지 않는다.
+- 한 translation section에는 한 방향만 허용한다. forward/reverse가 바뀌면 section을 분리하며
+  `ROTATE`, `HOLD`와 zero-length anchor는 `travel_direction=NONE`이다.
+- direction은 pose displacement에서 추측하지 않고 source primitive kind와 exact 대응한다.
+- reverse는 limitation에도 남기되, R5 Python 연구의 실행 허용은 ADR 0014를 따른다. 실제 제품
+  후진 허용은 결정하지 않는다.
 - start·rejoin·clearance는 independent R4 validator가 다시 확인한다.
 
 ### WAIT
@@ -488,6 +504,8 @@ converter와 별도 모듈이 검사한다.
 - finite pose·heading·arc와 translation arc monotonicity
 - path/primitive/source index 대응
 - rotation atomicity·stop marker 보존
+- translation section의 단일 signed direction과 source primitive exact 대응
+- 방향 전환 경계의 planned stop marker·actual-stop 요구 보존
 - depart→bypass→return→rejoin 순서
 - side sign·minimum excursion·rejoin pose/heading tolerance
 
@@ -568,7 +586,8 @@ candidate 없음, stale 거부, controller 추종 실패와 gate override를 서
 - straight/mirror/vertical LEFT·RIGHT 관계
 - just-wide door clearance 보존
 - crossing-static의 section 순서
-- in-place rotation·reverse limitation 보존
+- in-place rotation·reverse limitation·signed `travel_direction` 보존
+- mixed-direction section, direction metadata tamper와 source primitive 불일치 거부
 - independent swept geometry 재검증
 - multi-segment corner는 명시적 unsupported/limitation
 

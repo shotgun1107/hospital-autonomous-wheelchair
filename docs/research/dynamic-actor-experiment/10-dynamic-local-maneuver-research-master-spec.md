@@ -14,8 +14,9 @@
   `R2-A 공개 ground-truth witness 감사와 좌·우 PASS 탐색 완료`,
   `R2-B 관측·prediction hard failure 2건으로 후속 보류`,
   `R3 public 21/21·receipt·729 전체 회귀 완료`,
-  `R4 public 21/21·receipt·794 전체 회귀 완료`,
-  `R5 persistent controller 상세 명세 작성, 구현 미시작`
+  `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
+  `R5-1~R5-6 구현·1차 clean public qualification 실패`,
+  `R4/R5 v2 section-bound 제한 후진 명세 승인·구현 미시작`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -427,6 +428,8 @@ PASS_RIGHT
 - 같은 stop·resume authority와 simulation-time 적용 지연
 - 같은 episode 안에서 controller instance와 내부 상태 유지
 - waypoint 또는 subpath 갱신마다 controller를 재생성하지 않음
+- 같은 R4 v2 `travel_direction`을 사용하고 방향 전환 전 같은 실제 정지 확인 적용
+- reverse section은 두 controller 모두 `-0.10m/s <= v <= 0`, forward section은 `v >= 0`
 - `Ideal → no-dropout → Normal public → Stress degradation` 순서
 
 ### 출력 지표
@@ -448,6 +451,8 @@ PASS_RIGHT
 - Stress는 안전 열화 시험이며 무조건 임무 완료를 요구하지 않는다.
 - RPP 또는 DWB 한 구현의 실패를 알고리즘 계열 전체의 실패로 확대하지 않는다.
 - Python wall-clock을 controller 기능·안전 또는 알고리즘 계열의 합격·탈락에 사용하지 않는다.
+- signed translation 방향 위반, 무정지 방향 전환과 reverse 속도 초과가 `0`이다.
+- reverse rollout·terminal stopping의 뒤쪽 swept safety가 shared gate에서 동일하게 검증된다.
 
 ## R6 — 연속 공개 종단 자격
 
@@ -576,8 +581,8 @@ hidden까지 연구 조건 충족
 | `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 공개 19개 audit와 좌·우 PASS 탐색 완료, legacy 횡단·재정지 표적 보완 완료 | 검증된 source만 R3·R4 전달 |
 | `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
-| `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료 | 검증된 reference만 R5 전달 |
-| `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 상세 명세 작성, 구현 미시작 | R5-A static tracking부터 구현, R5-B/C는 R2 temporal·observation gate 필요 |
+| `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` 명세 승인·미구현 | v2 독립 검증·public 재qualification 뒤 R5 전달 |
+| `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-1~R5-6 구현, 1차 clean public FAIL·receipt 0. section-bound 제한 후진 v2 명세 승인·미구현 | v2 signed static tracking 통과, R5-B/C는 R2 temporal·observation gate 필요 |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
 | `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 미시작 | R1~R6 기능·안전 증거 완결 |
 
@@ -654,7 +659,7 @@ legacy 횡단·재정지 표적 보완 결과를 입력으로 R3 명세를 시�
 entry·visibility·fresh EMPTY와 역방향 coverage는 hard failure 2건을 보존한 채 카메라 통합
 후속으로 둔다.
 
-R3의 public `21/21` 공간 자격 뒤 R4는 검증된 LEFT/RIGHT source 8개를 immutable full
+R3의 public `21/21` 공간 자격 뒤 R4 v1은 검증된 LEFT/RIGHT source 8개를 immutable full
 reference와 same-session sliding window로 변환했다. clean commit `f43fbbf`에서 R4 public
 `21/21`, hard·relation failure 0, parity·repeat determinism, receipt와 전체 회귀 `794 passed`를
 확인했다. 이 결과는 online 이동 허가나 perception 통합 완료가 아니다.
@@ -663,9 +668,15 @@ R5 상세 구현 계약은
 [`16-persistent-controller-comparison.md`](16-persistent-controller-comparison.md)에 둔다. R5는
 공통 section executor 위에서 persistent RPP와 source-derived DWB를 비교하며, local window
 끝과 full terminal을 분리하고 same-session subgoal update에서 controller state를 보존한다.
-현재 바로 구현 가능한 범위는 R4 `SPATIAL_ONLY` 8개를 사용하는 `R5-A static reference
-tracking`이다. R5-B temporal Actor와 R5-C observation-integrated lane은 R2 evidence 결합과
-R2-B hard failure를 닫기 전 시작하지 않는다. 따라서 R2-B를 통과하기 전에는
+R5-A 첫 clean public 실행에서 ready 8개 모두 reverse edge를 포함하지만 R5 v1 controller가
+음의 선속도를 지원하지 않는 계약 충돌이 확인됐다. 사용자 승인과
+[`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)에 따라 R4 v2가
+source primitive의 signed `travel_direction`을 명시하고 R5 v2가 해당 reverse section에서만
+최대 `0.10m/s` 후진하도록 보정한다. 기존 v1 결과와 receipt는 보존한다.
+
+현재 다음 구현 후보는 R4/R5 v2 signed static reference tracking이다. R5-B temporal Actor와
+R5-C observation-integrated lane은 R2 evidence 결합과 R2-B hard failure를 닫기 전 시작하지 않는다.
+따라서 R2-B를 통과하기 전에는
 perception-integrated R6, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일

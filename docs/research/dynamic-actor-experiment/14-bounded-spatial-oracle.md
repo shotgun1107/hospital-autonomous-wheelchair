@@ -781,7 +781,9 @@ R4는 이를 controller가 소비할 local reference·subpath revision 계약으
 - start·goal anchor connector는 1-cell 이웃 안의 추상 swept connector이며 실제 차체 motion
   primitive가 아니다. R4 이후 시간 경로가 추종 가능성을 별도로 검증해야 한다.
 - `SPATIALLY_INFEASIBLE`은 bounded region·8 heading bins·v1 primitive 안의 음성 판정이다.
-- simulation-only reverse primitive가 실제 차체 후진 허용을 결정하지 않는다.
+- R3의 simulation-only reverse primitive 자체는 실제 차체 후진 허용을 결정하지 않는다.
+  후속 R5 Python 연구에서는 [`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)에
+  따라 R4가 명시한 reverse section에만 제한 후진을 허용하며, 제품·실물 결정은 여전히 별도다.
 - static projection은 Actor와 시간 충돌을 제거하므로 temporal feasibility를 증명하지 않는다.
 - Python 실행시간·CPU·memory·cache는 기능 판정에서 제외한다.
 - 실제 차체·Unity·ROS 2·센서·사람 탑승 증거가 아니다.
