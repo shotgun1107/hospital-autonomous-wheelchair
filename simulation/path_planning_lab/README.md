@@ -107,7 +107,7 @@ R3 pose·heading·rotation·rejoin 의미를 immutable full reference로 보존�
 `maneuver_revision`·`path_revision`·`stop_epoch` 또는 session 결과는 거부한다. R4-2 builder는
 R3의 feasible·독립 검증·hash/provenance가 일치한 결과만 `SPATIAL_ONLY` LEFT/RIGHT reference로
 바꾸며 resource limit·invalid·infeasible을 경로로 승격하지 않는다. R2 temporal evidence 결합과
-R5 연결은 미구현이다. R4-3 validator는 builder를 import하지
+R5 controller 실행 연결은 미구현이다. R4-3 validator는 builder를 import하지
 않고 source primitive·회전/정지 marker·side/rejoin과 5 mm/0.5° oriented swept geometry를
 독립 재검사한다. 전용 14개와 R4/R3 영향권 63개 시험이 통과했고, 대표 public
 `wide-straight-left`는 616개 sample에서 최소 여유 `0.244508m`로 통과했다.
@@ -125,14 +125,20 @@ qualification receipt 생성 및 전체 회귀 `794 passed`를 확인했다. 상
 [`R4 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r4-public-local-reference-qualification-result-2026-08-14.md)에
 기록했다.
 
-R5 구현 전 상세 계약은
+R5 상세 계약은
 [`R5 Persistent Controller 비교 명세`](../../docs/research/dynamic-actor-experiment/16-persistent-controller-comparison.md)와
 [`ADR 0013`](../../docs/decisions/0013-common-reference-section-executor.md)에 작성했다. RPP와
 source-derived DWB는 같은 R4 full reference·가상 차체·shared gate를 사용하되 translation
 추종만 서로 다르게 계산한다. R4의 planned stop·제자리회전·terminal dwell은 공통 section
 executor가 수행한다. local window 끝은 최종 goal이 아니며, same-session window 갱신은
-controller·stateful critic을 reset하지 않는다. 현재 코드는 이 R5 adapter·executor·reference
-binding을 아직 구현하지 않았다. 먼저 R4 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
+controller·stateful critic을 reset하지 않는다.
+[`persistent_controller_contracts.py`](src/hospital_path_lab/persistent_controller_contracts.py)와
+[`test_persistent_controller_contracts.py`](tests/test_persistent_controller_contracts.py)는 R5-1의
+immutable tick input·reference binding·result·same-tick/session guard를 구현한다. full
+reference와 exact window slice, grid·vehicle·stop epoch·현재 delivery tick을 결박하고 planned
+section stop과 protective stop을 분리한다. 전용 `12 passed`, R4 직접 영향권 합계 `68 passed`를
+확인했다. R5-2 common executor와 RPP/DWB adapter·shared gate 연결은 아직 미구현이다. 먼저 R4
+`SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를
 닫은 뒤 진행한다. Python wall-clock은 기능 판정에서 제외하며 native timing은 R7 대상이다.
 

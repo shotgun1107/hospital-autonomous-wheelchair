@@ -3,7 +3,7 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: 상세 설계 동결 후보, 구현 미시작
+- 상태: 상세 설계 동결 후보, `R5-1 Contract·binding` 구현·직접 영향권 시험 완료
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -276,6 +276,7 @@ PersistentControllerResult
   active_section_kind
   tracking_error_m | null
   candidate_diagnostics | null
+  planned_section_stop
   controller_requested_protective_stop
   no_safe_candidate
   elapsed_nonqualification_ns
@@ -835,6 +836,20 @@ persistent_controller_contracts.py
 - same-tick/revision/session state machine
 
 완료 Gate: contract·tamper·AST 시험 통과, 기존 controller 호출 없음.
+
+구현 상태(`2026-08-14`):
+
+- [`persistent_controller_contracts.py`](../../../simulation/path_planning_lab/src/hospital_path_lab/persistent_controller_contracts.py)에
+  R5-A `SPATIAL_ONLY` tick input, reference binding, result, session guard를 구현했다.
+- 동일 tick 동일 입력은 idempotent하게 수용하고, 동일 tick 변경 입력·revision 역행은 상태를
+  바꾸지 않고 거부한다.
+- 같은 window의 다음 tick 재발행과 `subgoal_revision` 전진은 state를 유지하고, 새 path 또는
+  maneuver session만 reset 대상으로 분류한다.
+- full reference·window·grid·vehicle·stop epoch·현재 delivery tick을 semantic hash와 exact
+  slice로 결박한다. 현재 차단된 R5-B/C evidence는 R5-A 입력으로 수용하지 않는다.
+- planned section stop과 protective hold/no-safe stop을 result flag와 status에서 혼합하지 않는다.
+- 전용 `12 passed`, R4 직접 영향권 합계 `68 passed`, Ruff를 통과했다. 기존 controller는
+  호출하지 않았고 R5-2 이후 구현, public runner, hidden과 전체 회귀는 수행하지 않았다.
 
 ### R5-2 — Common section executor
 
