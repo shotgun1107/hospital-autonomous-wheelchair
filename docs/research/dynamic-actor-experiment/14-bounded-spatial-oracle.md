@@ -688,9 +688,10 @@ tests/test_spatial_oracle_public.py
 
 동결 21-case catalog, evaluator-only 기대값, 관계·serial/process parity, process 병렬 실행,
 non-overwrite partial/complete 수명주기, JSON·Markdown·PNG와 clean-source receipt를 구현했다.
-전체 R3 직접 영향권은 `38 passed`이며 개발용 14-process 실행에서 21개가 모두 기대 판정을
-통과했다. 개발 실행은 dirty tree였으므로 receipt를 만들지 않았고 최종 clean-source public
-qualification은 아직 실행 전이다.
+전체 R3 직접 영향권은 `38 passed`다. clean commit `53fd9f8` 대상 14-process 실행에서
+21개가 모두 기대 판정을 통과했고 receipt를 생성했다. 구현 뒤 전체 회귀는 `729 passed`였다.
+상세 hash와 case 결과는
+[`R3 공개 qualification 결과`](r3-public-spatial-qualification-result-2026-08-14.md)에 기록했다.
 
 의존 방향은 다음으로 고정한다.
 
@@ -746,8 +747,9 @@ evaluator label ────────────────→ reporting on
 - 관련 영향권과 전체 회귀 통과
 - R2-B·hidden·제품 결정에 손대지 않음
 
-현재 core·reporting L1과 전체 public matrix 구현은 완료했지만 clean-source qualification
-receipt와 구현 뒤 마지막 전체 회귀가 아직 없으므로 이 목록 전체를 완료했다고 판정하지 않는다.
+현재 core·reporting L1, 전체 public matrix, clean-source receipt와 구현 뒤 마지막 전체 회귀를
+완료했다. 이 완료는 offline static R3 범위에만 적용되며 multi-segment corner projection과
+R4 이후 시간·controller 통합은 포함하지 않는다.
 
 ## 19. R4 전달 계약
 

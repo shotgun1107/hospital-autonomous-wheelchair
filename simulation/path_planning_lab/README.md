@@ -82,10 +82,11 @@ R3의 static grid·oriented footprint·bounded lattice·resource taxonomy·독�
 [`R3 Bounded 공간 Oracle 상세 명세`](../../docs/research/dynamic-actor-experiment/14-bounded-spatial-oracle.md)에
 작성했다. contract·독립 swept validator·8-heading lattice·label-free straight projection core는
 L1으로 구현했고 public 21-case catalog·process runner·JSON/Markdown/PNG·partial/complete
-수명주기와 clean-source receipt까지 코드로 연결했다. R3 직접 영향권은 `38 passed`다. 개발용
-14-process 실행은 `21/21` 기대 판정을 통과했지만 dirty
-tree여서 receipt를 만들지 않았다. clean-source public qualification과 마지막 전체 회귀는 아직
-실행 전이며 기존 registry의 `state_lattice=deferred` 상태를 변경하지 않는다.
+수명주기와 clean-source receipt까지 코드로 연결했다. R3 직접 영향권은 `38 passed`다.
+clean commit `53fd9f8` 대상 14-process 공개 실행은 `21/21`, 관계 오류 `0`, serial/process
+parity PASS로 receipt를 생성했고 전체 회귀는 `729 passed`였다. 상세 결과는
+[`R3 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r3-public-spatial-qualification-result-2026-08-14.md)에
+기록했다. 기존 registry의 `state_lattice=deferred` 상태는 변경하지 않는다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 
