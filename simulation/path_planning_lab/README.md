@@ -88,15 +88,19 @@ parity PASS로 receipt를 생성했고 전체 회귀는 `729 passed`였다. 상�
 [`R3 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r3-public-spatial-qualification-result-2026-08-14.md)에
 기록했다. 기존 registry의 `state_lattice=deferred` 상태는 변경하지 않는다.
 
-R4 상세 계약과 R4-1 immutable reference·sliding window·revision 수명주기 구현은
+R4 상세 계약, R4-1 immutable reference·sliding window·revision 수명주기와 R4-2 R3 source
+변환 구현은
 [`R4 지역 기동 Reference·Sliding Subpath 명세`](../../docs/research/dynamic-actor-experiment/15-local-maneuver-reference-contract.md)에
 정의했다. 구현 코드는 [`local_reference_contracts.py`](src/hospital_path_lab/local_reference_contracts.py),
-계약 시험은 [`test_local_reference_contracts.py`](tests/test_local_reference_contracts.py)에 있다.
+[`local_reference_builder.py`](src/hospital_path_lab/local_reference_builder.py), 시험은
+[`test_local_reference_contracts.py`](tests/test_local_reference_contracts.py)와
+[`test_local_reference_builder.py`](tests/test_local_reference_builder.py)에 있다.
 R3 pose·heading·rotation·rejoin 의미를 immutable full reference로 보존하고,
 같은 maneuver/path에서는 `subgoal_revision`만 바뀌는 sliding window를 제공한다. 다른
-`maneuver_revision`·`path_revision`·`stop_epoch` 또는 session 결과는 거부한다. 현재는 R4-1
-계약 계층만 구현했으며 builder, 독립 validator, window manager, public runner와 R5 연결은
-미구현이다.
+`maneuver_revision`·`path_revision`·`stop_epoch` 또는 session 결과는 거부한다. R4-2 builder는
+R3의 feasible·독립 검증·hash/provenance가 일치한 결과만 `SPATIAL_ONLY` LEFT/RIGHT reference로
+바꾸며 resource limit·invalid·infeasible을 경로로 승격하지 않는다. R2 temporal evidence 결합,
+독립 R4 validator, window manager, public runner와 R5 연결은 미구현이다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 
