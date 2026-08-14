@@ -12,7 +12,7 @@ adapter, not a ROS plugin, product controller, or real-time qualification.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from json import dumps
 from math import cos, hypot, pi, sin
@@ -24,7 +24,10 @@ from hospital_path_lab.dynamic_safety import DynamicTrajectorySafetyEvidence
 from hospital_path_lab.dynamic_trajectory_constraints import (
     ProjectDynamicSafetyConstraintCritic,
 )
-from hospital_path_lab.local_reference_contracts import ReferenceSectionKind
+from hospital_path_lab.local_reference_contracts import (
+    ReferenceSectionKind,
+    ReferenceTravelDirection,
+)
 from hospital_path_lab.persistent_controller_contracts import (
     PERSISTENT_CONTROLLER_RESULT_SCHEMA_VERSION,
     PersistentControllerResult,
@@ -59,7 +62,7 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v2"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v3"
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -215,6 +218,36 @@ class _PersistentDwbStack:
     adapter: SourceDerivedDwbController
     safety_critic: ProjectDynamicSafetyConstraintCritic
     goal_align_critic: GoalAlignCritic
+    path_align_critic: PathAlignCritic
+    generator: SectionBoundDwbReferenceTrajectoryGenerator
+
+
+class SectionBoundDwbReferenceTrajectoryGenerator(DwbReferenceTrajectoryGenerator):
+    """Limit every generated nonzero sample to the active R4 signed section."""
+
+    def __init__(self, config) -> None:
+        super().__init__(config)
+        if not config.allow_reverse:
+            raise ValueError("section-bound generator requires signed velocity support")
+        self._travel_direction = ReferenceTravelDirection.FORWARD
+
+    def set_travel_direction(self, direction: ReferenceTravelDirection) -> None:
+        if direction not in {
+            ReferenceTravelDirection.FORWARD,
+            ReferenceTravelDirection.REVERSE,
+        }:
+            raise ValueError("DWB translation requires a signed travel direction")
+        self._travel_direction = direction
+
+    def dynamic_window(self, current_twist):
+        linear_window, angular_window = super().dynamic_window(current_twist)
+        if self._travel_direction is ReferenceTravelDirection.FORWARD:
+            bounded = (max(0.0, linear_window[0]), max(0.0, linear_window[1]))
+        else:
+            bounded = (min(0.0, linear_window[0]), min(0.0, linear_window[1]))
+        if bounded[0] > bounded[1] + _TOLERANCE:
+            raise ValueError("actual velocity has not stopped for direction transition")
+        return bounded, angular_window
 
 
 class PersistentSourceDerivedDwbController:
@@ -300,6 +333,10 @@ class PersistentSourceDerivedDwbController:
 
         try:
             stack = self._ensure_stack(tick_input)
+            direction = tick_input.full_reference.sections[
+                decision.active_section_index
+            ].travel_direction
+            _bind_stack_travel_direction(stack, direction, tick_input)
             scoring_path = _active_translation_dwb_path(
                 tick_input,
                 decision.active_section_index,
@@ -313,7 +350,13 @@ class PersistentSourceDerivedDwbController:
                 self._bound_full_reference_hash = tick_input.full_reference.reference_content_hash
             else:
                 stack.session_core.update_scoring_window(scoring_path)
-            snapshot = _controller_snapshot(tick_input)
+            snapshot = _controller_snapshot(
+                tick_input,
+                reference_path=tuple(
+                    Pose2D(pose.x_m, pose.y_m, pose.yaw_rad)
+                    for pose in scoring_path
+                ),
+            )
             inner = stack.adapter.step(snapshot)
         except (TypeError, ValueError) as error:
             return self._result(
@@ -332,6 +375,7 @@ class PersistentSourceDerivedDwbController:
             "terminal_goal_source=immutable_full_reference",
             "local_window_endpoint_is_not_rotate_goal=true",
             "scoring_path_source=active_translation_section",
+            f"travel_direction={direction.value}",
             (
                 "goal_align_disabled_near_scoring_goal="
                 f"{str(stack.goal_align_critic.disabled_near_goal).lower()}"
@@ -383,8 +427,10 @@ class PersistentSourceDerivedDwbController:
             return self._stack
 
         profile = tick_input.vehicle_profile
-        config = self._config or SourceDerivedDwbConfig(generator=_generator_config_for(profile))
-        _validate_generator_profile(config.generator, profile)
+        config = self._config or SourceDerivedDwbConfig(
+            generator=replace(_generator_config_for(profile), allow_reverse=True)
+        )
+        _validate_generator_profile(config.generator, profile, allow_reverse=True)
         grid = _critic_grid(snapshot, profile)
         safety = ProjectDynamicSafetyConstraintCritic()
         rotate = RotateToGoalCritic(
@@ -429,7 +475,7 @@ class PersistentSourceDerivedDwbController:
                 _map_grid_scale(config.goal_dist_scale, grid.resolution_m),
             ),
         )
-        generator = DwbReferenceTrajectoryGenerator(config.generator)
+        generator = SectionBoundDwbReferenceTrajectoryGenerator(config.generator)
         core = DwbReferenceCore(generator, bindings)
         session_core = PersistentDwbCoreSession(
             core,
@@ -442,6 +488,7 @@ class PersistentSourceDerivedDwbController:
             core=session_core,
             snapshot_binders=(safety,),
             generator_config=config.generator,
+            allow_reverse_generator=True,
         )
         self._stack = _PersistentDwbStack(
             signature,
@@ -449,6 +496,8 @@ class PersistentSourceDerivedDwbController:
             adapter,
             safety,
             goal_align,
+            path_align,
+            generator,
         )
         self._stack_build_count += 1
         self._bound_reference_session_id = None
@@ -557,14 +606,22 @@ class PersistentSourceDerivedDwbController:
         )
 
 
-def _controller_snapshot(tick_input: PersistentControllerTickInput) -> ControllerSnapshot:
+def _controller_snapshot(
+    tick_input: PersistentControllerTickInput,
+    *,
+    reference_path: tuple[Pose2D, ...] | None = None,
+) -> ControllerSnapshot:
     return build_controller_snapshot(
         tick_id=tick_input.controller_tick,
         simulation_time_s=tick_input.simulation_time_s,
         mission_id=tick_input.full_reference.mission_id,
         robot_state=tick_input.robot_state,
         goal_pose=tick_input.full_reference.knots[-1].pose,
-        reference_path=tuple(knot.pose for knot in tick_input.local_window.knots),
+        reference_path=(
+            tuple(knot.pose for knot in tick_input.local_window.knots)
+            if reference_path is None
+            else reference_path
+        ),
         static_grid_snapshot=tick_input.static_grid_snapshot,
         validated_observation=tick_input.validated_observation,
         actor_tubes=tick_input.actor_prediction_set,
@@ -592,6 +649,11 @@ def _active_translation_dwb_path(
     )
     if section is None or section.section_kind not in _TRANSLATION_SECTION_KINDS:
         raise ValueError("active DWB scoring section must be translational")
+    if section.travel_direction not in {
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.REVERSE,
+    }:
+        raise ValueError("active DWB scoring section has no executable direction")
     window_section = next(
         (
             candidate
@@ -608,6 +670,33 @@ def _active_translation_dwb_path(
         if section.first_knot_index <= knot.knot_index <= section.last_knot_index
     )
     return _freeze_dwb_path(poses, "active translation scoring path")
+
+
+def _bind_stack_travel_direction(
+    stack: _PersistentDwbStack,
+    direction: ReferenceTravelDirection,
+    tick_input: PersistentControllerTickInput,
+) -> None:
+    if direction is ReferenceTravelDirection.FORWARD:
+        minimum_linear = 0.0
+        maximum_linear = tick_input.vehicle_profile.nominal_speed_mps
+        projection_sign = 1.0
+    elif direction is ReferenceTravelDirection.REVERSE:
+        minimum_linear = -min(
+            0.10,
+            tick_input.vehicle_profile.max_reverse_speed_mps,
+        )
+        maximum_linear = 0.0
+        projection_sign = -1.0
+    else:
+        raise ValueError("persistent DWB cannot execute a NONE translation section")
+    stack.generator.set_travel_direction(direction)
+    stack.adapter.set_command_linear_bounds(minimum_linear, maximum_linear)
+    stack.goal_align_critic.set_projection_sign(projection_sign)
+    stack.path_align_critic.set_projection_sign(projection_sign)
+    disable_alignment_near_goal = direction is ReferenceTravelDirection.FORWARD
+    stack.goal_align_critic.set_disable_near_goal(disable_alignment_near_goal)
+    stack.path_align_critic.set_disable_near_goal(disable_alignment_near_goal)
 
 
 def _freeze_dwb_path(path: Sequence[DwbPose2D], label: str) -> tuple[DwbPose2D, ...]:

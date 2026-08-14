@@ -11,7 +11,7 @@ Nav2 plugin nor evidence of product or human-rider safety.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from enum import Enum
 from hashlib import sha256
 from json import dumps
@@ -602,8 +602,10 @@ def _map_grid_scale(configured_scale: float, resolution_m: float) -> float:
 def _validate_generator_profile(
     config: DwbGeneratorConfig,
     profile: VehicleProfile,
+    *,
+    allow_reverse: bool = False,
 ) -> None:
-    expected = _generator_config_for(profile)
+    expected = replace(_generator_config_for(profile), allow_reverse=allow_reverse)
     if config != expected:
         raise ValueError("composition generator must match every frozen v7 parameter")
 

@@ -44,6 +44,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceKnot,
     ReferenceSection,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.local_reference_reporting import (
     LOCAL_REFERENCE_PUBLIC_CASE_COUNT,
@@ -68,11 +69,11 @@ from hospital_path_lab.persistent_rpp_controller import (
     PersistentRppController,
 )
 
-PERSISTENT_PUBLIC_CATALOG_VERSION = "persistent-controller-public-catalog-v1"
-PERSISTENT_PUBLIC_REPORT_VERSION = "persistent-controller-public-report-v1"
-PERSISTENT_PUBLIC_MANIFEST_VERSION = "persistent-controller-public-manifest-v1"
-PERSISTENT_PUBLIC_RECEIPT_VERSION = "persistent-controller-public-receipt-v1"
-PERSISTENT_PUBLIC_RUNNER_VERSION = "persistent-controller-public-runner-v1"
+PERSISTENT_PUBLIC_CATALOG_VERSION = "persistent-controller-public-catalog-v2"
+PERSISTENT_PUBLIC_REPORT_VERSION = "persistent-controller-public-report-v2"
+PERSISTENT_PUBLIC_MANIFEST_VERSION = "persistent-controller-public-manifest-v2"
+PERSISTENT_PUBLIC_RECEIPT_VERSION = "persistent-controller-public-receipt-v2"
+PERSISTENT_PUBLIC_RUNNER_VERSION = "persistent-controller-public-runner-v2"
 PERSISTENT_PUBLIC_READY_CASE_COUNT = 8
 PERSISTENT_PUBLIC_CONTROLLER_COUNT = 2
 R4_PUBLIC_AUDIT_SEMANTIC_HASH = (
@@ -121,6 +122,7 @@ class PersistentPublicTraceSample:
     session_transition: PersistentControllerSessionTransition
     active_section_index: int | None
     active_section_kind: str | None
+    active_travel_direction: str | None
     tracking_error_m: float | None
     minimum_static_clearance_m: float | None
     controller_failure_reason: str | None
@@ -153,6 +155,7 @@ class PersistentPublicTraceSample:
                 "session_transition": self.session_transition,
                 "active_section_index": self.active_section_index,
                 "active_section_kind": self.active_section_kind,
+                "active_travel_direction": self.active_travel_direction,
                 "tracking_error_m": self.tracking_error_m,
                 "minimum_static_clearance_m": self.minimum_static_clearance_m,
                 "controller_failure_reason": self.controller_failure_reason,
@@ -741,6 +744,12 @@ def build_persistent_public_manifest(
                 PERSISTENT_PUBLIC_DEADLOCK_WINDOW_S,
                 PERSISTENT_PUBLIC_DEADLOCK_PROGRESS_M,
             ),
+            "section_bound_translation_mps": {
+                "forward": (0.0, 0.30),
+                "reverse": (-0.10, 0.0),
+                "none": (0.0, 0.0),
+            },
+            "signed_direction_change_stopped_confirmation_ticks": 3,
         }
     )
     controller_hash = canonical_content_hash(
@@ -1110,6 +1119,13 @@ def _trace_sample(record: PersistentPipelineStep) -> PersistentPublicTraceSample
         active_section_kind=(
             None if result.active_section_kind is None else result.active_section_kind.value
         ),
+        active_travel_direction=(
+            None
+            if result.active_section_index is None
+            else record.tick_input.full_reference.sections[
+                result.active_section_index
+            ].travel_direction.value
+        ),
         tracking_error_m=result.tracking_error_m,
         minimum_static_clearance_m=record.safety_decision.minimum_static_clearance_m,
         controller_failure_reason=result.failure_reason,
@@ -1139,6 +1155,23 @@ def _run_functional_failures(
         failures.append(f"gate_rejection_count:{metrics.gate_rejection_count}")
     if metrics.late_result_count != 0:
         failures.append(f"late_result_count:{metrics.late_result_count}")
+    reverse_sections_with_motion: set[int] = set()
+    for sample in samples:
+        linear = sample.requested_twist.linear
+        if sample.controller_status is not PersistentControllerStatus.COMMAND_FOUND:
+            continue
+        if sample.active_travel_direction == ReferenceTravelDirection.FORWARD.value:
+            if linear < -_TOLERANCE:
+                failures.append("forward_section_negative_command")
+        elif sample.active_travel_direction == ReferenceTravelDirection.REVERSE.value:
+            if linear > _TOLERANCE:
+                failures.append("reverse_section_positive_command")
+            if linear < -0.10 - _TOLERANCE:
+                failures.append("reverse_speed_limit_exceeded")
+            if linear < -_TOLERANCE and sample.active_section_index is not None:
+                reverse_sections_with_motion.add(sample.active_section_index)
+        elif abs(linear) > _TOLERANCE:
+            failures.append("non_translation_section_linear_command")
     indices = tuple(
         sample.active_section_index
         for sample in samples
@@ -1148,6 +1181,11 @@ def _run_functional_failures(
         failures.append("section_index_regression")
     observed = set(indices)
     for section in reference.sections:
+        if (
+            section.travel_direction is ReferenceTravelDirection.REVERSE
+            and section.section_index not in reverse_sections_with_motion
+        ):
+            failures.append(f"reverse_section_without_negative_motion:{section.section_index}")
         if section.section_index in observed:
             continue
         first = reference.knots[section.first_knot_index]
@@ -1419,6 +1457,7 @@ def _normalized_run_signature(
                 sample.motion_state.value,
                 sample.active_section_index,
                 sample.active_section_kind,
+                sample.active_travel_direction,
             )
         )
     return tuple(signature)

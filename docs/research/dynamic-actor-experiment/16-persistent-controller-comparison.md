@@ -4,7 +4,8 @@
 
 - 작성일: `2026-08-14`
 - 상태: `R5-1~R5-6` 구현, R5-A 1차 public full qualification 실패·receipt 미생성,
-  R4 v2 signed reference clean qualification 완료, R5 v2 section-bound 제한 후진 구현 미시작
+  R4 v2 signed reference clean qualification 완료, R5 v2 section-bound 제한 후진 구현 중간 상태
+  (`RPP` 대표 case 완료, `DWB` reverse 종점 deadlock 미해결)
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)

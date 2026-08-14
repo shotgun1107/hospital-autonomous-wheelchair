@@ -19,6 +19,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceKnotRole,
     ReferenceSection,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.persistent_controller_contracts import (
     PERSISTENT_CONTROLLER_RESULT_SCHEMA_VERSION,
@@ -36,7 +37,7 @@ from hospital_path_lab.reference_section_executor import (
 )
 
 PERSISTENT_RPP_CONTROLLER_NAME = "persistent_rpp_reference"
-PERSISTENT_RPP_CONTROLLER_VERSION = "persistent-rpp-reference-v2"
+PERSISTENT_RPP_CONTROLLER_VERSION = "persistent-rpp-reference-v3"
 PERSISTENT_RPP_LOOKAHEAD_MIN_M = 0.25
 PERSISTENT_RPP_LOOKAHEAD_MAX_M = 0.50
 PERSISTENT_RPP_LOOKAHEAD_VELOCITY_GAIN = 0.75
@@ -44,6 +45,7 @@ PERSISTENT_RPP_MINIMUM_TRACKING_SPEED_MPS = 0.05
 PERSISTENT_RPP_CURVATURE_GAIN = 2.0
 PERSISTENT_RPP_ROLLOUT_HORIZON_S = 2.0
 PERSISTENT_RPP_ROLLOUT_STEP_S = 0.05
+PERSISTENT_RPP_MAXIMUM_REVERSE_SPEED_MPS = 0.10
 
 _TRANSLATION_SECTION_KINDS = frozenset(
     {
@@ -99,6 +101,7 @@ class PersistentRppConfig:
     rollout_step_s: float = PERSISTENT_RPP_ROLLOUT_STEP_S
     angular_acceleration_radps2: float = R5_ANGULAR_ACCELERATION_RADPS2
     angular_deceleration_radps2: float = R5_ANGULAR_DECELERATION_RADPS2
+    maximum_reverse_speed_mps: float = PERSISTENT_RPP_MAXIMUM_REVERSE_SPEED_MPS
 
     def __post_init__(self) -> None:
         fields = PersistentRppConfig.__dataclass_fields__
@@ -126,6 +129,7 @@ class _TranslationCommand:
     stop_limited_speed_mps: float | None
     terminal_goal_active: bool
     explicit_stop_active: bool
+    travel_direction: ReferenceTravelDirection
 
 
 class PersistentRppController:
@@ -254,6 +258,7 @@ class PersistentRppController:
             else f"stop_limited_speed_mps={translation.stop_limited_speed_mps:.12g}",
             f"terminal_goal_active={str(translation.terminal_goal_active).lower()}",
             f"explicit_stop_active={str(translation.explicit_stop_active).lower()}",
+            f"travel_direction={translation.travel_direction.value}",
             "rollout_policy=one_step_then_bounded_stop"
             if planned_stop_rollout
             else "rollout_policy=constant_command",
@@ -266,6 +271,7 @@ class PersistentRppController:
                     "false_local_goal_deceleration=false",
                     "lookahead_source=current_window_translation",
                     "progress_source=full_reference_active_section",
+                    f"travel_direction={translation.travel_direction.value}",
                 }
             )
         )
@@ -392,6 +398,12 @@ def _compute_translation_command(
     section = reference.sections[active_section_index]
     if section.section_kind not in _TRANSLATION_SECTION_KINDS:
         raise ValueError("active section is not translational")
+    direction = section.travel_direction
+    if direction not in {
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.REVERSE,
+    }:
+        raise ValueError("active translation section has no executable direction")
     window_section = next(
         (
             candidate
@@ -423,10 +435,15 @@ def _compute_translation_command(
     )
     curvature = _curvature_to_point(pose, lookahead)
     profile = tick_input.vehicle_profile
+    maximum_speed = (
+        profile.nominal_speed_mps
+        if direction is ReferenceTravelDirection.FORWARD
+        else min(profile.max_reverse_speed_mps, config.maximum_reverse_speed_mps)
+    )
     curvature_speed = _clip(
-        profile.nominal_speed_mps / (1.0 + config.curvature_gain * abs(curvature)),
+        maximum_speed / (1.0 + config.curvature_gain * abs(curvature)),
         config.minimum_tracking_speed_mps,
-        profile.nominal_speed_mps,
+        maximum_speed,
     )
 
     terminal_goal_active = (
@@ -435,7 +452,7 @@ def _compute_translation_command(
     )
     explicit_stop_active = _section_has_upcoming_stop(reference.sections, reference.knots, section)
     stop_limited_speed: float | None = None
-    desired_linear = curvature_speed
+    desired_speed = curvature_speed
     if terminal_goal_active or explicit_stop_active:
         section_end = full_path[-1]
         geometric_remaining = hypot(section_end.x - pose.x, section_end.y - pose.y)
@@ -448,13 +465,28 @@ def _compute_translation_command(
             - 0.05,
         )
         stop_limited_speed = min(
-            profile.nominal_speed_mps,
+            maximum_speed,
             sqrt(2.0 * profile.max_deceleration_mps2 * distance_to_tolerance),
         )
-        desired_linear = min(desired_linear, stop_limited_speed)
+        desired_speed = min(desired_speed, stop_limited_speed)
+
+    desired_linear = (
+        desired_speed
+        if direction is ReferenceTravelDirection.FORWARD
+        else -desired_speed
+    )
+    current_linear = tick_input.robot_state.twist.linear
+    if (
+        direction is ReferenceTravelDirection.FORWARD
+        and current_linear < -0.01 - _TOLERANCE
+    ) or (
+        direction is ReferenceTravelDirection.REVERSE
+        and current_linear > 0.01 + _TOLERANCE
+    ):
+        raise ValueError("translation direction changed before actual stop")
 
     linear = _rate_limited_velocity(
-        tick_input.robot_state.twist.linear,
+        current_linear,
         desired_linear,
         acceleration_step=profile.max_acceleration_mps2 * config.control_period_s,
         deceleration_step=profile.max_deceleration_mps2 * config.control_period_s,
@@ -488,6 +520,7 @@ def _compute_translation_command(
         stop_limited_speed_mps=stop_limited_speed,
         terminal_goal_active=terminal_goal_active,
         explicit_stop_active=explicit_stop_active,
+        travel_direction=direction,
     )
 
 

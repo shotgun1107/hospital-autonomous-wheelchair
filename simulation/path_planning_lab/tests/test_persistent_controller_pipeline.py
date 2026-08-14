@@ -20,6 +20,7 @@ from hospital_path_lab.dynamic_safety import DynamicSafetyGate
 from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
     PersistentSourceDerivedDwbController,
 )
+from hospital_path_lab.local_reference_contracts import ReferenceTravelDirection
 from hospital_path_lab.local_reference_reporting import (
     evaluate_local_reference_public_case,
     public_local_reference_cases,
@@ -164,6 +165,8 @@ def test_rpp_completes_public_wide_left_through_the_external_shared_gate(
 ) -> None:
     pipeline = _pipeline(public_wide_left, PersistentRppController())
     statuses = []
+    reverse_commands = []
+    reference = public_wide_left.reference_set.candidates[0]
 
     for _ in range(700):
         observation, prediction = _fresh_empty(
@@ -176,6 +179,12 @@ def test_rpp_completes_public_wide_left_through_the_external_shared_gate(
         )
         assert record.controller_result is not None
         statuses.append(record.controller_result.status)
+        if record.controller_result.active_section_index is not None:
+            direction = reference.sections[
+                record.controller_result.active_section_index
+            ].travel_direction
+            if direction is ReferenceTravelDirection.REVERSE:
+                reverse_commands.append(record.controller_result.requested_twist.linear)
         assert record.safety_decision.primary_hold_reason is None
         assert record.safety_decision.failure_reasons == ()
         assert record.safety_decision.counters.candidate_rejected_by_gate == 0
@@ -188,6 +197,9 @@ def test_rpp_completes_public_wide_left_through_the_external_shared_gate(
     assert PersistentControllerStatus.COMMAND_FOUND in statuses
     assert PersistentControllerStatus.PLANNED_STOP in statuses
     assert PersistentControllerStatus.COMPLETED in statuses
+    assert reverse_commands
+    assert min(reverse_commands) < 0.0
+    assert all(-0.10 <= value <= 0.0 for value in reverse_commands)
     assert pipeline.robot_state.twist == Twist2D()
     assert pipeline.robot_state.pose.x == pytest.approx(terminal.x, abs=0.05)
     assert pipeline.robot_state.pose.y == pytest.approx(terminal.y, abs=0.05)
@@ -197,13 +209,25 @@ def test_real_dwb_selected_command_is_rechecked_by_the_external_shared_gate(
     public_wide_left,
 ) -> None:
     pipeline = _pipeline(public_wide_left, PersistentSourceDerivedDwbController())
-    observation, prediction = _fresh_empty(public_wide_left.build_context, 0)
+    record = None
+    for _ in range(80):
+        observation, prediction = _fresh_empty(
+            public_wide_left.build_context,
+            pipeline.tick_id,
+        )
+        candidate = pipeline.step(
+            observation_snapshot=observation,
+            prediction_set=prediction,
+        )
+        if (
+            candidate.controller_result is not None
+            and candidate.controller_result.status
+            is PersistentControllerStatus.COMMAND_FOUND
+        ):
+            record = candidate
+            break
 
-    record = pipeline.step(
-        observation_snapshot=observation,
-        prediction_set=prediction,
-    )
-
+    assert record is not None
     assert record.controller_result is not None
     assert record.controller_result.status is PersistentControllerStatus.COMMAND_FOUND
     assert record.controller_result.requested_twist != Twist2D()
@@ -213,7 +237,7 @@ def test_real_dwb_selected_command_is_rechecked_by_the_external_shared_gate(
     assert len(record.controller_result.predicted_trajectory) == 41
 
 
-def test_dwb_restarts_from_rest_before_the_first_planned_stop(
+def test_dwb_rejects_an_unproven_mid_route_restart(
     public_wide_left,
 ) -> None:
     context = public_wide_left.build_context
@@ -237,16 +261,13 @@ def test_dwb_restarts_from_rest_before_the_first_planned_stop(
     )
 
     assert record.controller_result is not None
-    assert record.controller_result.status is PersistentControllerStatus.COMMAND_FOUND
-    assert record.controller_result.requested_twist.linear > 0.0
-    assert "scoring_path_source=active_translation_section" in (
-        record.controller_result.decision_trace
+    assert (
+        record.controller_result.status
+        is PersistentControllerStatus.SECTION_EXECUTION_FAILED
     )
-    assert "goal_align_disabled_near_scoring_goal=true" in (
-        record.controller_result.decision_trace
-    )
-    assert record.safety_decision.proposal_accepted
-    assert record.safety_decision.primary_hold_reason is None
+    assert record.controller_result.requested_twist == Twist2D()
+    assert not record.safety_decision.proposal_accepted
+    assert record.robot_state_after == record.robot_state_before
 
 
 def test_reference_binding_missing_or_tampered_never_applies_motion(

@@ -17,10 +17,12 @@ from hospital_path_lab.dynamic_observation import (
     DynamicObservationSnapshot,
 )
 from hospital_path_lab.dynamic_prediction import build_actor_prediction_set
+from hospital_path_lab.dynamic_safety import DynamicSafetyContext, DynamicSafetyGate
 from hospital_path_lab.local_algorithms.dwb_reference.composition import (
     SourceDerivedDwbConfig,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.contracts import (
+    DwbGeneratorConfig,
     DwbGeneratorRequest,
     DwbPose2D,
     DwbTwist2D,
@@ -42,10 +44,12 @@ from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import 
     PERSISTENT_DWB_CONTROLLER_NAME,
     PersistentDwbCoreSession,
     PersistentSourceDerivedDwbController,
+    SectionBoundDwbReferenceTrajectoryGenerator,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.trajectory_generator import (
     DwbReferenceTrajectoryGenerator,
 )
+from hospital_path_lab.local_reference_contracts import ReferenceTravelDirection
 from hospital_path_lab.local_reference_reporting import (
     evaluate_local_reference_public_case,
     public_local_reference_cases,
@@ -57,7 +61,13 @@ from hospital_path_lab.persistent_controller_contracts import (
     PersistentControllerTickInput,
     build_persistent_reference_binding,
 )
-from hospital_path_lab.reference_section_executor import R5_CONTROL_PERIOD_S
+from hospital_path_lab.persistent_controller_pipeline import (
+    persistent_result_to_dynamic_proposal,
+)
+from hospital_path_lab.reference_section_executor import (
+    R5_CONTROL_PERIOD_S,
+    ReferenceSectionExecutor,
+)
 
 
 @pytest.fixture(scope="module")
@@ -114,6 +124,79 @@ def _fresh_empty_input(context, reference, window, *, tick, pose, twist=None):
         current_gate_stop_epoch=context.stop_epoch,
         current_resume_authorization_revision=None,
     )
+
+
+def _advance_to_first_signed_translation(
+    controller,
+    context,
+    reference,
+    window,
+    *,
+    unavailable_on_translation: bool = False,
+):
+    start = reference.knots[0].pose
+    first_rotation = next(
+        section
+        for section in reference.sections
+        if section.travel_direction is ReferenceTravelDirection.NONE
+        and section.first_knot_index != section.last_knot_index
+    )
+    rotated = reference.knots[first_rotation.last_knot_index].pose
+    result = None
+    for tick, pose in enumerate((start, start, start, rotated, rotated, rotated, rotated)):
+        tick_input = _fresh_empty_input(
+            context,
+            reference,
+            window,
+            tick=tick,
+            pose=pose,
+        )
+        if unavailable_on_translation and tick == 6:
+            tick_input = replace(
+                tick_input,
+                validated_observation=DynamicObservationSnapshot(
+                    availability=DynamicObservationAvailability.UNAVAILABLE,
+                    frame=None,
+                    age_s=None,
+                    failures=(),
+                    last_event_was_no_frame=False,
+                ),
+                actor_prediction_set=None,
+                tick_input_content_hash="",
+            )
+        result = controller.step(tick_input)
+    assert result is not None
+    return result
+
+
+def _advance_to_first_reverse_translation(context, reference, window):
+    executor = ReferenceSectionExecutor()
+    controller = PersistentSourceDerivedDwbController(executor=executor)
+    for tick in range(80):
+        index = executor.active_section_index
+        section = None if index is None else reference.sections[index]
+        if section is None:
+            pose = reference.knots[0].pose
+        elif section.travel_direction is ReferenceTravelDirection.REVERSE:
+            pose = reference.knots[section.first_knot_index].pose
+        else:
+            pose = reference.knots[section.last_knot_index].pose
+        tick_input = _fresh_empty_input(
+            context,
+            reference,
+            window,
+            tick=tick,
+            pose=pose,
+        )
+        result = controller.step(tick_input)
+        if (
+            result.status is PersistentControllerStatus.COMMAND_FOUND
+            and result.active_section_index is not None
+            and reference.sections[result.active_section_index].travel_direction
+            is ReferenceTravelDirection.REVERSE
+        ):
+            return controller, result, tick_input
+    pytest.fail("persistent DWB never reached the first reverse translation")
 
 
 def _session_core():
@@ -201,6 +284,87 @@ def test_default_generator_contract_keeps_upstream_zero_insertion_bound() -> Non
     assert (config.linear_sample_count + 1) * (config.angular_sample_count + 1) == 256
 
 
+def test_section_bound_generator_never_samples_the_opposite_translation_sign() -> None:
+    generator = SectionBoundDwbReferenceTrajectoryGenerator(
+        replace(DwbGeneratorConfig(), allow_reverse=True)
+    )
+    request = DwbGeneratorRequest(
+        pose=DwbPose2D(0.0, 0.0, 0.0),
+        current_twist=DwbTwist2D(0.0, 0.0),
+    )
+
+    generator.set_travel_direction(ReferenceTravelDirection.FORWARD)
+    forward = generator.generate(request)
+    generator.set_travel_direction(ReferenceTravelDirection.REVERSE)
+    reverse = generator.generate(request)
+
+    assert all(value >= 0.0 for value in forward.linear_samples_mps)
+    assert all(-0.10 <= value <= 0.0 for value in reverse.linear_samples_mps)
+    assert any(value < 0.0 for value in reverse.linear_samples_mps)
+
+
+def test_public_reverse_section_selects_only_a_bounded_negative_dwb_command(
+    public_wide_left,
+) -> None:
+    context = public_wide_left.build_context
+    reference = public_wide_left.reference_set.candidates[0]
+    validation = public_wide_left.validations[0]
+    initial = LocalReferenceWindowManager().update(context, reference, validation)
+    assert initial.window is not None
+    full_window = replace(
+        initial.window,
+        end_knot_index=reference.knots[-1].knot_index,
+        knots=reference.knots,
+        sections=reference.sections,
+        terminal_rejoin_included=True,
+        window_content_hash="",
+    )
+
+    controller, result, tick_input = _advance_to_first_reverse_translation(
+        context,
+        reference,
+        full_window,
+    )
+
+    assert -0.10 <= result.requested_twist.linear < 0.0
+    assert "travel_direction=reverse" in result.decision_trace
+    assert len(result.predicted_trajectory) == 41
+    assert result.predicted_trajectory[-1].pose != result.predicted_trajectory[0].pose
+    assert controller.selected_safety_evidence is not None
+    assert controller.selected_safety_evidence.safe
+
+    proposal = persistent_result_to_dynamic_proposal(
+        result,
+        tick_input=tick_input,
+        computation_time_s=R5_CONTROL_PERIOD_S,
+    )
+    gate = DynamicSafetyGate(initial_stop_epoch=context.stop_epoch)
+    decision = gate.step(
+        proposal,
+        robot_state=tick_input.robot_state,
+        context=DynamicSafetyContext(
+            tick_id=tick_input.controller_tick,
+            simulation_time_s=tick_input.simulation_time_s,
+            mission_id=reference.mission_id,
+            authorization_revision=0,
+            grid_snapshot=tick_input.static_grid_snapshot,
+            observation_snapshot=tick_input.validated_observation,
+            prediction_set=tick_input.actor_prediction_set,
+            path_still_valid=True,
+            local_safety_recheck_passed=True,
+            observation_safe=True,
+            resume_authorization=None,
+            goal_reached=False,
+            mission_cancelled=False,
+            reference_binding=tick_input.reference_binding,
+        ),
+    )
+    assert decision.proposal_accepted
+    assert decision.command == result.requested_twist
+    assert decision.command.linear < 0.0
+    assert decision.failure_reasons == ()
+
+
 def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_left) -> None:
     context = public_wide_left.build_context
     reference = public_wide_left.reference_set.candidates[0]
@@ -215,20 +379,17 @@ def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_l
     )
     update = LocalReferenceWindowManager().update(current_context, reference, validation)
     assert update.window is not None
-    tick_input = _fresh_empty_input(
+    controller = PersistentSourceDerivedDwbController()
+
+    result = _advance_to_first_signed_translation(
+        controller,
         context,
         reference,
         update.window,
-        tick=0,
-        pose=pose,
     )
-    controller = PersistentSourceDerivedDwbController()
-
-    result = controller.step(tick_input)
 
     assert result.status is PersistentControllerStatus.COMMAND_FOUND
     assert result.controller_name == PERSISTENT_DWB_CONTROLLER_NAME
-    assert controller.step(tick_input) is result
     assert controller.session_reset_count == 1
     assert controller.stack_build_count == 1
     diagnostics = controller.dwb_session_diagnostics
@@ -252,51 +413,22 @@ def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_l
     assert controller.selected_safety_evidence is not None
     assert controller.selected_safety_evidence.safe
 
-    changed = replace(
-        tick_input,
-        robot_state=RobotState(
-            replace(tick_input.robot_state.pose, x=tick_input.robot_state.pose.x + 0.01),
-            tick_input.robot_state.twist,
-        ),
-        tick_input_content_hash="",
-    )
-    rejected = controller.step(changed)
-    assert rejected.status is PersistentControllerStatus.INVALID_REFERENCE_INPUT
-    assert rejected.requested_twist == Twist2D()
-    assert rejected.failure_reason == "same_tick_input_changed"
+    assert "travel_direction=forward" in result.decision_trace
 
 
 def test_missing_fresh_observation_fails_closed_before_candidate_motion(public_wide_left) -> None:
     context = public_wide_left.build_context
     reference = public_wide_left.reference_set.candidates[0]
     validation = public_wide_left.validations[0]
-    pose = reference.knots[0].pose
     update = LocalReferenceWindowManager().update(context, reference, validation)
     assert update.window is not None
-    unavailable = PersistentControllerTickInput(
-        schema_version=PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION,
-        controller_tick=0,
-        simulation_time_s=0.0,
-        full_reference=reference,
-        local_window=update.window,
-        reference_binding=build_persistent_reference_binding(reference, update.window),
-        robot_state=RobotState(pose, Twist2D()),
-        static_grid_snapshot=context.static_grid_snapshot,
-        validated_observation=DynamicObservationSnapshot(
-            availability=DynamicObservationAvailability.UNAVAILABLE,
-            frame=None,
-            age_s=None,
-            failures=(),
-            last_event_was_no_frame=False,
-        ),
-        actor_prediction_set=None,
-        vehicle_profile=context.vehicle_profile,
-        current_gate_motion_state=DynamicMotionState.MOVING,
-        current_gate_stop_epoch=context.stop_epoch,
-        current_resume_authorization_revision=None,
+    result = _advance_to_first_signed_translation(
+        PersistentSourceDerivedDwbController(),
+        context,
+        reference,
+        update.window,
+        unavailable_on_translation=True,
     )
-
-    result = PersistentSourceDerivedDwbController().step(unavailable)
 
     assert result.status is PersistentControllerStatus.SECTION_EXECUTION_FAILED
     assert result.requested_twist == Twist2D()

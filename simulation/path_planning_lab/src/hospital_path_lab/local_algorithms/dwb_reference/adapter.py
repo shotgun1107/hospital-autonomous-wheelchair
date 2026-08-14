@@ -107,6 +107,7 @@ class SourceDerivedDwbController:
         critics: Sequence[DwbCriticBinding] = (),
         snapshot_binders: Sequence[SnapshotBinder] = (),
         generator_config: DwbGeneratorConfig | None = None,
+        allow_reverse_generator: bool = False,
     ) -> None:
         if not vehicle_profile.simulation_only:
             raise ValueError("source-derived DWB requires a simulation-only profile")
@@ -114,7 +115,11 @@ class SourceDerivedDwbController:
             raise ValueError("inject either a composed core or critic bindings, not both")
 
         config = generator_config or _generator_config_for(vehicle_profile)
-        _validate_generator_profile(config, vehicle_profile)
+        _validate_generator_profile(
+            config,
+            vehicle_profile,
+            allow_reverse=allow_reverse_generator,
+        )
         self.vehicle_profile = vehicle_profile
         self.generator_config = config
         self._core: DwbCore = core or DwbReferenceCore(
@@ -124,6 +129,24 @@ class SourceDerivedDwbController:
         self._snapshot_binders = tuple(snapshot_binders)
         self._installed_path_signature: str | None = None
         self._prepared_snapshot_identity: tuple[int, str] | None = None
+        self._command_linear_bounds = (0.0, vehicle_profile.nominal_speed_mps)
+
+    def set_command_linear_bounds(self, minimum_mps: float, maximum_mps: float) -> None:
+        """Set section-bound output limits without changing generator ordering."""
+
+        configured_minimum = (
+            -self.generator_config.maximum_reverse_speed_mps
+            if self.generator_config.allow_reverse
+            else 0.0
+        )
+        configured_maximum = self.generator_config.maximum_forward_speed_mps
+        if not (
+            isfinite(minimum_mps)
+            and isfinite(maximum_mps)
+            and configured_minimum <= minimum_mps <= maximum_mps <= configured_maximum
+        ):
+            raise ValueError("command linear bounds exceed the configured generator range")
+        self._command_linear_bounds = (minimum_mps, maximum_mps)
 
     @property
     def installed_path_signature(self) -> str | None:
@@ -515,7 +538,12 @@ class SourceDerivedDwbController:
         twist = snapshot.robot_state.twist
         if not isfinite(twist.linear) or not isfinite(twist.angular):
             return "robot_twist_non_finite"
-        if not 0.0 <= twist.linear <= self.vehicle_profile.nominal_speed_mps:
+        configured_minimum = (
+            -self.generator_config.maximum_reverse_speed_mps
+            if self.generator_config.allow_reverse
+            else 0.0
+        )
+        if not configured_minimum <= twist.linear <= self.vehicle_profile.nominal_speed_mps:
             return "linear_state_outside_frozen_range"
         if abs(twist.angular) > self.vehicle_profile.max_angular_speed_radps:
             return "angular_state_outside_vehicle_limits"
@@ -523,7 +551,8 @@ class SourceDerivedDwbController:
 
     def _invalid_output_reason(self, result: DwbCoreResult) -> str | None:
         command = result.command
-        if not 0.0 <= command.linear_mps <= self.vehicle_profile.nominal_speed_mps:
+        minimum_linear, maximum_linear = self._command_linear_bounds
+        if not minimum_linear <= command.linear_mps <= maximum_linear:
             return "core_linear_command_outside_frozen_range"
         if abs(command.angular_radps) > self.vehicle_profile.max_angular_speed_radps:
             return "core_angular_command_outside_vehicle_limits"
@@ -651,6 +680,8 @@ def _generator_config_for(profile: VehicleProfile) -> DwbGeneratorConfig:
 def _validate_generator_profile(
     config: DwbGeneratorConfig,
     profile: VehicleProfile,
+    *,
+    allow_reverse: bool = False,
 ) -> None:
     expected = (
         (config.control_period_s, profile.control_period_s),
@@ -660,11 +691,12 @@ def _validate_generator_profile(
         (config.linear_deceleration_mps2, profile.max_deceleration_mps2),
         (config.maximum_angular_speed_radps, profile.max_angular_speed_radps),
     )
-    if config.allow_reverse or any(
+    if config.allow_reverse is not allow_reverse or any(
         not isclose(left, right, rel_tol=0.0, abs_tol=_FLOAT_TOLERANCE)
         for left, right in expected
     ):
-        raise ValueError("generator config must match the frozen forward-only profile")
+        direction = "signed" if allow_reverse else "forward-only"
+        raise ValueError(f"generator config must match the frozen {direction} profile")
 
 
 def _generator_request(snapshot: ControllerSnapshot) -> DwbGeneratorRequest:

@@ -27,6 +27,7 @@ from hospital_path_lab.dynamic_safety import DynamicSafetyContext, DynamicSafety
 from hospital_path_lab.local_reference_contracts import (
     LocalManeuverReference,
     ReferenceBuildContext,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.local_reference_validation import LocalReferenceValidation
 from hospital_path_lab.local_reference_window import (
@@ -42,7 +43,7 @@ from hospital_path_lab.persistent_controller_contracts import (
     build_persistent_reference_binding,
 )
 
-PERSISTENT_CONTROLLER_PIPELINE_VERSION = "persistent-controller-pipeline-v1"
+PERSISTENT_CONTROLLER_PIPELINE_VERSION = "persistent-controller-pipeline-v2"
 _TOLERANCE = 1e-12
 
 
@@ -212,6 +213,26 @@ class PersistentControllerPipeline:
             ),
         )
         controller_result = self.controller.step(tick_input)
+        direction_failure = _section_bound_direction_failure(
+            controller_result,
+            tick_input,
+        )
+        if direction_failure is not None:
+            controller_result = replace(
+                controller_result,
+                status=PersistentControllerStatus.SECTION_EXECUTION_FAILED,
+                requested_twist=Twist2D(),
+                predicted_trajectory=(),
+                failure_reason=direction_failure,
+                decision_trace=(
+                    *controller_result.decision_trace,
+                    f"pipeline_direction_failure={direction_failure}",
+                ),
+                planned_section_stop=False,
+                controller_requested_protective_stop=True,
+                no_safe_candidate=False,
+                semantic_content_hash="",
+            )
         proposal = persistent_result_to_dynamic_proposal(
             controller_result,
             tick_input=tick_input,
@@ -373,6 +394,28 @@ def persistent_result_to_dynamic_proposal(
         no_safe_candidate=result.no_safe_candidate,
         reference_binding=binding,
     )
+
+
+def _section_bound_direction_failure(
+    result: PersistentControllerResult,
+    tick_input: PersistentControllerTickInput,
+) -> str | None:
+    if result.status is not PersistentControllerStatus.COMMAND_FOUND:
+        return None
+    index = result.active_section_index
+    if index is None or not 0 <= index < len(tick_input.full_reference.sections):
+        return "active_section_direction_unavailable"
+    direction = tick_input.full_reference.sections[index].travel_direction
+    linear = result.requested_twist.linear
+    if direction is ReferenceTravelDirection.FORWARD:
+        return "forward_section_negative_command" if linear < -_TOLERANCE else None
+    if direction is ReferenceTravelDirection.REVERSE:
+        if linear > _TOLERANCE:
+            return "reverse_section_positive_command"
+        if linear < -min(0.10, tick_input.vehicle_profile.max_reverse_speed_mps) - _TOLERANCE:
+            return "reverse_speed_limit_exceeded"
+        return None
+    return "non_command_section_translation" if abs(linear) > _TOLERANCE else None
 
 
 def integrate_persistent_chassis_pose(

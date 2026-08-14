@@ -19,6 +19,7 @@ from hospital_path_lab.local_reference_contracts import (
     LocalManeuverReference,
     ReferenceSection,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.persistent_controller_contracts import (
@@ -29,7 +30,7 @@ from hospital_path_lab.persistent_controller_contracts import (
     ReferenceExecutorState,
 )
 
-REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v1"
+REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v2"
 REFERENCE_SECTION_EXECUTION_DECISION_SCHEMA_VERSION = (
     "reference-section-execution-decision-v1"
 )
@@ -407,12 +408,70 @@ class ReferenceSectionExecutor:
                 self._state = ReferenceExecutorState.APPROACH_PLANNED_STOP
                 return self._advance_planned_stop_approach(tick_input, transition)
 
+            direction = section.travel_direction
+            if direction is ReferenceTravelDirection.NONE:
+                connector_start = self._section_start_pose(section)
+                target = self._section_end_pose(section)
+                position_error, yaw_error = _pose_errors(
+                    tick_input.robot_state.pose,
+                    target,
+                )
+                connector_displacement = hypot(
+                    target.x - connector_start.x,
+                    target.y - connector_start.y,
+                )
+                if (
+                    connector_displacement > R4_COMPARISON_TOLERANCE
+                    and not (
+                        section.entry_requires_stopped
+                        and section.exit_requires_stopped
+                    )
+                ):
+                    return self._invalidate_execution(
+                        tick_input,
+                        transition,
+                        "non_command_connector_requires_stopped_boundaries",
+                    )
+                if position_error > self.config.position_tolerance_m + _TOLERANCE:
+                    return self._invalidate_execution(
+                        tick_input,
+                        transition,
+                        "non_command_connector_pose_unreachable",
+                    )
+            elif direction not in {
+                ReferenceTravelDirection.FORWARD,
+                ReferenceTravelDirection.REVERSE,
+            }:
+                return self._invalidate_execution(
+                    tick_input,
+                    transition,
+                    "translation_section_direction_invalid",
+                )
+
             target = self._section_end_pose(section)
             position_error, yaw_error = _pose_errors(tick_input.robot_state.pose, target)
             terminal = section.section_index == len(self._reference.sections) - 1
             at_position = position_error <= self.config.position_tolerance_m + _TOLERANCE
             at_terminal_yaw = abs(yaw_error) <= self.config.yaw_tolerance_rad + _TOLERANCE
+            if direction is ReferenceTravelDirection.NONE and not _actually_stopped(
+                tick_input.robot_state.twist,
+                self.config,
+            ):
+                self._pending_after_stop_index = (
+                    section.section_index
+                    if section.section_index == len(self._reference.sections) - 1
+                    else section.section_index + 1
+                )
+                self._state = ReferenceExecutorState.APPROACH_PLANNED_STOP
+                self._stopped_confirmation_ticks = 0
+                return self._advance_planned_stop_approach(tick_input, transition)
             if not at_position or (terminal and not at_terminal_yaw):
+                if direction is ReferenceTravelDirection.NONE:
+                    return self._invalidate_execution(
+                        tick_input,
+                        transition,
+                        "non_command_connector_cannot_translate",
+                    )
                 return self._decision(
                     tick_input,
                     transition,
@@ -438,8 +497,13 @@ class ReferenceSectionExecutor:
                     transition,
                     "hold_section_requires_new_authorized_reference",
                 )
-            if section.exit_requires_stopped or (
-                next_section.section_kind is ReferenceSectionKind.ROTATE
+            if (
+                section.exit_requires_stopped
+                or next_section.section_kind is ReferenceSectionKind.ROTATE
+                or _signed_direction_changes(
+                    self._reference.sections,
+                    section.section_index,
+                )
             ):
                 self._pending_after_stop_index = next_index
                 self._state = ReferenceExecutorState.APPROACH_PLANNED_STOP
@@ -933,6 +997,30 @@ def _actually_stopped(
     return abs(twist.linear) <= config.stopped_linear_velocity_mps and (
         abs(twist.angular) <= config.stopped_angular_velocity_radps
     )
+
+
+def _signed_direction_changes(
+    sections: tuple[ReferenceSection, ...],
+    current_index: int,
+) -> bool:
+    """Detect the next executable translation sign without geometric inference."""
+
+    current = sections[current_index].travel_direction
+    if current not in {
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.REVERSE,
+    }:
+        return False
+    for following in sections[current_index + 1 :]:
+        if following.section_kind in {
+            ReferenceSectionKind.ROTATE,
+            ReferenceSectionKind.HOLD,
+        }:
+            return False
+        if following.travel_direction is ReferenceTravelDirection.NONE:
+            continue
+        return following.travel_direction is not current
+    return False
 
 
 def _approach_zero(value: float, maximum_change: float) -> float:

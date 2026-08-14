@@ -377,12 +377,32 @@ class PathAlignCritic(PathDistCritic):
     forward-point distance of the goal, matching the upstream stabilization rule.
     """
 
-    def __init__(self, grid: DwbCriticGrid, *, forward_point_distance_m: float = 0.325) -> None:
+    def __init__(
+        self,
+        grid: DwbCriticGrid,
+        *,
+        forward_point_distance_m: float = 0.325,
+        disable_near_goal: bool = True,
+    ) -> None:
         if not isfinite(forward_point_distance_m) or forward_point_distance_m < 0.0:
             raise ValueError("forward_point_distance_m must be finite and non-negative")
+        if not isinstance(disable_near_goal, bool):
+            raise TypeError("disable_near_goal must be bool")
         super().__init__(grid)
         self.forward_point_distance_m = forward_point_distance_m
+        self.disable_near_goal = disable_near_goal
+        self._projection_sign = 1.0
         self._disabled_near_goal = False
+
+    def set_projection_sign(self, sign: float) -> None:
+        if sign not in {-1.0, 1.0}:
+            raise ValueError("projection sign must be exactly -1 or 1")
+        self._projection_sign = sign
+
+    def set_disable_near_goal(self, disabled: bool) -> None:
+        if not isinstance(disabled, bool):
+            raise TypeError("disabled must be bool")
+        self.disable_near_goal = disabled
 
     @property
     def disabled_near_goal(self) -> bool:
@@ -393,7 +413,7 @@ class PathAlignCritic(PathDistCritic):
             self._field = None
             return False
         goal = self.path[-1]
-        self._disabled_near_goal = (
+        self._disabled_near_goal = self.disable_near_goal and (
             hypot(request.pose.x_m - goal.x_m, request.pose.y_m - goal.y_m)
             <= self.forward_point_distance_m
         )
@@ -408,7 +428,10 @@ class PathAlignCritic(PathDistCritic):
         if self._field is None:
             raise RuntimeError("PathAlignCritic must be prepared before scoring")
         return self._field.score_pose(
-            _forward_pose(trajectory.poses[-1], self.forward_point_distance_m),
+            _forward_pose(
+                trajectory.poses[-1],
+                self._projection_sign * self.forward_point_distance_m,
+            ),
             stop_on_failure=False,
         )
 
@@ -439,7 +462,18 @@ class GoalAlignCritic(GoalDistCritic):
         super().__init__(grid)
         self.forward_point_distance_m = forward_point_distance_m
         self.disable_near_goal = disable_near_goal
+        self._projection_sign = 1.0
         self._disabled_near_goal = False
+
+    def set_projection_sign(self, sign: float) -> None:
+        if sign not in {-1.0, 1.0}:
+            raise ValueError("projection sign must be exactly -1 or 1")
+        self._projection_sign = sign
+
+    def set_disable_near_goal(self, disabled: bool) -> None:
+        if not isinstance(disabled, bool):
+            raise TypeError("disabled must be bool")
+        self.disable_near_goal = disabled
 
     @property
     def disabled_near_goal(self) -> bool:
@@ -476,7 +510,10 @@ class GoalAlignCritic(GoalDistCritic):
         if self._field is None:
             raise RuntimeError("GoalAlignCritic must be prepared before scoring")
         return self._field.score_pose(
-            _forward_pose(trajectory.poses[-1], self.forward_point_distance_m),
+            _forward_pose(
+                trajectory.poses[-1],
+                self._projection_sign * self.forward_point_distance_m,
+            ),
             stop_on_failure=False,
         )
 

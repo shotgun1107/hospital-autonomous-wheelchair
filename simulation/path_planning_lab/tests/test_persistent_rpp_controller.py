@@ -181,11 +181,15 @@ def test_translation_uses_window_for_lookahead_and_full_section_for_progress() -
     assert command.command.linear == pytest.approx(0.20)
 
 
-def test_terminal_stop_limit_and_curve_regulation_obey_one_tick_limits() -> None:
+def test_explicit_section_stop_limit_and_curve_regulation_obey_one_tick_limits() -> None:
     context, _seed, reference, _validation, full_window = _fixture()
-    terminal = reference.sections[-1]
-    terminal_pose = reference.knots[-1].pose
-    near_terminal = Pose2D(terminal_pose.x - 0.08, terminal_pose.y, terminal_pose.yaw)
+    stopped_translation = next(
+        section
+        for section in reversed(reference.sections)
+        if section.travel_direction is ReferenceTravelDirection.FORWARD
+    )
+    section_end = reference.knots[stopped_translation.last_knot_index].pose
+    near_terminal = Pose2D(section_end.x, section_end.y + 0.08, section_end.yaw)
     terminal_input = _tick_input(
         context,
         reference,
@@ -196,11 +200,12 @@ def test_terminal_stop_limit_and_curve_regulation_obey_one_tick_limits() -> None
     )
     terminal_command = _compute_translation_command(
         terminal_input,
-        terminal.section_index,
+        stopped_translation.section_index,
         PersistentRppConfig(),
     )
 
-    assert terminal_command.terminal_goal_active
+    assert not terminal_command.terminal_goal_active
+    assert terminal_command.explicit_stop_active
     assert terminal_command.stop_limited_speed_mps is not None
     assert terminal_command.command.linear == pytest.approx(0.175)
 
@@ -318,6 +323,7 @@ def test_public_wide_straight_left_completes_without_subgoal_reset(
     pose = reference.knots[0].pose
     twist = Twist2D()
     outputs = []
+    actual_twists = []
     maximum_tracking_error = 0.0
     subgoal_revisions = []
 
@@ -344,6 +350,7 @@ def test_public_wide_straight_left_completes_without_subgoal_reset(
         if tick == 0:
             assert controller.step(tick_input) is result
         outputs.append(result)
+        actual_twists.append(twist)
         maximum_tracking_error = max(
             maximum_tracking_error,
             0.0 if result.tracking_error_m is None else result.tracking_error_m,
@@ -375,11 +382,27 @@ def test_public_wide_straight_left_completes_without_subgoal_reset(
     translation = next(output for output in outputs if output.tracking_error_m is not None)
     assert len(translation.predicted_trajectory) == 41
     assert "local_window_endpoint_is_not_goal=true" in translation.decision_trace
-    if any(
-        section.travel_direction is ReferenceTravelDirection.REVERSE
-        for section in reference.sections
-    ):
-        pytest.xfail("R5 v1 is not qualified for the R4 v2 signed reference contract")
+    reverse_outputs = [
+        output
+        for output in outputs
+        if output.active_section_index is not None
+        and reference.sections[output.active_section_index].travel_direction
+        is ReferenceTravelDirection.REVERSE
+    ]
+    assert reverse_outputs
+    assert any(output.requested_twist.linear < 0.0 for output in reverse_outputs)
+    assert all(output.requested_twist.linear <= 0.0 for output in reverse_outputs)
+    assert min(output.requested_twist.linear for output in reverse_outputs) >= -0.10
+    first_reverse_command = next(
+        index
+        for index, output in enumerate(outputs)
+        if output.requested_twist.linear < 0.0
+    )
+    assert first_reverse_command >= 3
+    assert all(
+        abs(actual.linear) <= 0.01 and abs(actual.angular) <= 0.02
+        for actual in actual_twists[first_reverse_command - 3 : first_reverse_command]
+    )
     assert maximum_tracking_error <= 0.10
 
 

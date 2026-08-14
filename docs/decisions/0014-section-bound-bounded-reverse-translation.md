@@ -3,7 +3,9 @@
 - 상태: 사용자 승인 — 개인 연구 명세, 팀·제품 합의 전
 - 날짜: `2026-08-14`
 - 범위: R3→R4→R5 Python `simulation_only` 연구 계약
-- 구현 상태: R4 v2 signed reference 구현·clean public qualification 완료, R5 v2 controller 미구현
+- 구현 상태: R4 v2 signed reference 구현·clean public qualification 완료, R5 v2 공통 executor·RPP·DWB
+  signed 후보 구현 중간 상태. RPP 대표 case는 완료했으나 DWB reverse 종점 deadlock이 남아 있어
+  R5 v2 public qualification은 미완료
 
 ## 배경
 

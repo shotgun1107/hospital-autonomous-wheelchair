@@ -208,6 +208,23 @@ def test_goal_align_can_disable_forward_projection_close_to_a_section_goal() -> 
     assert not critic.disabled_near_goal
 
 
+def test_reverse_projection_keeps_alignment_critics_active_near_section_goal() -> None:
+    grid = DwbCriticGrid(width=8, height=8, resolution_m=0.1)
+    path = (DwbPose2D(0.35, 0.55, pi / 2.0), DwbPose2D(0.35, 0.45, pi / 2.0))
+    path_align = PathAlignCritic(grid, forward_point_distance_m=0.2)
+    goal_align = GoalAlignCritic(
+        grid,
+        forward_point_distance_m=0.2,
+        disable_near_goal=True,
+    )
+    for critic in (path_align, goal_align):
+        critic.set_path(path)
+        critic.set_projection_sign(-1.0)
+        critic.set_disable_near_goal(False)
+        assert critic.prepare(_request(0.35, 0.50, yaw=pi / 2.0))
+        assert not critic.disabled_near_goal
+
+
 def test_oscillation_rejects_second_sign_reversal_until_reset_distance() -> None:
     critic = OscillationCritic(reset_distance_m=0.05, reset_angle_rad=0.2)
 
