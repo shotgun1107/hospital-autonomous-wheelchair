@@ -1,6 +1,6 @@
 # R3 Bounded 공간 Oracle 상세 명세
 
-- 문서 상태: 사용자 개인 연구 입력, 구현 전 동결 후보
+- 문서 상태: 사용자 개인 연구 입력, core L1 구현·public qualification 미완료
 - 작성일: `2026-08-14`
 - 적용 범위: Python `simulation_only`, 공개 synthetic map, 실제 사람 미탑승
 - 선행 단계: R2-A ground-truth 시간 경로 연구
@@ -151,6 +151,7 @@ SpatialRejoinGoal
   position_tolerance_m = 0.05
   heading_tolerance_rad = 10deg
   require_stopped = true
+  minimum_side_excursion_m = 0.10
 ```
 
 `require_stopped`는 R3의 추상 terminal state에 선속도·각속도 `0` 표식을 요구한다는 뜻이다.
@@ -160,9 +161,13 @@ R3에는 시간·가감속·actuator가 없으므로 실제 제동 완료를 증
 - start와 goal footprint가 처음부터 static·forbidden·allowed 경계를 위반하면
   `SPATIALLY_INFEASIBLE`의 명시적 termination reason으로 기록한다. pose 자체가 non-finite이거나
   map frame이 다르면 `INVALID_INPUT`이다.
-- start와 goal이 tolerance를 이미 만족하고 footprint가 안전하면 1-point path를
-  `SPATIALLY_FEASIBLE`로 허용한다.
+- start와 goal이 tolerance를 이미 만족해도 LEFT/RIGHT 공간 기동은 최소 side excursion을
+  증명해야 하므로 reference 위 1-point path를 `SPATIALLY_FEASIBLE`로 허용하지 않는다.
 - goal heading은 request의 명시적 `rejoin_goal.pose.yaw`를 사용한다.
+- LEFT/RIGHT request는 departure 뒤 지정 side의 signed lateral offset이 한 번 이상
+  `minimum_side_excursion_m`에 도달해야 한다. 이를 만족하지 않은 직진 path는 feasible이 아니다.
+- `UNSPECIFIED`은 LEFT·RIGHT lane 각각에서 같은 최소 이탈을 요구한다. Actor를 제거했다는 이유로
+  reference 직진 path를 좌·우 우회 가능성 근거로 사용하지 않는다.
 
 ### 5.4 기동 side
 
@@ -215,13 +220,19 @@ SpatialLatticeState
   x_cell
   y_cell
   heading_index
+  required_excursion_reached
 ```
 
 - 위치 index는 source grid cell center를 기준으로 한다.
 - heading index는 `[0, 2π)`를 8개 bin으로 정규화한다.
-- start와 goal이 lattice center에 정확히 놓이지 않아도 exact anchor connector로 인접 lattice
-  state에 연결한다.
+- `required_excursion_reached`는 지정 side offset이 `minimum_side_excursion_m` 이상이 된 뒤에만
+  `true`가 되고 같은 search lane 안에서 다시 `false`로 돌아가지 않는다. 이 phase bit가 다른
+  state는 pose·heading이 같아도 별도 state다.
+- start와 goal이 lattice center에 정확히 놓이지 않아도 exact anchor connector로 해당 cell과
+  Chebyshev 1-cell 이웃의 8 heading state를 결정론적 cell·heading 순서로 평가한다.
 - connector도 일반 primitive와 같은 swept-footprint validator를 통과해야 한다.
+- anchor connector 후보도 `generated_edges`와 resource limit에 포함하며, 안전한 connector가
+  하나도 없으면 해당 bounded lattice lane은 exhaustive no-entry/no-exit로 종료한다.
 - 동일 state의 tie는 `(x_cell, y_cell, heading_index)` 순으로 고정한다.
 
 ### 6.2 primitive
@@ -390,6 +401,8 @@ max_open_states = 250,000
 - `count == limit`에서 더 탐색할 state가 없으면 정상 exhaustive 종료다.
 - 실제 N+1 state가 필요한 시점에만 resource limit으로 판정한다.
 - elapsed time, CPU 사용률, cache hit ratio는 taxonomy에 넣지 않는다.
+- `UNSPECIFIED`은 LEFT·RIGHT를 서로 독립된 bounded lane으로 실행하므로 위 limit은 side lane별로
+  적용한다. 합친 result의 count는 두 lane 합계여서 개별 limit의 2배까지 될 수 있다.
 
 ### `INVALID_INPUT`
 
@@ -582,22 +595,35 @@ outputs/spatial-oracle-public-<UTC>-<HEAD>/
 - 생성 output은 기본 Git 대상이 아니다.
 - R3에서 hidden을 생성·조회·실행하지 않는다.
 
-## 16. 구현 예정 경계
+## 16. 구현 경계와 현재 상태
 
-명세 승인 뒤 다음 신규 모듈을 우선 검토한다.
+2026-08-14 core L1에서 다음을 구현했다.
 
 ```text
 src/hospital_path_lab/spatial_oracle_contracts.py
 src/hospital_path_lab/spatial_oracle_lattice.py
 src/hospital_path_lab/spatial_oracle_validation.py
 src/hospital_path_lab/spatial_oracle_projection.py
-src/hospital_path_lab/spatial_oracle_reporting.py
-scripts/run_spatial_oracle_public.py
 tests/test_spatial_oracle_contracts.py
 tests/test_spatial_oracle_lattice.py
 tests/test_spatial_oracle_validation.py
 tests/test_spatial_oracle_projection.py
+```
+
+core 표적 `28 passed`에는 hash·taxonomy·resource boundary·회전 sweep·LEFT/RIGHT·공개
+`same-direction-wide-r00` static projection이 포함된다. 구현 중 직진 path가 LEFT/RIGHT를
+거짓 통과하지 않도록 최소 side excursion `0.10m`와 phase bit를 추가했다. search의 빠른
+clearance lower bound는 후보 거부·승인 전처리일 뿐이며 선택 path는 새 geometry evaluator를
+사용하는 독립 validator로 다시 검사한다. 14-process 파일 분할 전체 회귀는 `719 passed`,
+failure·error·skip `0`으로 완료했다. 해당 병렬 wall-clock은 timing 자격 근거가 아니다.
+
+다음은 아직 미구현이다.
+
+```text
+src/hospital_path_lab/spatial_oracle_reporting.py
+scripts/run_spatial_oracle_public.py
 tests/test_spatial_oracle_public.py
+public complete/receipt
 ```
 
 의존 방향은 다음으로 고정한다.
@@ -654,6 +680,10 @@ evaluator label ────────────────→ reporting on
 - 관련 영향권과 전체 회귀 통과
 - R2-B·hidden·제품 결정에 손대지 않음
 
+현재 core L1은 contract·validator·lattice·straight public projection까지만 충족한다. reporting,
+전체 public matrix, process 병렬 실행과 receipt가 없으므로 이 목록 전체를 완료했다고 판정하지
+않는다.
+
 ## 19. R4 전달 계약
 
 R3 feasible 결과 중 independent validator를 통과한 것만 R4 후보로 전달한다.
@@ -681,6 +711,8 @@ R4는 이를 controller가 소비할 local reference·subpath revision 계약으
 
 - v1 lattice는 translation+in-place rotation만 사용하므로 smooth curvature 가능성을 일반화하지
   못한다.
+- start·goal anchor connector는 1-cell 이웃 안의 추상 swept connector이며 실제 차체 motion
+  primitive가 아니다. R4 이후 시간 경로가 추종 가능성을 별도로 검증해야 한다.
 - `SPATIALLY_INFEASIBLE`은 bounded region·8 heading bins·v1 primitive 안의 음성 판정이다.
 - simulation-only reverse primitive가 실제 차체 후진 허용을 결정하지 않는다.
 - static projection은 Actor와 시간 충돌을 제거하므로 temporal feasibility를 증명하지 않는다.
