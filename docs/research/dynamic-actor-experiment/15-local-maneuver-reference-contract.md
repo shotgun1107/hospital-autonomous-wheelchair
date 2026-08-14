@@ -3,7 +3,7 @@
 ## 1. 문서 상태와 목적
 
 - 작성일: `2026-08-14`
-- 상태: R4-1~R4-5 계약·builder·validator·window·public runner 구현 완료, R4-6 실행 미수행
+- 상태: R4-1~R4-6 구현·공개 qualification·전체 회귀 완료
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
   - [`R3 bounded spatial oracle`](14-bounded-spatial-oracle.md)
@@ -76,8 +76,9 @@ R4는 한 번에 controller까지 연결하지 않는다.
 3. `R4-3`: 독립 reference validator와 source evidence 결박
 4. `R4-4`: sliding window manager와 stale 입력 거부
 5. `R4-5`: public corpus runner·보고서·결정론 검증
+6. `R4-6`: clean source 전체 public qualification·receipt·마지막 전체 회귀
 
-현재 구현된 범위는 `R4-1~R4-5`다. R4-2는 feasible·독립 검증·hash/provenance가 일치한
+현재 구현·검증된 범위는 `R4-1~R4-6`이다. R4-2는 feasible·독립 검증·hash/provenance가 일치한
 R3 source만 `SPATIAL_ONLY` LEFT/RIGHT reference로 변환한다. resource limit·invalid·infeasible은
 경로로 바꾸지 않으며, multi-segment projection은 정상 limitation으로 남긴다. R4-3는 builder를
 import하지 않고 context·reference·spatial seed만 받아 source index, 회전·정지 marker,
@@ -91,8 +92,11 @@ session/path는 상태를 바꾸지 않고 거부한다. 대표 public 23-knot �
 21-case의 입력 순서와 source taxonomy를 보존한다. 독립 case는 process 병렬화하고 각
 reference의 knot/window sequence는 같은 manager에서 직렬 실행하며, completion order와 무관하게
 input ordinal로 재정렬한다. serial/process parity와 repeat determinism, relation audit,
-partial/complete/receipt 수명주기를 구현했다. R4-5 전용 9개와 R3/R4 직접 영향권 103개 시험이
-통과했으며, clean source에서 full 21-case·receipt를 만드는 R4-6은 아직 실행하지 않았다. reference가
+partial/complete/receipt 수명주기를 구현했다. clean commit `f43fbbf`의 R4-6에서 public
+`21/21`, hard·relation failure 0, serial/process parity와 repeat determinism PASS, receipt 생성을
+확인했고 전체 회귀 `794 passed`를 완료했다. 세부 증거는
+[`R4 공개 qualification 결과`](r4-public-local-reference-qualification-result-2026-08-14.md)에
+기록했다. reference가
 존재한다는 사실은 이동 허가, Actor online 안전성, controller 추종 성공 또는 제품 알고리즘
 채택을 의미하지 않는다.
 

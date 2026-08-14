@@ -119,8 +119,11 @@ session에서 subgoal revision `0→4`, terminal window `(15..22)`까지 통과�
 R4-5는 R3 public 21-case를 같은 순서로 받아 feasible LEFT/RIGHT 8건만 reference 후보로
 변환하고, infeasible·resource·invalid를 각각 `NO_REFERENCE`·`SEARCH_INCONCLUSIVE`·
 `INVALID_INPUT`으로 보존한다. case는 process 병렬화하고 한 session의 window 순회는 직렬로
-유지한다. 전용 9개와 R3/R4 영향권 103개 시험이 통과했다. clean commit에서 전체 21-case,
-serial/process parity, repeat determinism과 qualification receipt를 실행하는 R4-6은 아직 미수행이다.
+유지한다. 전용 9개와 R3/R4 영향권 103개 시험이 통과했다. clean commit `f43fbbf`의 R4-6에서
+전체 public `21/21`, hard·relation failure 0, serial/process parity와 repeat determinism PASS,
+qualification receipt 생성 및 전체 회귀 `794 passed`를 확인했다. 상세 결과는
+[`R4 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r4-public-local-reference-qualification-result-2026-08-14.md)에
+기록했다.
 
 ### v6 재자격 진행 상태 — 2026-08-11
 
