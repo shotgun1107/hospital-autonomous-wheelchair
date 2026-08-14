@@ -3,7 +3,8 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: 상세 설계 동결 후보, `R5-1~R5-5` 구현 및 대표 RPP external-gate 종단시험 완료, `R5-6` 미시작
+- 상태: 상세 설계 동결 후보, `R5-1~R5-6` 구현 및 대표 paired runner 종단시험 완료,
+  R5-A public full qualification 미실행
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -1042,6 +1043,27 @@ scripts/run_persistent_controller_public.py
 - process episode 병렬화, input ordinal merge
 
 완료 Gate: representative→읽기 전용 감사→public full 순서 통과.
+
+구현 상태(`2026-08-14`):
+
+- [`persistent_controller_reporting.py`](../../../simulation/path_planning_lab/src/hospital_path_lab/persistent_controller_reporting.py)와
+  [`run_persistent_controller_public.py`](../../../simulation/path_planning_lab/scripts/run_persistent_controller_public.py)에
+  R4 21-case 순서를 보존하는 public-only runner·JSON/Markdown/PNG writer를 구현했다.
+- ready 8개는 한 worker에서 fresh RPP 뒤 fresh DWB를 동일한 immutable R4 source·초기조건으로
+  순차 실행하고, non-ready 13개는 controller call `0`으로 닫는다. 독립 case만 process로
+  병렬화하고 parent가 input ordinal로 재정렬한다.
+- 축소 tick·case 실행은 `partial-state.json`만 남기며 complete state와 receipt를 생성할 수 없다.
+  clean full run도 21개 완료, hard failure 0, 기능·관계·repeat·serial/process parity 및 final
+  source recheck가 모두 통과해야 receipt를 생성한다.
+- tick-1 21-case smoke에서 ready RPP/DWB 결과 `8/8`씩, non-ready controller call `0/13`,
+  PNG `21`, receipt `0`을 확인했다. 대표 `wide-straight-left`는 runner 경로에서도 RPP
+  completion tick `417`, DWB completion tick `393`, planner deadlock·hard failure `0`이었다.
+- 최초 deadlock monitor는 planned stop/rotation과 자기 근처를 재통과하는 return 구간을
+  오분류했다. frozen 3초/0.02m 기준은 유지하고 실제 translation section 안에서 관찰된 최대
+  순방향 진행만 계산하도록 원인 계층을 바로잡았다.
+- reporting·DWB critic·adapter·pipeline·executor·safety·authority·timing 집중 영향권
+  `99 passed`, Ruff·compile·diff 검사를 통과했다. public full·receipt·전체 회귀는 아직
+  실행하지 않았고 hidden은 사용하지 않았다.
 
 ### R5-7 — 최종 감사·회귀
 

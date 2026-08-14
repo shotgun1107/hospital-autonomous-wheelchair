@@ -168,8 +168,8 @@ Oscillation 상태를 보존한다. scoring goal의 forward 거리 안에서는 
 safe selected rollout과 완전한 candidate diagnostics를 반환했다. 전용 `6 passed`, 기존 DWB
 직접 영향권 포함 `130 passed`, 별도 R5 영향권 `50 passed`를 확인했다. shared gate 연결,
 20Hz DWB closed loop는 tick `393`·`19.65s`, 최소 정적 여유 약 `0.23562m`, 최대 tracking error
-약 `0.04803m`, external gate rejection `0`으로 대표 경로를 완료했다. 8-case public runner와
-전체 회귀는 아직 미구현·미실행이다. 관련 집중 영향권은 `93 passed`였다.
+약 `0.04803m`, external gate rejection `0`으로 대표 경로를 완료했다. 8-case public full과
+전체 회귀는 아직 미실행이다. 관련 집중 영향권은 `93 passed`였다.
 [`persistent_controller_pipeline.py`](src/hospital_path_lab/persistent_controller_pipeline.py)와
 [`test_persistent_controller_pipeline.py`](tests/test_persistent_controller_pipeline.py)는 R5-5에서
 두 persistent controller result를 동일한 reference-bound proposal과 shared gate에 연결한다.
@@ -181,7 +181,16 @@ planned stop은 protective
 stop으로 집계하지 않으며, 보호정지 뒤 epoch가 바뀌면 controller를 재호출하지 않고 HOLD를
 유지한다. 이번 planned-stop rollout 수정 뒤 RPP·executor·pipeline·safety·authority·timing
 집중 영향권 `80 passed`를 통과했다. 최신 전체 회귀는 실행하지 않았다.
-8-case 종단 기능, full public runner·receipt와 전체 회귀는 R5-6/7까지 미구현·미실행이다.
+8-case 종단 full 실행·receipt와 전체 회귀는 아직 미실행이다.
+
+[`persistent_controller_reporting.py`](src/hospital_path_lab/persistent_controller_reporting.py)와
+[`run_persistent_controller_public.py`](scripts/run_persistent_controller_public.py)는 R5-6에서 R4
+21-case 순서를 그대로 소비한다. ready 8개는 같은 worker에서 fresh RPP→fresh DWB로 실행하고,
+non-ready 13개는 controller call 0을 검사한다. 독립 case만 process 병렬화하며 결과는 input
+ordinal로 합친다. tick-1 전체 smoke는 RPP/DWB `8/8`, non-ready 무호출 `13/13`, PNG `21`,
+receipt `0`으로 끝났고, 대표 full pair는 RPP tick `417`, DWB tick `393`, hard failure·planner
+deadlock `0`이었다. 축소·dirty 실행은 partial report만 만들 수 있다. clean public full,
+qualification receipt와 전체 회귀는 아직 실행하지 않았다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를
