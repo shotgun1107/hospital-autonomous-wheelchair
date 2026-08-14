@@ -3,7 +3,7 @@
 ## 1. 문서 상태와 목적
 
 - 작성일: `2026-08-14`
-- 상태: R4-1 계약·revision 및 R4-2 R3 source→canonical builder 구현 완료, R4-3 이후 미구현
+- 상태: R4-1 계약·revision, R4-2 builder와 R4-3 독립 validator 구현 완료, R4-4 이후 미구현
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
   - [`R3 bounded spatial oracle`](14-bounded-spatial-oracle.md)
@@ -77,9 +77,13 @@ R4는 한 번에 controller까지 연결하지 않는다.
 4. `R4-4`: sliding window manager와 stale 입력 거부
 5. `R4-5`: public corpus runner·보고서·결정론 검증
 
-현재 구현된 범위는 `R4-1~R4-2`다. R4-2는 feasible·독립 검증·hash/provenance가 일치한
+현재 구현된 범위는 `R4-1~R4-3`이다. R4-2는 feasible·독립 검증·hash/provenance가 일치한
 R3 source만 `SPATIAL_ONLY` LEFT/RIGHT reference로 변환한다. resource limit·invalid·infeasible은
-경로로 바꾸지 않으며, multi-segment projection은 정상 limitation으로 남긴다. reference가
+경로로 바꾸지 않으며, multi-segment projection은 정상 limitation으로 남긴다. R4-3는 builder를
+import하지 않고 context·reference·spatial seed만 받아 source index, 회전·정지 marker,
+`DEPART→BYPASS→RETURN→REJOIN`, side·rejoin 및 5 mm/0.5° oriented swept clearance를 다시
+검사한다. 대표 public `wide-straight-left`는 616개 swept sample, 최소 여유 `0.244508m`로
+통과했다. reference가
 존재한다는 사실은 이동 허가, Actor online 안전성, controller 추종 성공 또는 제품 알고리즘
 채택을 의미하지 않는다.
 
