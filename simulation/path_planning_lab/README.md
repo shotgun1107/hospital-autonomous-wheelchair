@@ -161,17 +161,22 @@ rejection `0`으로 terminal까지 완료했다.
 [`persistent_adapter.py`](src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py)와
 [`test_persistent_dwb_adapter.py`](tests/test_persistent_dwb_adapter.py)는 R5-4에서 DWB의 full
 session reset과 local scoring-window update를 분리한다. full terminal은 RotateToGoal에 고정하고
-window update는 4개 path critic만 갱신해 Oscillation 상태를 보존한다. 대표 public
+window update는 현재 active translation section의 exact slice로 4개 path critic만 갱신해
+Oscillation 상태를 보존한다. scoring goal의 forward 거리 안에서는 미래 회전 경계 너머로
+`GoalAlign`을 투영하지 않는다. 대표 public
 `wide-straight-left` 첫 translation tick은 reset `1`, scoring update `1`, 후보 `217`, 41-pose
 safe selected rollout과 완전한 candidate diagnostics를 반환했다. 전용 `6 passed`, 기존 DWB
 직접 영향권 포함 `130 passed`, 별도 R5 영향권 `50 passed`를 확인했다. shared gate 연결,
-20Hz DWB closed loop, 8-case public runner와 전체 회귀는 아직 미구현·미실행이다.
+20Hz DWB closed loop는 tick `393`·`19.65s`, 최소 정적 여유 약 `0.23562m`, 최대 tracking error
+약 `0.04803m`, external gate rejection `0`으로 대표 경로를 완료했다. 8-case public runner와
+전체 회귀는 아직 미구현·미실행이다. 관련 집중 영향권은 `93 passed`였다.
 [`persistent_controller_pipeline.py`](src/hospital_path_lab/persistent_controller_pipeline.py)와
 [`test_persistent_controller_pipeline.py`](tests/test_persistent_controller_pipeline.py)는 R5-5에서
 두 persistent controller result를 동일한 reference-bound proposal과 shared gate에 연결한다.
 proposal/context의 binding과 current gate epoch가 다르면 `INVALID_REFERENCE`로 제한 감속·hold하며,
 old tick·51ms·stale 결과를 새 명령으로 적용하지 않는다. 대표 `wide-straight-left`에서 RPP
 60-tick prefix와 전체 terminal completion, 실제 DWB 첫 tick의 external gate 재검사를 확인했다.
+대표 DWB 전체 terminal completion도 확인했다.
 planned stop은 protective
 stop으로 집계하지 않으며, 보호정지 뒤 epoch가 바뀌면 controller를 재호출하지 않고 HOLD를
 유지한다. 이번 planned-stop rollout 수정 뒤 RPP·executor·pipeline·safety·authority·timing

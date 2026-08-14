@@ -425,17 +425,38 @@ class GoalAlignCritic(GoalDistCritic):
     This implements the same explicit geometry on the compact grid.
     """
 
-    def __init__(self, grid: DwbCriticGrid, *, forward_point_distance_m: float = 0.325) -> None:
+    def __init__(
+        self,
+        grid: DwbCriticGrid,
+        *,
+        forward_point_distance_m: float = 0.325,
+        disable_near_goal: bool = False,
+    ) -> None:
         if not isfinite(forward_point_distance_m) or forward_point_distance_m < 0.0:
             raise ValueError("forward_point_distance_m must be finite and non-negative")
+        if not isinstance(disable_near_goal, bool):
+            raise TypeError("disable_near_goal must be bool")
         super().__init__(grid)
         self.forward_point_distance_m = forward_point_distance_m
+        self.disable_near_goal = disable_near_goal
+        self._disabled_near_goal = False
+
+    @property
+    def disabled_near_goal(self) -> bool:
+        return self._disabled_near_goal
 
     def prepare(self, request: DwbGeneratorRequest) -> bool:
         if not self.path:
             self._field = None
             return False
         goal = self.path[-1]
+        self._disabled_near_goal = self.disable_near_goal and (
+            hypot(request.pose.x_m - goal.x_m, request.pose.y_m - goal.y_m)
+            <= self.forward_point_distance_m
+        )
+        if self._disabled_near_goal:
+            self._field = None
+            return True
         bearing = atan2(goal.y_m - request.pose.y_m, goal.x_m - request.pose.x_m)
         shifted_goal = DwbPose2D(
             goal.x_m + self.forward_point_distance_m * cos(bearing),
@@ -450,12 +471,18 @@ class GoalAlignCritic(GoalDistCritic):
         return True
 
     def score(self, trajectory: DwbTrajectory) -> float:
+        if self._disabled_near_goal:
+            return 0.0
         if self._field is None:
             raise RuntimeError("GoalAlignCritic must be prepared before scoring")
         return self._field.score_pose(
             _forward_pose(trajectory.poses[-1], self.forward_point_distance_m),
             stop_on_failure=False,
         )
+
+    def reset(self) -> None:
+        super().reset()
+        self._disabled_near_goal = False
 
 
 class _CommandTrend:

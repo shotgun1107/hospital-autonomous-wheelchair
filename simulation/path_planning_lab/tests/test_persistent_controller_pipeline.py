@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from hospital_path_lab.contracts import RobotState, Twist2D
+from hospital_path_lab.contracts import Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DynamicHoldReason,
     DynamicMotionState,
@@ -211,6 +211,42 @@ def test_real_dwb_selected_command_is_rechecked_by_the_external_shared_gate(
     assert record.safety_decision.command == record.controller_result.requested_twist
     assert record.safety_decision.primary_hold_reason is None
     assert len(record.controller_result.predicted_trajectory) == 41
+
+
+def test_dwb_restarts_from_rest_before_the_first_planned_stop(
+    public_wide_left,
+) -> None:
+    context = public_wide_left.build_context
+    reference = public_wide_left.reference_set.candidates[0]
+    pipeline = PersistentControllerPipeline(
+        controller=PersistentSourceDerivedDwbController(),
+        build_context=context,
+        full_reference=reference,
+        validation=public_wide_left.validations[0],
+        initial_robot_state=RobotState(
+            Pose2D(1.38, 0.8933, -0.0304),
+            Twist2D(),
+        ),
+        initial_tick=250,
+    )
+    observation, prediction = _fresh_empty(context, pipeline.tick_id)
+
+    record = pipeline.step(
+        observation_snapshot=observation,
+        prediction_set=prediction,
+    )
+
+    assert record.controller_result is not None
+    assert record.controller_result.status is PersistentControllerStatus.COMMAND_FOUND
+    assert record.controller_result.requested_twist.linear > 0.0
+    assert "scoring_path_source=active_translation_section" in (
+        record.controller_result.decision_trace
+    )
+    assert "goal_align_disabled_near_scoring_goal=true" in (
+        record.controller_result.decision_trace
+    )
+    assert record.safety_decision.proposal_accepted
+    assert record.safety_decision.primary_hold_reason is None
 
 
 def test_reference_binding_missing_or_tampered_never_applies_motion(

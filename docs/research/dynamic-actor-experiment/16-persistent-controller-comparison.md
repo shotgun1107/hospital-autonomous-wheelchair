@@ -507,7 +507,7 @@ begin_reference_session(full_reference)
   → 모든 critic reset 1회
   → immutable terminal goal·session binding 설치
 
-update_scoring_window(local_window)
+update_scoring_window(active_translation_slice(local_window))
   → PathDist / PathAlign / GoalDist / GoalAlign의 local field 갱신
   → Oscillation·section executor·session state 유지
   → local window endpoint를 final goal로 latch하지 않음
@@ -515,7 +515,10 @@ update_scoring_window(local_window)
 
 `RotateToGoalCritic`의 goal은 immutable full terminal에 결박한다. R4 intermediate `ROTATE`와
 planned stop은 common executor가 처리하므로 DWB가 window endpoint를 goal로 보고 stop/rotate하면
-안 된다.
+안 된다. 네 path critic은 현재 executor가 위임한 translation section의 exact window slice만
+점수화한다. 미래 `ROTATE`·다음 translation section은 활성화되기 전에 현재 후보 점수에 섞지
+않는다. scoring goal의 forward-point 거리 안에서는 `GoalAlign`의 앞쪽 투영을 끄되
+`GoalDist`·`PathDist`·`PathAlign`, 후보 안전검사와 외부 gate는 유지한다.
 
 ### 13.3 후보 안전과 외부 gate
 
@@ -955,7 +958,8 @@ local_algorithms/dwb_reference/persistent_adapter.py
   `persistent_dwb_reference` adapter를 구현했다. `PersistentDwbCoreSession`은
   `begin_reference_session(full_reference)`와 `update_scoring_window(local_window)`를 분리하며,
   전자는 전체 critic을 1회 reset하고 후자는 `PathDist`·`PathAlign`·`GoalDist`·`GoalAlign`의
-  저장 path만 갱신한다.
+  저장 path만 갱신한다. 점수화 path는 current window 전체가 아니라 executor가 현재 위임한
+  translation section의 exact slice다.
 - `RotateToGoalCritic`은 immutable full reference terminal에만 결박된다. fixed window replay에서
   local endpoint에 로봇을 놓아도 rotate goal window가 latch되지 않았고, window 변경 뒤에도
   Oscillation sign-reversal restriction과 full-terminal goal이 유지됐다.
@@ -967,6 +971,15 @@ local_algorithms/dwb_reference/persistent_adapter.py
   count, legal/illegal/short-circuit count, selected index·score와 critic별 비용은 result
   diagnostics에 보존한다. 동일 tick 동일 입력은 같은 result object를 반환하고, 동일 tick의
   다른 입력은 zero protective result로 거부한다.
+- 종단 재생에서 첫 구현은 tick `250`부터 `(1.380, 0.893)`에서 영명령을 반복했다. 2cm grid에서
+  낮은 전진 후보가 zero와 동점이고, 더 빠른 후보의 `GoalAlign` forward point가 계획된 회전
+  경계 너머 장애물 쪽으로 투영된 것이 첫 원인이었다. near-goal projection을 R5 adapter에서만
+  끈 뒤에는 미래 세로 우회 section까지 현재 점수에 섞여 `(1.548, 0.980)`으로 끌려가는 두 번째
+  교착이 드러났다. active translation slice만 점수화하도록 분리해 두 원인을 닫았다.
+- 수정 후 대표 DWB는 tick `393`·simulation time `19.65s`에 external gate rejection `0`, 최소
+  정적 여유 약 `0.23562m`, 최대 tracking error 약 `0.04803m`로 terminal 완료했다.
+- DWB critic·persistent adapter·pipeline·executor·dynamic safety·authority·timing 집중 영향권
+  `93 passed`를 확인했다. 최신 전체 회귀는 실행하지 않았다.
 - 전용 `6 passed`, 기존 source-derived DWB 직접 영향권을 합친 `130 passed`, 별도 R5
   contract·executor·RPP·window 영향권 `50 passed`, Ruff·compile·diff 검사를 통과했다. 대표
   1 tick의 Python wall-clock은 기능 합격 근거가 아니며 native timing은 R7에 남긴다.
@@ -1008,11 +1021,12 @@ persistent_controller_pipeline.py
   tick `417`·simulation time `20.85s`에 완료했으며 external gate rejection·failure는 `0`,
   최소 정적 여유는 약 `0.15967m`였다. 또한
   실제 persistent DWB 첫 tick의 217-candidate/41-pose 선택 결과도 외부 gate가 다시 검사해
-  허용했다. old tick, window hash·epoch 변조, binding 한쪽 누락, 51ms와 stale 입력은 비영점
+  허용했고, DWB 전체 종단도 tick `393`·`19.65s`, gate rejection `0`으로 완료했다. old tick,
+  window hash·epoch 변조, binding 한쪽 누락, 51ms와 stale 입력은 비영점
   새 명령 적용 `0`으로 차단했다.
 - 이번 수정 뒤 RPP·executor·pipeline·dynamic safety·authority·timing 집중 영향권
   `80 passed`를 확인했다. 최신 전체 회귀는 실행하지 않았다.
-  이 단계는 대표 RPP 종단과 fault boundary 증거다. RPP/DWB 8-case 종단 완료,
+  이 단계는 대표 RPP·DWB 종단과 fault boundary 증거다. RPP/DWB 8-case 종단 완료,
   full public runner·receipt와 전체 회귀는 R5-6/7에 남아 있다.
   따라서 제품 controller 채택이나 실제 사람 안전 증거가 아니다.
 

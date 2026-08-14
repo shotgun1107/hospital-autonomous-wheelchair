@@ -192,6 +192,22 @@ def test_path_align_disables_forward_point_close_to_goal() -> None:
     assert critic.score(_trajectory(DwbPose2D(99.0, 99.0, 0.0))) == 0.0
 
 
+def test_goal_align_can_disable_forward_projection_close_to_a_section_goal() -> None:
+    critic = GoalAlignCritic(
+        DwbCriticGrid(width=8, height=4, resolution_m=0.1),
+        forward_point_distance_m=0.2,
+        disable_near_goal=True,
+    )
+    critic.set_path((DwbPose2D(0.05, 0.15, 0.0), DwbPose2D(0.35, 0.15, 0.0)))
+
+    assert critic.prepare(_request(0.25, 0.15))
+    assert critic.disabled_near_goal
+    assert critic.score(_trajectory(DwbPose2D(99.0, 99.0, 0.0))) == 0.0
+
+    critic.reset()
+    assert not critic.disabled_near_goal
+
+
 def test_oscillation_rejects_second_sign_reversal_until_reset_distance() -> None:
     critic = OscillationCritic(reset_distance_m=0.05, reset_angle_rad=0.2)
 

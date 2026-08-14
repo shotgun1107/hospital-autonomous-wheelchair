@@ -248,6 +248,7 @@ def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_l
     )
     assert "terminal_goal_source=immutable_full_reference" in result.candidate_diagnostics
     assert "local_window_endpoint_is_not_rotate_goal=true" in result.decision_trace
+    assert "scoring_path_source=active_translation_section" in result.decision_trace
     assert controller.selected_safety_evidence is not None
     assert controller.selected_safety_evidence.safe
 

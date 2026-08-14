@@ -59,7 +59,7 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v1"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v2"
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -214,6 +214,7 @@ class _PersistentDwbStack:
     session_core: PersistentDwbCoreSession
     adapter: SourceDerivedDwbController
     safety_critic: ProjectDynamicSafetyConstraintCritic
+    goal_align_critic: GoalAlignCritic
 
 
 class PersistentSourceDerivedDwbController:
@@ -299,7 +300,10 @@ class PersistentSourceDerivedDwbController:
 
         try:
             stack = self._ensure_stack(tick_input)
-            scoring_path = _window_dwb_path(tick_input)
+            scoring_path = _active_translation_dwb_path(
+                tick_input,
+                decision.active_section_index,
+            )
             if self._needs_session_bind(tick_input):
                 stack.session_core.begin_reference_session(
                     _full_reference_dwb_path(tick_input),
@@ -327,6 +331,11 @@ class PersistentSourceDerivedDwbController:
             f"persistent_dwb_version={PERSISTENT_DWB_ADAPTER_VERSION}",
             "terminal_goal_source=immutable_full_reference",
             "local_window_endpoint_is_not_rotate_goal=true",
+            "scoring_path_source=active_translation_section",
+            (
+                "goal_align_disabled_near_scoring_goal="
+                f"{str(stack.goal_align_critic.disabled_near_goal).lower()}"
+            ),
             *inner.decision_trace,
         )
         if inner.status is PlanStatus.FOUND:
@@ -387,6 +396,7 @@ class PersistentSourceDerivedDwbController:
         goal_align = GoalAlignCritic(
             grid,
             forward_point_distance_m=config.forward_point_distance_m,
+            disable_near_goal=True,
         )
         path_align = PathAlignCritic(
             grid,
@@ -433,7 +443,13 @@ class PersistentSourceDerivedDwbController:
             snapshot_binders=(safety,),
             generator_config=config.generator,
         )
-        self._stack = _PersistentDwbStack(signature, session_core, adapter, safety)
+        self._stack = _PersistentDwbStack(
+            signature,
+            session_core,
+            adapter,
+            safety,
+            goal_align,
+        )
         self._stack_build_count += 1
         self._bound_reference_session_id = None
         self._bound_full_reference_hash = None
@@ -562,8 +578,36 @@ def _full_reference_dwb_path(
     return tuple(_dwb_pose(knot.pose) for knot in tick_input.full_reference.knots)
 
 
-def _window_dwb_path(tick_input: PersistentControllerTickInput) -> tuple[DwbPose2D, ...]:
-    return tuple(_dwb_pose(knot.pose) for knot in tick_input.local_window.knots)
+def _active_translation_dwb_path(
+    tick_input: PersistentControllerTickInput,
+    active_section_index: int,
+) -> tuple[DwbPose2D, ...]:
+    section = next(
+        (
+            candidate
+            for candidate in tick_input.full_reference.sections
+            if candidate.section_index == active_section_index
+        ),
+        None,
+    )
+    if section is None or section.section_kind not in _TRANSLATION_SECTION_KINDS:
+        raise ValueError("active DWB scoring section must be translational")
+    window_section = next(
+        (
+            candidate
+            for candidate in tick_input.local_window.sections
+            if candidate.section_index == active_section_index
+        ),
+        None,
+    )
+    if window_section != section:
+        raise ValueError("active translation section must be exact in current window")
+    poses = tuple(
+        _dwb_pose(knot.pose)
+        for knot in tick_input.local_window.knots
+        if section.first_knot_index <= knot.knot_index <= section.last_knot_index
+    )
+    return _freeze_dwb_path(poses, "active translation scoring path")
 
 
 def _freeze_dwb_path(path: Sequence[DwbPose2D], label: str) -> tuple[DwbPose2D, ...]:
