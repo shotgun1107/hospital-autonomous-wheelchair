@@ -565,6 +565,11 @@ source_controller_tick/current tick
 reference mismatch는 `INVALID_REFERENCE` hold reason과 `reference_binding_mismatch` failure로
 기록한다. 이전 valid command를 재사용하지 않는다.
 
+새 R5 pipeline이 gate를 만들 때는 R4 reference의 현재 `stop_epoch`를 생성자 입력으로
+명시한다. 기존 non-R5 lane의 기본값은 `0`으로 유지한다. pipeline이 gate의 epoch를 실행 중
+임의로 덮어쓰지 않으며, 보호정지로 epoch가 증가하면 기존 reference는 즉시 현재 입력 자격을
+잃는다.
+
 shared gate는 계속 다음을 최종 제한한다.
 
 - stale·invalid/no-frame source
@@ -722,6 +727,7 @@ controller_result_nonfinite
 
 ```text
 invalid_source_hold
+invalid_reference_hold
 stale_source_hold
 deadline_hold
 gate_rejection
@@ -969,6 +975,32 @@ persistent_controller_pipeline.py
 - current 50ms apply, fault-time 분리
 
 완료 Gate: stale/late/session mismatch nonzero 적용 0.
+
+구현 상태(`2026-08-14`):
+
+- [`persistent_controller_pipeline.py`](../../../simulation/path_planning_lab/src/hospital_path_lab/persistent_controller_pipeline.py)에
+  R5-A용 20Hz `controller → reference-bound proposal → shared gate → next-tick chassis`
+  파이프라인을 구현했다. current twist가 현재 50ms 구간의 pose를 적분하고 gate 출력은 다음
+  tick twist가 된다. Python wall-clock은 simulation time을 전진시키지 않는다.
+- `DynamicCommandProposal`과 `DynamicSafetyContext`에 optional `PersistentReferenceBinding`을
+  추가했다. 기존 lane은 `None/None`으로 유지하고, R5 lane은 proposal/context/current gate의
+  binding hash·lifecycle·session/window revision·delivery tick·`stop_epoch`가 모두 일치해야 한다.
+  한쪽 누락, 과거 tick, 다른 window 또는 epoch는 `INVALID_REFERENCE`와
+  `reference_binding_mismatch`로 제한 감속·hold한다.
+- reference 검사는 mission completion 처리보다 먼저 수행한다. 오래된 result가
+  `goal_reached`를 주장해도 현재 mission 종료로 수용하지 않는다. planned section stop은
+  protective stop flag를 세우지 않아 controller stop count와 `stop_epoch`를 증가시키지 않는다.
+  보호정지 확인으로 epoch가 증가한 뒤에는 stale reference로 controller를 다시 호출하지 않고,
+  zero proposal을 gate에 전달해 `HOLDING`을 유지한다.
+- representative `wide-straight-left`에서 RPP 60-tick prefix가 외부 gate를 연속 통과했고,
+  실제 persistent DWB 첫 tick의 217-candidate/41-pose 선택 결과도 외부 gate가 다시 검사해
+  허용했다. old tick, window hash·epoch 변조, binding 한쪽 누락, 51ms와 stale 입력은 비영점
+  새 명령 적용 `0`으로 차단했다.
+- R5-5 전용 `8 passed`, 기존 dynamic safety·authority·timing을 합친 `56 passed`, R5·DWB
+  직접 영향권 `195 passed`를 확인했다.
+  이 단계는 대표 prefix와 fault boundary 증거다. RPP/DWB 8-case 종단 완료, RPP의 추후
+  external gate rejection 원인, full public runner·receipt와 전체 회귀는 R5-6/7에 남아 있다.
+  따라서 제품 controller 채택이나 실제 사람 안전 증거가 아니다.
 
 ### R5-6 — Public reporting·runner
 

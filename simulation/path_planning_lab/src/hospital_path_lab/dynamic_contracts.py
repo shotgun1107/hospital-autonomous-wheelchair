@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from hospital_path_lab.dynamic_directional_prediction import DirectionalPredictionSet
     from hospital_path_lab.dynamic_observation import DynamicObservationSnapshot
     from hospital_path_lab.dynamic_prediction import ActorPredictionSet
+    from hospital_path_lab.persistent_controller_contracts import PersistentReferenceBinding
     from hospital_path_lab.vehicle import VehicleProfile
 
 DYNAMIC_SCHEMA_VERSION = "1.0"
@@ -100,6 +101,7 @@ class DynamicHoldReason(StrEnum):
     """한 tick의 hold 시간을 중복 집계하지 않기 위한 주 원인."""
 
     INVALID_SOURCE = "invalid_source"
+    INVALID_REFERENCE = "invalid_reference"
     STALE = "stale"
     DEADLINE = "deadline"
     UNAUTHORIZED = "unauthorized"
@@ -152,6 +154,7 @@ class DynamicCommandProposal:
     trajectory: tuple[TrajectoryPoint, ...] = ()
     controller_requested_stop: bool = False
     no_safe_candidate: bool = False
+    reference_binding: PersistentReferenceBinding | None = None
 
     def __post_init__(self) -> None:
         if self.source_tick_id < 0:
@@ -165,11 +168,14 @@ class DynamicCommandProposal:
             )
         ):
             raise ValueError("proposal provenance identity fields must not be empty")
-        if min(
-            self.map_revision,
-            self.mission_revision,
-            self.observation_revision,
-        ) < 0:
+        if (
+            min(
+                self.map_revision,
+                self.mission_revision,
+                self.observation_revision,
+            )
+            < 0
+        ):
             raise ValueError("proposal provenance revisions must not be negative")
         _require_finite(
             "command proposal",
@@ -183,6 +189,15 @@ class DynamicCommandProposal:
             self.no_safe_candidate, bool
         ):
             raise TypeError("proposal flags must be bool values")
+        if self.reference_binding is not None:
+            from hospital_path_lab.persistent_controller_contracts import (
+                PersistentReferenceBinding,
+            )
+
+            if not isinstance(self.reference_binding, PersistentReferenceBinding):
+                raise TypeError(
+                    "reference_binding must be a PersistentReferenceBinding when present"
+                )
         object.__setattr__(self, "trajectory", tuple(self.trajectory))
 
 
@@ -207,11 +222,15 @@ class ControllerSnapshot:
     input_content_hash: str
 
     def __post_init__(self) -> None:
-        if self.tick_id < 0 or min(
-            self.map_revision,
-            self.mission_revision,
-            self.observation_revision,
-        ) < 0:
+        if (
+            self.tick_id < 0
+            or min(
+                self.map_revision,
+                self.mission_revision,
+                self.observation_revision,
+            )
+            < 0
+        ):
             raise ValueError("controller snapshot counters must not be negative")
         if not self.mission_id or not self.map_id or not self.input_content_hash:
             raise ValueError("controller snapshot identity fields must not be empty")
@@ -282,11 +301,16 @@ class ControllerCommandResult:
             )
         ):
             raise ValueError("controller result content hashes must not be empty")
-        if self.source_tick_id < 0 or self.elapsed_ns < 0 or min(
-            self.map_revision,
-            self.mission_revision,
-            self.observation_revision,
-        ) < 0:
+        if (
+            self.source_tick_id < 0
+            or self.elapsed_ns < 0
+            or min(
+                self.map_revision,
+                self.mission_revision,
+                self.observation_revision,
+            )
+            < 0
+        ):
             raise ValueError("controller result counters must not be negative")
         if not isinstance(self.status, PlanStatus):
             raise TypeError("controller result status must be a PlanStatus")
@@ -480,13 +504,16 @@ class DynamicSafetyEventCounters:
     resume_authorizations_rejected: int = 0
 
     def __post_init__(self) -> None:
-        if min(
-            self.controller_stop_requests,
-            self.gate_overrides,
-            self.candidate_rejected_by_gate,
-            self.late_results_discarded,
-            self.resume_authorizations_rejected,
-        ) < 0:
+        if (
+            min(
+                self.controller_stop_requests,
+                self.gate_overrides,
+                self.candidate_rejected_by_gate,
+                self.late_results_discarded,
+                self.resume_authorizations_rejected,
+            )
+            < 0
+        ):
             raise ValueError("dynamic safety event counters must not be negative")
 
 
@@ -508,13 +535,16 @@ class DynamicSafetyDecision:
     failure_reasons: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if min(
-            self.tick_id,
-            self.source_tick_id,
-            self.stop_epoch,
-            self.consecutive_stop_ticks,
-            self.consecutive_safe_frames,
-        ) < 0:
+        if (
+            min(
+                self.tick_id,
+                self.source_tick_id,
+                self.stop_epoch,
+                self.consecutive_stop_ticks,
+                self.consecutive_safe_frames,
+            )
+            < 0
+        ):
             raise ValueError("dynamic safety decision counters must not be negative")
         _require_finite(
             "dynamic safety decision command",

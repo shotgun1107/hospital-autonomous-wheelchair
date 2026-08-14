@@ -163,6 +163,16 @@ window update는 4개 path critic만 갱신해 Oscillation 상태를 보존한�
 safe selected rollout과 완전한 candidate diagnostics를 반환했다. 전용 `6 passed`, 기존 DWB
 직접 영향권 포함 `130 passed`, 별도 R5 영향권 `50 passed`를 확인했다. shared gate 연결,
 20Hz DWB closed loop, 8-case public runner와 전체 회귀는 아직 미구현·미실행이다.
+[`persistent_controller_pipeline.py`](src/hospital_path_lab/persistent_controller_pipeline.py)와
+[`test_persistent_controller_pipeline.py`](tests/test_persistent_controller_pipeline.py)는 R5-5에서
+두 persistent controller result를 동일한 reference-bound proposal과 shared gate에 연결한다.
+proposal/context의 binding과 current gate epoch가 다르면 `INVALID_REFERENCE`로 제한 감속·hold하며,
+old tick·51ms·stale 결과를 새 명령으로 적용하지 않는다. 대표 `wide-straight-left`에서 RPP
+60-tick prefix와 실제 DWB 첫 tick의 external gate 재검사를 확인했다. planned stop은 protective
+stop으로 집계하지 않으며, 보호정지 뒤 epoch가 바뀌면 controller를 재호출하지 않고 HOLD를
+유지한다. 전용 `8 passed`, safety·authority·timing 포함 `56 passed`, R5·DWB 직접 영향권
+`195 passed`를 통과했다.
+8-case 종단 기능, full public runner·receipt와 전체 회귀는 R5-6/7까지 미구현·미실행이다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를

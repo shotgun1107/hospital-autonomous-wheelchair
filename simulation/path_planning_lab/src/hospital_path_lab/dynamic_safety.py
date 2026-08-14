@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from json import dumps
 from math import ceil, cos, isclose, isfinite, pi, sin
+from typing import TYPE_CHECKING
 from weakref import WeakSet
 
 from hospital_path_lab.collision import (
@@ -42,6 +43,9 @@ from hospital_path_lab.dynamic_prediction import (
 )
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
 
+if TYPE_CHECKING:
+    from hospital_path_lab.persistent_controller_contracts import PersistentReferenceBinding
+
 DYNAMIC_ANGULAR_DECELERATION_RADPS2 = 1.60
 DYNAMIC_STOP_LINEAR_THRESHOLD_MPS = 0.01
 DYNAMIC_STOP_ANGULAR_THRESHOLD_RADPS = 0.02
@@ -69,6 +73,7 @@ class DynamicSafetyContext:
     resume_authorization: ResumeAuthorization | None = None
     goal_reached: bool = False
     mission_cancelled: bool = False
+    reference_binding: PersistentReferenceBinding | None = None
 
     def __post_init__(self) -> None:
         if self.tick_id < 0 or self.authorization_revision < 0:
@@ -86,6 +91,15 @@ class DynamicSafetyContext:
         ):
             if not isinstance(value, bool):
                 raise TypeError("dynamic safety context flags must be bool values")
+        if self.reference_binding is not None:
+            from hospital_path_lab.persistent_controller_contracts import (
+                PersistentReferenceBinding,
+            )
+
+            if not isinstance(self.reference_binding, PersistentReferenceBinding):
+                raise TypeError(
+                    "reference_binding must be a PersistentReferenceBinding when present"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,9 +160,7 @@ class DynamicTrajectorySafetyCheckers:
         object.__setattr__(self, "_factory_capability", _factory_capability)
 
 
-_FACTORY_ISSUED_DYNAMIC_CHECKERS: WeakSet[DynamicTrajectorySafetyCheckers] = (
-    WeakSet()
-)
+_FACTORY_ISSUED_DYNAMIC_CHECKERS: WeakSet[DynamicTrajectorySafetyCheckers] = WeakSet()
 
 
 def build_dynamic_trajectory_safety_checkers(
@@ -185,12 +197,19 @@ class DynamicSafetyGate:
         self,
         *,
         profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+        initial_stop_epoch: int = 0,
     ) -> None:
         if not profile.simulation_only:
             raise ValueError("dynamic research gate requires a simulation-only vehicle profile")
+        if (
+            isinstance(initial_stop_epoch, bool)
+            or not isinstance(initial_stop_epoch, int)
+            or initial_stop_epoch < 0
+        ):
+            raise ValueError("initial_stop_epoch must be a non-negative exact integer")
         self.profile = profile
         self.motion_state = DynamicMotionState.MOVING
-        self.stop_epoch = 0
+        self.stop_epoch = initial_stop_epoch
         self.stop_confirmed_at_s: float | None = None
         self._consecutive_stop_ticks = 0
         self._consecutive_safe_frames = 0
@@ -211,7 +230,14 @@ class DynamicSafetyGate:
         context: DynamicSafetyContext,
     ) -> DynamicSafetyDecision:
         self._validate_tick_order(context.tick_id)
-        self._mission_end_requested |= context.goal_reached or context.mission_cancelled
+        reference_failures = _reference_binding_failures(
+            proposal,
+            context,
+            expected_stop_epoch=self.stop_epoch,
+        )
+        self._mission_end_requested |= not reference_failures and (
+            context.goal_reached or context.mission_cancelled
+        )
         if self._mission_end_requested:
             if self.motion_state is DynamicMotionState.HOLDING:
                 self.motion_state = DynamicMotionState.COMPLETED
@@ -230,7 +256,7 @@ class DynamicSafetyGate:
                 proposal_accepted=False,
                 resume_allowed=False,
                 reason=None,
-            evidence=DynamicTrajectorySafetyEvidence(True, False, False, None, None, ()),
+                evidence=DynamicTrajectorySafetyEvidence(True, False, False, None, None, ()),
             )
         if self.motion_state is DynamicMotionState.COMPLETED:
             raise RuntimeError("completed dynamic safety gate cannot accept another mission tick")
@@ -240,6 +266,9 @@ class DynamicSafetyGate:
         if proposal_failures:
             source_reason = DynamicHoldReason.INVALID_SOURCE
             source_failures = tuple((*source_failures, *proposal_failures))
+        if reference_failures:
+            source_reason = DynamicHoldReason.INVALID_REFERENCE
+            source_failures = tuple((*source_failures, *reference_failures))
         deadline_failed = (
             proposal.source_tick_id != context.tick_id
             or proposal.computation_time_s > DYNAMIC_COMMAND_DEADLINE_S
@@ -261,17 +290,14 @@ class DynamicSafetyGate:
         if reason is None and deadline_failed:
             reason = DynamicHoldReason.DEADLINE
         static_gate_rejection = any(
-            failure != "actor_clearance_below_minimum"
-            for failure in evidence.failures
+            failure != "actor_clearance_below_minimum" for failure in evidence.failures
         )
         if reason is None and static_gate_rejection:
             self._candidate_rejected_by_gate += 1
             reason = DynamicHoldReason.GATE_REJECTION
         if reason is None and proposal.no_safe_candidate:
             reason = DynamicHoldReason.NO_SAFE_CANDIDATE
-        if reason is None and (
-            proposal.controller_requested_stop or evidence.actor_hazard
-        ):
+        if reason is None and (proposal.controller_requested_stop or evidence.actor_hazard):
             if not evidence.safe:
                 self._candidate_rejected_by_gate += 1
             if proposal.controller_requested_stop:
@@ -307,6 +333,7 @@ class DynamicSafetyGate:
                 authority_failures.append("resume_authorization_invalid")
                 if reason not in {
                     DynamicHoldReason.INVALID_SOURCE,
+                    DynamicHoldReason.INVALID_REFERENCE,
                     DynamicHoldReason.STALE,
                     DynamicHoldReason.DEADLINE,
                 }:
@@ -528,6 +555,7 @@ def build_dynamic_command_proposal(
         trajectory=trajectory,
         controller_requested_stop=controller_requested_stop,
         no_safe_candidate=no_safe_candidate,
+        reference_binding=context.reference_binding,
     )
 
 
@@ -565,10 +593,7 @@ def _source_reason(
     prediction = context.prediction_set
     if type(prediction) not in (ActorPredictionSet, DirectionalPredictionSet):
         return DynamicHoldReason.INVALID_SOURCE, ("prediction_type_invalid",)
-    if (
-        isinstance(prediction, DirectionalPredictionSet)
-        and snapshot.last_event_was_no_frame
-    ):
+    if isinstance(prediction, DirectionalPredictionSet) and snapshot.last_event_was_no_frame:
         return DynamicHoldReason.INVALID_SOURCE, ("directional_frame_dropout",)
     time_reason = _source_time_reason(context, frame, prediction)
     if time_reason is not None:
@@ -675,6 +700,51 @@ def _proposal_provenance_failures(
         )
     )
     return () if matches else ("proposal_provenance_mismatch",)
+
+
+def _reference_binding_failures(
+    proposal: DynamicCommandProposal,
+    context: DynamicSafetyContext,
+    *,
+    expected_stop_epoch: int,
+) -> tuple[str, ...]:
+    """Validate the optional R5 reference capability at the final command boundary.
+
+    Legacy dynamic lanes deliberately carry ``None`` on both sides.  Once either
+    side opts into R5, both immutable bindings must be the exact current delivery;
+    a previous session/window/tick/stop epoch is never reusable.
+    """
+
+    proposal_binding = proposal.reference_binding
+    context_binding = context.reference_binding
+    if proposal_binding is None and context_binding is None:
+        return ()
+    if proposal_binding is None or context_binding is None:
+        return ("reference_binding_mismatch",)
+    try:
+        from hospital_path_lab.local_reference_contracts import ReferenceLifecycleStatus
+        from hospital_path_lab.persistent_controller_contracts import (
+            PersistentReferenceBinding,
+        )
+
+        bindings_valid = all(
+            (
+                type(proposal_binding) is PersistentReferenceBinding,
+                type(context_binding) is PersistentReferenceBinding,
+                proposal_binding.binding_content_hash == proposal_binding.expected_content_hash,
+                context_binding.binding_content_hash == context_binding.expected_content_hash,
+                proposal_binding.lifecycle is ReferenceLifecycleStatus.AVAILABLE,
+                context_binding.lifecycle is ReferenceLifecycleStatus.AVAILABLE,
+                proposal_binding == context_binding,
+                proposal_binding.source_window_control_tick == proposal.source_tick_id,
+                context_binding.source_window_control_tick == context.tick_id,
+                proposal_binding.stop_epoch == expected_stop_epoch,
+                context_binding.stop_epoch == expected_stop_epoch,
+            )
+        )
+    except (AttributeError, TypeError, ValueError):
+        bindings_valid = False
+    return () if bindings_valid else ("reference_binding_mismatch",)
 
 
 def evaluate_dynamic_trajectory_safety(
@@ -910,9 +980,7 @@ def _pose_safety(
                     pose,
                     segment_start=(shape.start.x, shape.start.y),
                     segment_end=(shape.end.x, shape.end.y),
-                    capsule_radius_m=(
-                        shape.base_radius_m + actor_radius_expansion_m
-                    ),
+                    capsule_radius_m=(shape.base_radius_m + actor_radius_expansion_m),
                     profile=profile,
                 )
             )
@@ -1015,9 +1083,7 @@ def _terminal_stopping_samples(
         twist = _decelerate(
             twist,
             linear_delta=profile.max_deceleration_mps2 * DYNAMIC_SWEEP_SAMPLE_PERIOD_S,
-            angular_delta=(
-                DYNAMIC_ANGULAR_DECELERATION_RADPS2 * DYNAMIC_SWEEP_SAMPLE_PERIOD_S
-            ),
+            angular_delta=(DYNAMIC_ANGULAR_DECELERATION_RADPS2 * DYNAMIC_SWEEP_SAMPLE_PERIOD_S),
         )
         elapsed_s += DYNAMIC_SWEEP_SAMPLE_PERIOD_S
         samples.append(TrajectoryPoint(elapsed_s, pose, twist))
