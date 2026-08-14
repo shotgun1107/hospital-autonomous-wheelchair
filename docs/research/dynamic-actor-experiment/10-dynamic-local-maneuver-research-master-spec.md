@@ -10,8 +10,9 @@
 - 팀 전체 합의: 아님
 - 제품 알고리즘 채택: 아님
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
-- 현재 단계: `R1 narrow prediction 감사 완료`, `R2-A ground-truth 경로 부분 완료`,
-  `R2-B 관측·prediction hard failure 2건으로 후속 보류`, `R3 명세 진입 가능`
+- 현재 단계: `R1 narrow prediction 감사 완료`,
+  `R2-A legacy 횡단·재정지 표적 보완 및 691 전체 회귀 통과·공개 19개 전체 audit 미재실행`,
+  `R2-B 관측·prediction hard failure 2건으로 후속 보류`, `R3 상세 명세 작성·구현 미시작`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -566,9 +567,9 @@ hidden까지 연구 조건 충족
 | 단계 | 핵심 질문 | 완료 증거 | 현재 상태 | 다음 진입 조건 |
 |---|---|---|---|---|
 | `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 기존 narrow claim 완료, total Actor coverage는 R2-B 후속 | hard failure 0 |
-| `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 부분 완료: 17 matched, 횡단 1 inconclusive, 다중 위험 1 incomplete | ground-truth hard safety |
+| `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 표적 보완 완료: legacy 횡단·재정지 `MATCHED`, 공개 19개 전체 audit 미재실행 | ground-truth hard safety |
 | `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
-| `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 미시작, 명세 진입 가능 | R2-A의 검증·미해결 분류 |
+| `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | 상세 명세 작성, 구현 미시작 | R2-A의 검증·미해결 분류 |
 | `R4` | WAIT/LEFT/RIGHT를 방향 있는 reference로 표현하는가? | revision 결박 local path·subpath | 미시작 | R2·R3 계약 정리 |
 | `R5` | 같은 reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | 미시작 | 검증된 witness·reference |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
@@ -643,7 +644,7 @@ second-risk와 legacy dynamic-change에서 episode 중간에 새 Actor가 생성
 따라서 기존 결합 R2는 `실행 완료`이지 전체 `자격 완료`가 아니다. 다만 사용자 결정과
 [`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)에 따라 경로
 연구와 카메라·관측 연구를 분리한다. R2-A에서 확인한 WAIT/HOLD·same-direction PASS와
-미해결 횡단·다중 위험 분류를 입력으로 R3 명세를 시작할 수 있다. R2-B의 Actor
+legacy 횡단·재정지 표적 보완 결과를 입력으로 R3 명세를 시작할 수 있다. R2-B의 Actor
 entry·visibility·fresh EMPTY와 역방향 coverage는 hard failure 2건을 보존한 채 카메라 통합
 후속으로 둔다.
 

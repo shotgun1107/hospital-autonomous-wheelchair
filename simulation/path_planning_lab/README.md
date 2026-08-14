@@ -78,6 +78,11 @@ R2-B에 보존하고, R2-A 미해결 공간 분류를 위한 R3 명세 진입은
 기록했다. 구현 뒤 저장소 전체 회귀는 `688 passed`, Ruff·compileall·diff 검사는 통과했다.
 hidden은 생성·열람·실행하지 않았다.
 
+R3의 static grid·oriented footprint·bounded lattice·resource taxonomy·독립 validator 계약은
+[`R3 Bounded 공간 Oracle 상세 명세`](../../docs/research/dynamic-actor-experiment/14-bounded-spatial-oracle.md)에
+작성했다. 현재는 구현 전 동결 후보이며 기존 registry의 `state_lattice=deferred` 상태를
+변경하지 않는다.
+
 ### v6 재자격 진행 상태 — 2026-08-11
 
 현재는 [v6 보정·재자격 명세](../../docs/research/dynamic-actor-experiment/v6-correction-and-requalification.md)에
@@ -284,8 +289,9 @@ $testRun = ".\simulation\path_planning_lab\outputs\test-runs\$([guid]::NewGuid()
 
 R2-A 표적 보완으로 같은 방향 추월과 별개인 횡단 Actor 좌·우 우회, 그리고 두 위험의
 `실제 정지 → 0.10m 이상 이동 → 별도 재정지 → 회복` offline ground-truth 도구가 추가됐다.
-legacy 표적 2건은 맞춰졌지만 공개 19개 전체 회귀는 아직 실행하지 않았고, 다중 위험 사례의
-R2-B `ideal_capsule_ground_truth_miss`도 남아 있다. 이는 online controller나 제품 알고리즘
+legacy 표적 2건은 맞춰졌고 전체 코드 회귀는 `691 passed`였지만, 공개 19개 R2 audit은
+보완 뒤 다시 실행하지 않았다. 다중 위험 사례의 R2-B `ideal_capsule_ground_truth_miss`도
+남아 있다. 이는 online controller나 제품 알고리즘
 채택 결과가 아니다. 상세 범위는
 [R2-A 보완 문서](../../docs/research/dynamic-actor-experiment/r2a-crossing-and-restop-supplement-2026-08-13.md)를
 따른다.
