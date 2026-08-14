@@ -535,6 +535,63 @@ legacy crossing 장면은 같은 static world와 rejoin goal에 대해 LEFT·RIG
 | invalid provenance | hash·revision 변조 | `INVALID_INPUT` |
 | crossing static projection | legacy 횡단 장면 좌·우 | 기존 positive와 모순 없는 feasible |
 
+### 13.1 동결 public request catalog
+
+runner가 실행하는 순서와 ID는 다음으로 고정한다. `expected_status`와 관계 검사는 reporting에만
+존재하며 search request에는 들어가지 않는다.
+
+```text
+00 wide-straight-left
+01 wide-straight-right
+02 wide-mirror-left
+03 wide-mirror-right
+04 narrow-corridor
+05 narrow-door
+06 just-wide-door
+07 dead-end
+08 corner-safe
+09 corner-rotation-blocked
+10 vertical-left
+11 vertical-right
+12 forbidden-only-block
+13 allowed-region-pinch
+14 start-unsafe
+15 goal-unsafe
+16 resource-exact
+17 resource-plus-one
+18 invalid-provenance
+19 crossing-static-left
+20 crossing-static-right
+```
+
+- synthetic case는 같은 `0.02m` grid와 가상 차체를 사용하며 public catalog 생성 함수가
+  request와 evaluator-only 기대값을 함께 만든다.
+- crossing 두 건만 legacy golden `local_detour_feasible`의 공개 world를 static projection한다.
+- corner는 v1의 단일 reference segment 안에서 시작 yaw와 목표 yaw가 90도 다른 synthetic
+  회전 기하 시험이다. multi-segment public corner projection 완료를 뜻하지 않는다.
+- `resource-exact`와 `resource-plus-one`은 같은 static request에서 동결된 exact count와 그보다
+  하나 작은 한계를 사용한다.
+- mirror와 vertical 관계는 status뿐 아니라 rotation count를 정확히, path length·clearance를
+  public grid 한 칸인 `0.02m` 허용오차 안에서 비교한다.
+
+### 13.2 public qualification 판정
+
+```text
+case hard pass =
+    actual status == evaluator-only expected status
+    AND feasible이면 independent validation pass
+    AND infeasible이면 exhaustive 또는 허용된 analytic reason
+    AND resource/invalid taxonomy가 기대 reason과 일치
+
+run hard pass =
+    catalog ID·request hash 누락/중복 0
+    AND 모든 case hard pass
+    AND mirror·vertical·resource 관계 pass
+    AND serial/process semantic parity pass
+```
+
+wall-clock, worker 수와 case 완료 순서는 운영 진단이며 semantic hash와 합격 판정에서 제외한다.
+
 ### 필수 적대시험
 
 - center cell만 free지만 footprint corner가 벽과 겹치는 path 거부
@@ -594,6 +651,10 @@ outputs/spatial-oracle-public-<UTC>-<HEAD>/
 - partial은 삭제하지 않지만 최종 근거로 사용하지 않는다.
 - 생성 output은 기본 Git 대상이 아니다.
 - R3에서 hidden을 생성·조회·실행하지 않는다.
+- `qualification-receipt.json`은 catalog 21건, request/result/validation hash, source freeze,
+  process 결과의 input-ordinal 재정렬과 관계 검사가 모두 확인된 경우에만 생성한다.
+- runner의 독립 case 계산은 process 병렬화하지만, 같은 request 내부 state expansion은 기존
+  직렬 순서를 유지한다.
 
 ## 16. 구현 경계와 현재 상태
 
@@ -617,14 +678,19 @@ clearance lower bound는 후보 거부·승인 전처리일 뿐이며 선택 pat
 사용하는 독립 validator로 다시 검사한다. 14-process 파일 분할 전체 회귀는 `719 passed`,
 failure·error·skip `0`으로 완료했다. 해당 병렬 wall-clock은 timing 자격 근거가 아니다.
 
-다음은 아직 미구현이다.
+2026-08-14 public qualification 계층으로 다음을 추가했다.
 
 ```text
 src/hospital_path_lab/spatial_oracle_reporting.py
 scripts/run_spatial_oracle_public.py
 tests/test_spatial_oracle_public.py
-public complete/receipt
 ```
+
+동결 21-case catalog, evaluator-only 기대값, 관계·serial/process parity, process 병렬 실행,
+non-overwrite partial/complete 수명주기, JSON·Markdown·PNG와 clean-source receipt를 구현했다.
+전체 R3 직접 영향권은 `38 passed`이며 개발용 14-process 실행에서 21개가 모두 기대 판정을
+통과했다. 개발 실행은 dirty tree였으므로 receipt를 만들지 않았고 최종 clean-source public
+qualification은 아직 실행 전이다.
 
 의존 방향은 다음으로 고정한다.
 
@@ -680,9 +746,8 @@ evaluator label ────────────────→ reporting on
 - 관련 영향권과 전체 회귀 통과
 - R2-B·hidden·제품 결정에 손대지 않음
 
-현재 core L1은 contract·validator·lattice·straight public projection까지만 충족한다. reporting,
-전체 public matrix, process 병렬 실행과 receipt가 없으므로 이 목록 전체를 완료했다고 판정하지
-않는다.
+현재 core·reporting L1과 전체 public matrix 구현은 완료했지만 clean-source qualification
+receipt와 구현 뒤 마지막 전체 회귀가 아직 없으므로 이 목록 전체를 완료했다고 판정하지 않는다.
 
 ## 19. R4 전달 계약
 
