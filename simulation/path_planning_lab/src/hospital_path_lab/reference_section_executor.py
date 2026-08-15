@@ -30,7 +30,7 @@ from hospital_path_lab.persistent_controller_contracts import (
     ReferenceExecutorState,
 )
 
-REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v2"
+REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v3"
 REFERENCE_SECTION_EXECUTION_DECISION_SCHEMA_VERSION = (
     "reference-section-execution-decision-v1"
 )
@@ -451,7 +451,12 @@ class ReferenceSectionExecutor:
             target = self._section_end_pose(section)
             position_error, yaw_error = _pose_errors(tick_input.robot_state.pose, target)
             terminal = section.section_index == len(self._reference.sections) - 1
-            at_position = position_error <= self.config.position_tolerance_m + _TOLERANCE
+            at_position = translation_completion_reached(
+                self._reference,
+                section.section_index,
+                tick_input.robot_state.pose,
+                base_tolerance_m=self.config.position_tolerance_m,
+            )
             at_terminal_yaw = abs(yaw_error) <= self.config.yaw_tolerance_rad + _TOLERANCE
             if direction is ReferenceTravelDirection.NONE and not _actually_stopped(
                 tick_input.robot_state.twist,
@@ -946,6 +951,102 @@ def shortest_angular_distance(current_yaw_rad: float, target_yaw_rad: float) -> 
         raise ValueError("yaw values must be finite")
     difference = target_yaw_rad - current_yaw_rad
     return atan2(sin(difference), cos(difference))
+
+
+def translation_completion_tolerance_m(
+    reference: LocalManeuverReference,
+    section_index: int,
+    *,
+    base_tolerance_m: float = R5_POSITION_TOLERANCE_M,
+) -> float:
+    """Tighten a translation endpoint before stopped abstract connectors.
+
+    A moving ``NONE`` connector remains non-commandable.  Its displacement is
+    therefore consumed only as tolerance budget: the preceding translation must
+    finish close enough to its own endpoint that every following connector
+    endpoint is still inside the already-frozen R5 position tolerance.
+    """
+
+    if not isinstance(reference, LocalManeuverReference):
+        raise TypeError("reference must be a LocalManeuverReference")
+    if isinstance(section_index, bool) or not isinstance(section_index, int):
+        raise TypeError("section_index must be an exact integer")
+    if not 0 <= section_index < len(reference.sections):
+        raise ValueError("section_index is outside the reference")
+    if not isfinite(base_tolerance_m) or base_tolerance_m <= 0.0:
+        raise ValueError("base_tolerance_m must be finite and positive")
+    section = reference.sections[section_index]
+    if section.travel_direction not in {
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.REVERSE,
+    }:
+        return base_tolerance_m
+
+    remaining = base_tolerance_m
+    for following in reference.sections[section_index + 1 :]:
+        if following.section_kind in {
+            ReferenceSectionKind.ROTATE,
+            ReferenceSectionKind.HOLD,
+        } or following.travel_direction is not ReferenceTravelDirection.NONE:
+            break
+        start = reference.knots[following.first_knot_index].pose
+        end = reference.knots[following.last_knot_index].pose
+        displacement = hypot(end.x - start.x, end.y - start.y)
+        if displacement <= R4_COMPARISON_TOLERANCE:
+            continue
+        if not (following.entry_requires_stopped and following.exit_requires_stopped):
+            break
+        remaining = max(0.0, remaining - displacement)
+    return remaining
+
+
+def translation_completion_reached(
+    reference: LocalManeuverReference,
+    section_index: int,
+    current_pose: Pose2D,
+    *,
+    base_tolerance_m: float = R5_POSITION_TOLERANCE_M,
+) -> bool:
+    """Check a translation endpoint and every following stopped connector.
+
+    ``translation_completion_tolerance_m`` remains a conservative scalar used
+    for bounded stopping.  Completion itself can use the known connector
+    geometry: the chassis center must be inside the existing R5 tolerance of
+    both the translation endpoint and every abstract connector endpoint.  No
+    connector is commanded and no tolerance is enlarged.
+    """
+
+    _ = translation_completion_tolerance_m(
+        reference,
+        section_index,
+        base_tolerance_m=base_tolerance_m,
+    )
+    _validate_pose(current_pose, "current_pose")
+    section = reference.sections[section_index]
+    target = reference.knots[section.last_knot_index].pose
+    if hypot(target.x - current_pose.x, target.y - current_pose.y) > (
+        base_tolerance_m + _TOLERANCE
+    ):
+        return False
+
+    for following in reference.sections[section_index + 1 :]:
+        if following.section_kind in {
+            ReferenceSectionKind.ROTATE,
+            ReferenceSectionKind.HOLD,
+        } or following.travel_direction is not ReferenceTravelDirection.NONE:
+            break
+        start = reference.knots[following.first_knot_index].pose
+        end = reference.knots[following.last_knot_index].pose
+        displacement = hypot(end.x - start.x, end.y - start.y)
+        if displacement <= R4_COMPARISON_TOLERANCE:
+            continue
+        if not (following.entry_requires_stopped and following.exit_requires_stopped):
+            return False
+        if hypot(end.x - current_pose.x, end.y - current_pose.y) > (
+            base_tolerance_m + _TOLERANCE
+        ):
+            return False
+    return True
 
 
 def _pose_errors(current: Pose2D, target: Pose2D) -> tuple[float, float]:

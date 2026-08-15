@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from json import dumps
-from math import cos, hypot, pi, sin
+from math import atan2, cos, hypot, pi, sin
 from time import perf_counter_ns
 
 from hospital_path_lab.contracts import PlanStatus, Pose2D, TrajectoryPoint, Twist2D
@@ -35,9 +35,12 @@ from hospital_path_lab.persistent_controller_contracts import (
     PersistentControllerTickInput,
 )
 from hospital_path_lab.reference_section_executor import (
+    R5_POSITION_TOLERANCE_M,
+    R5_YAW_TOLERANCE_RAD,
     ReferenceExecutorAction,
     ReferenceSectionExecutionDecision,
     ReferenceSectionExecutor,
+    translation_completion_tolerance_m,
 )
 
 from .adapter import SourceDerivedDwbController
@@ -62,7 +65,7 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v3"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v4"
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -230,6 +233,7 @@ class SectionBoundDwbReferenceTrajectoryGenerator(DwbReferenceTrajectoryGenerato
         if not config.allow_reverse:
             raise ValueError("section-bound generator requires signed velocity support")
         self._travel_direction = ReferenceTravelDirection.FORWARD
+        self._prefer_forward_progress_on_exact_ties = False
 
     def set_travel_direction(self, direction: ReferenceTravelDirection) -> None:
         if direction not in {
@@ -238,6 +242,42 @@ class SectionBoundDwbReferenceTrajectoryGenerator(DwbReferenceTrajectoryGenerato
         }:
             raise ValueError("DWB translation requires a signed travel direction")
         self._travel_direction = direction
+
+    def set_prefer_forward_progress_on_exact_ties(self, enabled: bool) -> None:
+        """Reverse only the forward linear blocks used for exact-score ties.
+
+        The source-derived core deliberately keeps the first generated candidate
+        when totals are exactly equal.  A stopped moving ``NONE`` connector can
+        tighten the preceding section completion tolerance below one map cell;
+        every safe forward speed can then receive the same discretized score.
+        This R5-only ordering prevents the minimum-speed candidate from winning
+        forever without changing candidates, critic scores, or safety checks.
+        """
+
+        self._prefer_forward_progress_on_exact_ties = bool(enabled)
+
+    def generate(self, request: DwbGeneratorRequest):
+        result = super().generate(request)
+        if not self._prefer_forward_progress_on_exact_ties:
+            return result
+        if self._travel_direction is not ReferenceTravelDirection.FORWARD:
+            raise RuntimeError("forward-progress tie ordering requires a forward section")
+
+        angular_count = len(result.angular_samples_radps)
+        linear_count = len(result.linear_samples_mps)
+        if len(result.trajectories) != linear_count * angular_count:
+            raise RuntimeError("DWB trajectory lattice does not match its sample axes")
+        blocks = tuple(
+            result.trajectories[index * angular_count : (index + 1) * angular_count]
+            for index in range(linear_count)
+        )
+        return replace(
+            result,
+            linear_samples_mps=tuple(reversed(result.linear_samples_mps)),
+            trajectories=tuple(
+                trajectory for block in reversed(blocks) for trajectory in block
+            ),
+        )
 
     def dynamic_window(self, current_twist):
         linear_window, angular_window = super().dynamic_window(current_twist)
@@ -336,7 +376,12 @@ class PersistentSourceDerivedDwbController:
             direction = tick_input.full_reference.sections[
                 decision.active_section_index
             ].travel_direction
-            _bind_stack_travel_direction(stack, direction, tick_input)
+            _bind_stack_travel_direction(
+                stack,
+                direction,
+                tick_input,
+                decision.active_section_index,
+            )
             scoring_path = _active_translation_dwb_path(
                 tick_input,
                 decision.active_section_index,
@@ -676,6 +721,7 @@ def _bind_stack_travel_direction(
     stack: _PersistentDwbStack,
     direction: ReferenceTravelDirection,
     tick_input: PersistentControllerTickInput,
+    active_section_index: int,
 ) -> None:
     if direction is ReferenceTravelDirection.FORWARD:
         minimum_linear = 0.0
@@ -694,14 +740,50 @@ def _bind_stack_travel_direction(
     stack.adapter.set_command_linear_bounds(minimum_linear, maximum_linear)
     stack.goal_align_critic.set_projection_sign(projection_sign)
     stack.path_align_critic.set_projection_sign(projection_sign)
-    stack.goal_align_critic.set_disable_near_goal(
-        direction is ReferenceTravelDirection.FORWARD
+    section = tick_input.full_reference.sections[active_section_index]
+    target_yaw = tick_input.full_reference.knots[section.last_knot_index].pose.yaw
+    completion_tolerance = translation_completion_tolerance_m(
+        tick_input.full_reference,
+        active_section_index,
     )
-    # Keep upstream PathAlign's near-goal stabilization for both signs.  On a
-    # short reverse section its discretized field otherwise prefers the zero
-    # command over every safe negative sample.  Reverse GoalAlign remains active
-    # and rear-projected so the correct yaw direction is still observable.
-    stack.path_align_critic.set_disable_near_goal(True)
+    yaw_error = atan2(
+        sin(target_yaw - tick_input.robot_state.pose.yaw),
+        cos(target_yaw - tick_input.robot_state.pose.yaw),
+    )
+    connector_tightened = _connector_tightened_forward_section(
+        direction,
+        completion_tolerance,
+    )
+    stack.generator.set_prefer_forward_progress_on_exact_ties(connector_tightened)
+    aligned_forward = _aligned_forward_section(direction, yaw_error)
+    stack.goal_align_critic.set_disable_near_goal(aligned_forward)
+    # A connector-tightened forward remainder keeps both alignment critics only
+    # until its heading is aligned.  Leaving their forward-projection scores on
+    # afterwards penalizes faster progress past the scoring endpoint and can
+    # select the minimum velocity forever on a discretized map.
+    stack.path_align_critic.set_disable_near_goal(
+        aligned_forward or not connector_tightened
+    )
+
+
+def _aligned_forward_section(
+    direction: ReferenceTravelDirection,
+    yaw_error_rad: float,
+) -> bool:
+    """Return whether upstream near-goal alignment may be disabled."""
+
+    return direction is ReferenceTravelDirection.FORWARD and (
+        abs(yaw_error_rad) <= R5_YAW_TOLERANCE_RAD + _TOLERANCE
+    )
+
+
+def _connector_tightened_forward_section(
+    direction: ReferenceTravelDirection,
+    completion_tolerance_m: float,
+) -> bool:
+    return direction is ReferenceTravelDirection.FORWARD and (
+        completion_tolerance_m < R5_POSITION_TOLERANCE_M - _TOLERANCE
+    )
 
 
 def _freeze_dwb_path(path: Sequence[DwbPose2D], label: str) -> tuple[DwbPose2D, ...]:

@@ -3,9 +3,9 @@
 ## 1. 문서 상태
 
 - 작성일: `2026-08-14`
-- 상태: `R5-1~R5-6` 구현, R5-A 1차 public full qualification 실패·receipt 미생성,
-  R4 v2 signed reference clean qualification 완료, R5 v2 section-bound 제한 후진 구현 중간 상태
-  (`RPP` 대표 case 완료, `DWB` reverse 종점 deadlock 미해결)
+- 상태: `R5-1~R5-6` 구현, R4 v2 signed reference clean qualification 완료,
+  R5 v2 clean public 21-case는 crossing·relation 판정으로 실패·receipt 미생성,
+  R5 v3에서 좌·우 crossing DWB 종단과 전체 회귀 통과·clean 재qualification 대기
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -1102,13 +1102,16 @@ scripts/run_persistent_controller_public.py
 
 - 사용자 연구 방향: 제한 후진 허용
 - 상태: R4 v2 signed reference clean public qualification 완료. R5 v2 controller·executor는
-  대표 `wide-straight-left`에서 RPP·DWB 실제 후진과 종단 완료를 확인했고 전체 21-case clean
-  재qualification은 미실행
+  대표 `wide-straight-left`에서 RPP·DWB 실제 후진과 종단 완료를 확인했다. commit `7ef755d`의
+  전체 21-case clean 실행은 crossing 2개와 relation audit로 실패했고, R5 v3 보정 뒤 좌·우
+  crossing DWB 종단은 통과했으나 새 clean 재qualification은 대기 중이다.
 - R4 v2가 source primitive에 결박된 `travel_direction`을 발행한다.
 - RPP·DWB는 reverse section에서만 최대 `0.10m/s` 음의 선속도를 사용할 수 있다.
 - common executor는 forward↔reverse 전환 전 실제 정지 3 tick을 확인한다.
 - reverse rollout과 terminal stopping은 shared gate의 동일 static·forbidden·Actor 검사를 받는다.
 - 기존 R4 v1 receipt와 R5-A 1차 실패 output은 변경하지 않고 새 version·output으로 재실행한다.
+- R5 v3 상세 보정은
+  [교차 경로 연결 교착 보정 결과](r5a-v3-crossing-connector-correction-2026-08-15.md)에 보존한다.
 
 ### R5-7 — 최종 감사·회귀
 

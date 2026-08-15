@@ -2,7 +2,7 @@
 
 - 작업일: `2026-08-15`
 - 범위: Python `simulation_only` R5-A static reference tracking
-- 상태: **대표 case 성공 — RPP·DWB 실제 후진과 종단 완료, 전체 21-case 자격 미실행**
+- 상태: **대표 case 성공 뒤 clean 21-case 실행은 crossing·relation 판정으로 실패; R5 v3 보정으로 이관**
 - hidden: 미사용
 - 제품 controller 채택·G1~G5·제품 경로분석 7단계: 미수행
 
@@ -29,7 +29,10 @@
 - Ruff·compileall·`git diff --check`: 통과
 - Windows 기본 pytest 임시 폴더 권한 오류는 저장소 내부 `--basetemp`로 재실행해 해소했다.
 
-clean full public 21-case qualification은 아직 실행하지 않았다.
+이 문서 작성 뒤 commit `7ef755d`에서 clean full public 21-case를 실행했다. wide·vertical 6개는
+완료했지만 crossing 2개와 tick 단위 mirror 관계 판정이 실패해 receipt를 만들지 않았다.
+후속 원인·보정·표적 결과는
+[`R5-A v3 교차 연결 보정`](r5a-v3-crossing-connector-correction-2026-08-15.md)에 기록한다.
 
 ## 3. 공개 대표 case 결과
 
@@ -80,8 +83,8 @@ dirty·1-case 실행이므로 `PARTIAL_REPORT_ONLY`이며 receipt는 만들지 �
 
 ## 5. 다음 작업
 
-1. 현재 구현과 문서를 commit·push한다.
-2. clean commit에서 R5-A public 21-case를 새 output 경로로 한 번 실행한다.
+1. R5 v3 connector·relation 보정 구현과 문서를 commit·push한다.
+2. 새 clean commit에서 R5-A public 21-case를 새 output 경로로 한 번 실행한다.
 3. ready 8개 paired 완료, signed 방향·정지·reverse sweep, hard failure·deadlock `0`, repeat·
    serial/process parity를 모두 확인한다.
 4. 모든 자격이 통과할 때만 R5-A receipt를 생성한다. 실패하면 output을 보존하고 해당 원인만

@@ -68,12 +68,16 @@ from hospital_path_lab.persistent_rpp_controller import (
     PERSISTENT_RPP_CONTROLLER_VERSION,
     PersistentRppController,
 )
+from hospital_path_lab.reference_section_executor import (
+    R5_POSITION_TOLERANCE_M,
+    R5_YAW_TOLERANCE_RAD,
+)
 
-PERSISTENT_PUBLIC_CATALOG_VERSION = "persistent-controller-public-catalog-v2"
-PERSISTENT_PUBLIC_REPORT_VERSION = "persistent-controller-public-report-v2"
-PERSISTENT_PUBLIC_MANIFEST_VERSION = "persistent-controller-public-manifest-v2"
-PERSISTENT_PUBLIC_RECEIPT_VERSION = "persistent-controller-public-receipt-v2"
-PERSISTENT_PUBLIC_RUNNER_VERSION = "persistent-controller-public-runner-v2"
+PERSISTENT_PUBLIC_CATALOG_VERSION = "persistent-controller-public-catalog-v3"
+PERSISTENT_PUBLIC_REPORT_VERSION = "persistent-controller-public-report-v3"
+PERSISTENT_PUBLIC_MANIFEST_VERSION = "persistent-controller-public-manifest-v3"
+PERSISTENT_PUBLIC_RECEIPT_VERSION = "persistent-controller-public-receipt-v3"
+PERSISTENT_PUBLIC_RUNNER_VERSION = "persistent-controller-public-runner-v3"
 PERSISTENT_PUBLIC_READY_CASE_COUNT = 8
 PERSISTENT_PUBLIC_CONTROLLER_COUNT = 2
 R4_PUBLIC_AUDIT_SEMANTIC_HASH = (
@@ -1385,7 +1389,8 @@ def _public_relation_failures(
                 failures.append(f"{label}:{controller_name}:status")
             if left.section_sequence != right.section_sequence:
                 failures.append(f"{label}:{controller_name}:section_sequence")
-            if _normalized_run_signature(left) != _normalized_run_signature(
+            if not _section_geometry_relation_matches(
+                left,
                 right,
                 mirror_lateral=mirrored,
             ):
@@ -1420,18 +1425,47 @@ def _is_ordered_subsequence(
     return all(any(candidate == item for candidate in cursor) for item in expected)
 
 
-def _normalized_run_signature(
+def _section_geometry_relation_matches(
+    left: PersistentPublicControllerRun,
+    right: PersistentPublicControllerRun,
+    *,
+    mirror_lateral: bool,
+) -> bool:
+    left_signature = _normalized_section_geometry(left)
+    right_signature = _normalized_section_geometry(
+        right,
+        mirror_lateral=mirror_lateral,
+    )
+    if tuple(left_signature) != tuple(right_signature):
+        return False
+    for key in left_signature:
+        left_values = left_signature[key]
+        right_values = right_signature[key]
+        for left_value, right_value in zip(left_values[:8], right_values[:8], strict=True):
+            if abs(left_value - right_value) > R5_POSITION_TOLERANCE_M + _TOLERANCE:
+                return False
+        for left_yaw, right_yaw in zip(left_values[8:], right_values[8:], strict=True):
+            if abs(_footprint_axis_distance(left_yaw, right_yaw)) > (
+                R5_YAW_TOLERANCE_RAD + _TOLERANCE
+            ):
+                return False
+    return True
+
+
+def _normalized_section_geometry(
     result: PersistentPublicControllerRun,
     *,
     mirror_lateral: bool = False,
-) -> tuple[tuple[object, ...], ...]:
+) -> dict[tuple[int, str], tuple[float, ...]]:
     if not result.samples:
-        return ()
+        return {}
     origin = result.samples[0].pose_before
     cosine = cos(origin.yaw)
     sine = sin(origin.yaw)
-    signature: list[tuple[object, ...]] = []
+    grouped: dict[tuple[int, str], list[tuple[float, float, float]]] = {}
     for sample in result.samples:
+        if sample.active_section_index is None or sample.active_section_kind is None:
+            continue
         dx = sample.pose_after.x - origin.x
         dy = sample.pose_after.y - origin.y
         local_x = cosine * dx + sine * dy
@@ -1440,27 +1474,33 @@ def _normalized_run_signature(
             sin(sample.pose_after.yaw - origin.yaw),
             cos(sample.pose_after.yaw - origin.yaw),
         )
-        angular = sample.applied_twist.angular
         if mirror_lateral:
             local_y = -local_y
             local_yaw = -local_yaw
-            angular = -angular
-        signature.append(
-            (
-                sample.tick_id,
-                round(local_x, 9),
-                round(local_y, 9),
-                round(local_yaw, 9),
-                round(sample.applied_twist.linear, 9),
-                round(angular, 9),
-                sample.controller_status.value,
-                sample.motion_state.value,
-                sample.active_section_index,
-                sample.active_section_kind,
-                sample.active_travel_direction,
-            )
+        grouped.setdefault(
+            (sample.active_section_index, sample.active_section_kind),
+            [],
+        ).append((local_x, local_y, local_yaw))
+    signature: dict[tuple[int, str], tuple[float, ...]] = {}
+    for key, poses in grouped.items():
+        signature[key] = (
+            poses[0][0],
+            poses[0][1],
+            poses[-1][0],
+            poses[-1][1],
+            min(pose[0] for pose in poses),
+            max(pose[0] for pose in poses),
+            min(pose[1] for pose in poses),
+            max(pose[1] for pose in poses),
+            poses[0][2],
+            poses[-1][2],
         )
-    return tuple(signature)
+    return signature
+
+
+def _footprint_axis_distance(left_yaw: float, right_yaw: float) -> float:
+    difference = right_yaw - left_yaw
+    return 0.5 * atan2(sin(2.0 * difference), cos(2.0 * difference))
 
 
 def _section_sequence(

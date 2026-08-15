@@ -34,10 +34,11 @@ from hospital_path_lab.reference_section_executor import (
     ReferenceExecutorAction,
     ReferenceSectionExecutionDecision,
     ReferenceSectionExecutor,
+    translation_completion_tolerance_m,
 )
 
 PERSISTENT_RPP_CONTROLLER_NAME = "persistent_rpp_reference"
-PERSISTENT_RPP_CONTROLLER_VERSION = "persistent-rpp-reference-v3"
+PERSISTENT_RPP_CONTROLLER_VERSION = "persistent-rpp-reference-v4"
 PERSISTENT_RPP_LOOKAHEAD_MIN_M = 0.25
 PERSISTENT_RPP_LOOKAHEAD_MAX_M = 0.50
 PERSISTENT_RPP_LOOKAHEAD_VELOCITY_GAIN = 0.75
@@ -456,13 +457,17 @@ def _compute_translation_command(
     if terminal_goal_active or explicit_stop_active:
         section_end = full_path[-1]
         geometric_remaining = hypot(section_end.x - pose.x, section_end.y - pose.y)
+        completion_tolerance = translation_completion_tolerance_m(
+            reference,
+            active_section_index,
+        )
         distance_to_tolerance = max(
             0.0,
             max(
                 full_projection.total_arc_m - full_projection.progress_m,
                 geometric_remaining,
             )
-            - 0.05,
+            - completion_tolerance,
         )
         stop_limited_speed = min(
             maximum_speed,

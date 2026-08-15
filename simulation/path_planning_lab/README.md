@@ -212,6 +212,14 @@ clean public qualification과 receipt까지 끝났다. R5 v2는 대표 case에�
 [`R4 v2 공개 qualification`](../../docs/research/dynamic-actor-experiment/r4v2-public-signed-reference-qualification-result-2026-08-14.md)에 보존한다.
 R5 v2 대표 결과는
 [`R5-A v2 구간 제한 후진 결과`](../../docs/research/dynamic-actor-experiment/r5a-v2-section-bound-reverse-progress-2026-08-15.md)에 기록했다.
+그 뒤 commit `7ef755d`의 clean public 21-case는 wide·vertical 6개를 완료했지만 crossing 2개와
+tick 단위 mirror 관계 판정 때문에 실패해 receipt를 만들지 않았다. R5 v3는 stopped
+`NONE` connector를 직접 구동하지 않은 채 앞 translation 끝과 connector 끝에 기존 `0.05m`
+tolerance를 각각 적용하고, connector-tightened forward DWB의 exact tie·near-goal alignment
+교착을 보정했다. 좌·우 crossing DWB는 각각 `667/655 tick`에 deadlock·gate override·hard
+failure `0`으로 완료했고, 영향권 `66 passed`, 전체 회귀 `864 passed, 3 skipped`를 통과했다.
+dirty 표적 결과이므로 새 clean 21-case qualification과 receipt는 아직 남아 있다. 상세는
+[`R5-A v3 교차 연결 보정`](../../docs/research/dynamic-actor-experiment/r5a-v3-crossing-connector-correction-2026-08-15.md)에 기록했다.
 hidden은 사용하지 않았다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을

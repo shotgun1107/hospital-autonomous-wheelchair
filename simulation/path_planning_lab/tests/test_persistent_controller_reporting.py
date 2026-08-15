@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from hospital_path_lab.contracts import Pose2D
 from hospital_path_lab.local_reference_contracts import ReferenceBuildStatus
 from hospital_path_lab.local_reference_reporting import public_local_reference_cases
 from hospital_path_lab.persistent_controller_reporting import (
@@ -11,6 +13,7 @@ from hospital_path_lab.persistent_controller_reporting import (
     PersistentPublicRunStatus,
     _is_ordered_subsequence,
     _maximum_forward_progress_m,
+    _section_geometry_relation_matches,
     build_persistent_public_manifest,
     evaluate_persistent_public_case,
     evaluate_persistent_public_cases,
@@ -61,6 +64,45 @@ def test_crossing_relation_allows_an_extra_ordered_return_section() -> None:
 
     assert _is_ordered_subsequence(wide, crossing)
     assert not _is_ordered_subsequence(wide, tuple(reversed(crossing)))
+
+
+def test_mirror_relation_compares_section_geometry_not_equal_tick_timing() -> None:
+    def sample(*, x: float, y: float, yaw: float, section: int):
+        return SimpleNamespace(
+            pose_before=Pose2D(0.0, 0.0, 0.0),
+            pose_after=Pose2D(x, y, yaw),
+            active_section_index=section,
+            active_section_kind="depart",
+        )
+
+    left = SimpleNamespace(
+        samples=(
+            sample(x=0.0, y=0.0, yaw=0.0, section=0),
+            sample(x=1.0, y=0.0, yaw=0.0, section=1),
+            sample(x=1.0, y=0.05, yaw=1.5707963267948966, section=1),
+        )
+    )
+    right = SimpleNamespace(
+        samples=(
+            sample(x=0.0, y=0.0, yaw=0.0, section=0),
+            sample(x=1.0, y=0.0, yaw=0.0, section=1),
+            sample(x=1.0, y=-0.025, yaw=1.5707963267948966, section=1),
+            sample(x=1.0, y=-0.05, yaw=1.5707963267948966, section=1),
+        )
+    )
+    outside_tolerance = SimpleNamespace(
+        samples=(
+            sample(x=0.0, y=0.0, yaw=0.0, section=0),
+            sample(x=1.0, y=-0.12, yaw=1.5707963267948966, section=1),
+        )
+    )
+
+    assert _section_geometry_relation_matches(left, right, mirror_lateral=True)
+    assert not _section_geometry_relation_matches(
+        left,
+        outside_tolerance,
+        mirror_lateral=True,
+    )
 
 
 def test_ready_pair_uses_one_frozen_input_and_fresh_controller_runs(public_cases) -> None:

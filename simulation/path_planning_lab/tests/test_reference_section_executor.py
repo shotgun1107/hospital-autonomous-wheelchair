@@ -33,6 +33,10 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceSectionKind,
     ReferenceTravelDirection,
 )
+from hospital_path_lab.local_reference_reporting import (
+    evaluate_local_reference_public_case,
+    public_local_reference_cases,
+)
 from hospital_path_lab.local_reference_validation import validate_local_maneuver_reference
 from hospital_path_lab.local_reference_window import LocalReferenceWindowManager
 from hospital_path_lab.map_factory import canonical_content_hash
@@ -52,6 +56,8 @@ from hospital_path_lab.reference_section_executor import (
     ReferenceSectionExecutor,
     ReferenceSectionExecutorConfig,
     shortest_angular_distance,
+    translation_completion_reached,
+    translation_completion_tolerance_m,
 )
 
 
@@ -280,6 +286,43 @@ def test_config_is_frozen_to_the_r5_v1_stop_and_rotation_contract() -> None:
     assert config.terminal_dwell_ticks == 10
     with pytest.raises(ValueError, match="frozen"):
         ReferenceSectionExecutorConfig(position_tolerance_m=0.06)
+
+
+def test_stopped_abstract_connector_consumes_existing_position_tolerance() -> None:
+    case = next(
+        item
+        for item in public_local_reference_cases()
+        if item.public_id == "crossing-static-left"
+    )
+    result = evaluate_local_reference_public_case(case)
+    assert result.hard_failures == ()
+    reference = result.reference_set.candidates[0]
+    translation = reference.sections[-2]
+    connector = reference.sections[-1]
+    connector_start = reference.knots[connector.first_knot_index].pose
+    connector_end = reference.knots[connector.last_knot_index].pose
+    connector_displacement = hypot(
+        connector_end.x - connector_start.x,
+        connector_end.y - connector_start.y,
+    )
+
+    assert translation.travel_direction is ReferenceTravelDirection.FORWARD
+    assert connector.travel_direction is ReferenceTravelDirection.NONE
+    assert connector.entry_requires_stopped and connector.exit_requires_stopped
+    assert translation_completion_tolerance_m(
+        reference,
+        translation.section_index,
+    ) == pytest.approx(0.05 - connector_displacement)
+    assert translation_completion_reached(
+        reference,
+        translation.section_index,
+        Pose2D(4.354002177999232, 2.360831204890371, -0.005066693637160212),
+    )
+    assert not translation_completion_reached(
+        reference,
+        translation.section_index,
+        Pose2D(4.306496036677228, 2.361426434749244, 0.00479997302950654),
+    )
 
 
 def test_planned_stop_uses_bounded_deceleration_and_three_actual_stop_ticks() -> None:

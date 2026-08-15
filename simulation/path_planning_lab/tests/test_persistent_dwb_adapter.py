@@ -45,6 +45,8 @@ from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import 
     PersistentDwbCoreSession,
     PersistentSourceDerivedDwbController,
     SectionBoundDwbReferenceTrajectoryGenerator,
+    _aligned_forward_section,
+    _connector_tightened_forward_section,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.trajectory_generator import (
     DwbReferenceTrajectoryGenerator,
@@ -126,6 +128,29 @@ def _fresh_empty_input(context, reference, window, *, tick, pose, twist=None):
     )
 
 
+def test_forward_goal_align_stays_active_until_short_section_heading_is_aligned() -> None:
+    assert not _aligned_forward_section(
+        ReferenceTravelDirection.FORWARD,
+        0.278,
+    )
+    assert _aligned_forward_section(
+        ReferenceTravelDirection.FORWARD,
+        0.08,
+    )
+    assert not _aligned_forward_section(
+        ReferenceTravelDirection.REVERSE,
+        0.0,
+    )
+    assert _connector_tightened_forward_section(
+        ReferenceTravelDirection.FORWARD,
+        0.027,
+    )
+    assert not _connector_tightened_forward_section(
+        ReferenceTravelDirection.FORWARD,
+        0.05,
+    )
+
+
 def _advance_to_first_signed_translation(
     controller,
     context,
@@ -166,6 +191,19 @@ def _advance_to_first_signed_translation(
             )
         result = controller.step(tick_input)
     assert result is not None
+    return result
+
+
+@pytest.fixture(scope="module")
+def public_crossing_left():
+    case = next(
+        item
+        for item in public_local_reference_cases()
+        if item.public_id == "crossing-static-left"
+    )
+    result = evaluate_local_reference_public_case(case)
+    assert result.hard_failures == ()
+    assert len(result.reference_set.candidates) == 1
     return result
 
 
@@ -301,6 +339,84 @@ def test_section_bound_generator_never_samples_the_opposite_translation_sign() -
     assert all(value >= 0.0 for value in forward.linear_samples_mps)
     assert all(-0.10 <= value <= 0.0 for value in reverse.linear_samples_mps)
     assert any(value < 0.0 for value in reverse.linear_samples_mps)
+
+
+def test_connector_progress_tie_order_only_reverses_forward_linear_blocks() -> None:
+    generator = SectionBoundDwbReferenceTrajectoryGenerator(
+        replace(DwbGeneratorConfig(), allow_reverse=True)
+    )
+    request = DwbGeneratorRequest(
+        pose=DwbPose2D(0.0, 0.0, 0.0),
+        current_twist=DwbTwist2D(0.0, 0.0),
+    )
+
+    generator.set_travel_direction(ReferenceTravelDirection.FORWARD)
+    ordinary = generator.generate(request)
+    generator.set_prefer_forward_progress_on_exact_ties(True)
+    connector = generator.generate(request)
+
+    assert connector.linear_samples_mps == tuple(reversed(ordinary.linear_samples_mps))
+    assert connector.angular_samples_radps == ordinary.angular_samples_radps
+    assert len(connector.trajectories) == len(ordinary.trajectories)
+    assert {trajectory.command for trajectory in connector.trajectories} == {
+        trajectory.command for trajectory in ordinary.trajectories
+    }
+    assert connector.trajectories[0].command.linear_mps == max(
+        ordinary.linear_samples_mps
+    )
+
+    generator.set_prefer_forward_progress_on_exact_ties(False)
+    assert generator.generate(request) == ordinary
+
+
+def test_crossing_final_forward_section_does_not_stall_at_minimum_speed(
+    public_crossing_left,
+) -> None:
+    context = public_crossing_left.build_context
+    reference = public_crossing_left.reference_set.candidates[0]
+    validation = public_crossing_left.validations[0]
+    initial = LocalReferenceWindowManager().update(context, reference, validation)
+    assert initial.window is not None
+    full_window = replace(
+        initial.window,
+        end_knot_index=reference.knots[-1].knot_index,
+        knots=reference.knots,
+        sections=reference.sections,
+        terminal_rejoin_included=True,
+        window_content_hash="",
+    )
+    executor = ReferenceSectionExecutor()
+    controller = PersistentSourceDerivedDwbController(executor=executor)
+
+    tick = 0
+    while executor.active_section_index != 7 and tick < 100:
+        section = reference.sections[executor.active_section_index or 0]
+        pose = reference.knots[section.last_knot_index].pose
+        controller.step(
+            _fresh_empty_input(
+                context,
+                reference,
+                full_window,
+                tick=tick,
+                pose=pose,
+            )
+        )
+        tick += 1
+    assert executor.active_section_index == 7
+
+    result = controller.step(
+        _fresh_empty_input(
+            context,
+            reference,
+            full_window,
+            tick=tick,
+            pose=Pose2D(4.306496036677228, 2.361426434749244, 0.00479997302950654),
+            twist=Twist2D(linear=0.0025, angular=0.0),
+        )
+    )
+
+    assert result.status is PersistentControllerStatus.COMMAND_FOUND
+    assert result.requested_twist.linear > 0.0025, result.candidate_diagnostics
 
 
 def test_public_reverse_section_selects_only_a_bounded_negative_dwb_command(
