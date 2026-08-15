@@ -4,6 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from hospital_path_lab.local_algorithms.dwb_reference.cpp_full_core import (
+    CPP_DWB_FULL_CORE_AVAILABLE,
+)
 from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
     PersistentSourceDerivedDwbController,
 )
@@ -71,6 +74,35 @@ def test_cpp_dwb_safety_batch_preserves_r5b_release_trace(first_left_bundle) -> 
 
     assert native_controller.native_safety_batch_used
     assert native_result == python_result
+
+
+@pytest.mark.skipif(
+    not CPP_DWB_FULL_CORE_AVAILABLE,
+    reason="optional C++ full DWB core has not been built",
+)
+def test_cpp_full_dwb_preserves_first_left_release_trace(first_left_bundle) -> None:
+    python_controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=True,
+        use_cpp_full_core=False,
+    )
+    cpp_controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=True,
+        use_cpp_full_core=True,
+    )
+
+    python_result = run_r5b_temporal_case(
+        first_left_bundle,
+        controller=python_controller,
+        tick_limit=97,
+    )
+    cpp_result = run_r5b_temporal_case(
+        first_left_bundle,
+        controller=cpp_controller,
+        tick_limit=97,
+    )
+
+    assert cpp_controller.native_full_core_used
+    assert cpp_result == python_result
 
 
 def test_controller_matched_rpp_completes_ordered_pass_and_rejoin(

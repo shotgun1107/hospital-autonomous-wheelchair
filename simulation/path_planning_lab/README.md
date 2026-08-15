@@ -41,6 +41,19 @@ critic·안전 수치·shared gate는 유지했다. 상세 결과는
 따른다. 영향권 `52 passed`, 전체 회귀 `897 passed`, failure·skip `0`이다. 공개 10-case
 qualification·50ms·hidden·제품 채택은 아직 수행하지 않았다.
 
+### R5-B v2 C++ 전체 DWB 수치 코어 — 2026-08-15
+
+후보별 동적 안전만 C++였던 이전 경계에서 더 나아가, 후보 217개 생성, 후보당 41개 자세
+적분, 7개 critic 순서·점수·short-circuit, exact tie와 최종 선택, Manhattan 거리 지도까지
+C++20으로 옮겼다. Python은 reference/session·프로젝트 계약·입출력 연결과 독립 shared gate를
+유지한다. native가 없으면 기존 Python reference로 fallback한다.
+
+첫 LEFT 900틱은 기존과 같은 추월 `459`, 재합류 `779`, 완료 `797`, gate override·hard
+failure `0`으로 `108.37s`에 끝났다. 전용 `5 passed`, 직접 영향권 `84 passed`다. 상세 결과는
+[C++ 전체 DWB 이식 결과](../../docs/research/dynamic-actor-experiment/r5b-v2-cpp-full-dwb-port-result-2026-08-15.md)를
+따른다. 전체 회귀는 `905 passed`, failure·skip `0`이다. 이 결과는 고정 머신 50ms 자격이나
+제품 채택 근거가 아니다.
+
 ### R5-B Ideal temporal tracking 1차 결과 — 2026-08-15 (이전 실패 기준선)
 
 R2 완료 ZIP을 엄격히 복원하고, `2.0 s / tick 40`까지 실제 정지한 현재 상태에서 같은
@@ -72,6 +85,7 @@ fallback하며 생성 DLL·SO·dylib는 Git에 포함하지 않는다.
 ```powershell
 python -m pip install -e ".\simulation\path_planning_lab[native]"
 python .\simulation\path_planning_lab\scripts\build_cpp_dwb_safety_core.py
+python .\simulation\path_planning_lab\scripts\build_cpp_dwb_full_core.py
 ```
 
 ### 동적 지역 기동 연구 R2 실행 결과 — 2026-08-13

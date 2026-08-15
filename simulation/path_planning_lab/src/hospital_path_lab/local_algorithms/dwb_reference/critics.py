@@ -168,6 +168,8 @@ class ManhattanDistanceField:
 def build_manhattan_distance_field(
     grid: DwbCriticGrid,
     source_cells: Sequence[GridCell],
+    *,
+    prefer_native: bool = False,
 ) -> ManhattanDistanceField:
     """Flood free cells from sorted unique sources using a fixed neighbour order.
 
@@ -187,6 +189,13 @@ def build_manhattan_distance_field(
     )
     if not sources:
         raise ValueError("distance field requires at least one free in-grid source")
+
+    if prefer_native:
+        from .cpp_full_core import build_native_manhattan_distances
+
+        native_distances = build_native_manhattan_distances(grid, sources)
+        if native_distances is not None:
+            return ManhattanDistanceField(grid, sources, native_distances)
 
     mutable: list[list[int | None]] = [
         [None for _ in range(grid.width)] for _ in range(grid.height)
@@ -309,7 +318,11 @@ class PathDistCritic(_PathHoldingCritic):
         if not cells:
             self._field = None
             return False
-        self._field = build_manhattan_distance_field(self.grid, cells)
+        self._field = build_manhattan_distance_field(
+            self.grid,
+            cells,
+            prefer_native=bool(getattr(self, "_use_cpp_distance_field", False)),
+        )
         return True
 
     def score(self, trajectory: DwbTrajectory) -> float:
@@ -346,7 +359,11 @@ class GoalDistCritic(_PathHoldingCritic):
         if not cells:
             self._field = None
             return False
-        self._field = build_manhattan_distance_field(self.grid, (cells[-1],))
+        self._field = build_manhattan_distance_field(
+            self.grid,
+            (cells[-1],),
+            prefer_native=bool(getattr(self, "_use_cpp_distance_field", False)),
+        )
         return True
 
     def score(self, trajectory: DwbTrajectory) -> float:
@@ -501,7 +518,11 @@ class GoalAlignCritic(GoalDistCritic):
         if not cells:
             self._field = None
             return False
-        self._field = build_manhattan_distance_field(self.grid, (cells[-1],))
+        self._field = build_manhattan_distance_field(
+            self.grid,
+            (cells[-1],),
+            prefer_native=bool(getattr(self, "_use_cpp_distance_field", False)),
+        )
         return True
 
     def score(self, trajectory: DwbTrajectory) -> float:
@@ -594,6 +615,17 @@ class OscillationCritic:
         return (
             self._linear_trend.has_sign_flipped
             or self._angular_trend.has_sign_flipped
+        )
+
+    @property
+    def native_restriction_flags(self) -> tuple[bool, bool, bool, bool]:
+        """Expose the exact sign restrictions consumed by the optional C++ core."""
+
+        return (
+            self._linear_trend._positive_only,
+            self._linear_trend._negative_only,
+            self._angular_trend._positive_only,
+            self._angular_trend._negative_only,
         )
 
     def prepare(self, request: DwbGeneratorRequest) -> bool:
@@ -769,6 +801,19 @@ class RotateToGoalCritic(_PathHoldingCritic):
     @property
     def rotating(self) -> bool:
         return self._rotating
+
+    @property
+    def native_scoring_state(self) -> tuple[bool, bool, float, float, float, float]:
+        """Expose prepared scoring state without moving critic state ownership."""
+
+        return (
+            self._in_window,
+            self._rotating,
+            self._goal_yaw_rad,
+            self._current_speed_sq,
+            self.slowing_factor,
+            self.lookahead_time_s,
+        )
 
     def prepare(self, request: DwbGeneratorRequest) -> bool:
         if not self.path:

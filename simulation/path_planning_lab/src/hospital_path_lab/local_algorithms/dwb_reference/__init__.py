@@ -18,6 +18,7 @@ from .core import (
     DwbReferenceCore,
     IllegalTrajectoryError,
 )
+from .cpp_full_core import CPP_DWB_FULL_CORE_AVAILABLE, CppDwbReferenceCore
 from .goal_controller import DwbLatchedGoalController
 from .persistent_adapter import (
     PERSISTENT_DWB_ADAPTER_VERSION,
@@ -35,6 +36,8 @@ __all__ = [
     "ROS1_NAVIGATION_COMMIT",
     "DwbCriticBinding",
     "CriticBatchScore",
+    "CPP_DWB_FULL_CORE_AVAILABLE",
+    "CppDwbReferenceCore",
     "DwbGeneratorConfig",
     "DwbGeneratorRequest",
     "DwbGeneratorResult",

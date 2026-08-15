@@ -582,9 +582,9 @@ hidden까지 연구 조건 충족
 | `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
 | `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` clean public `21/21`, ready 8, relation failure 0, receipt 완료 | R5 v2 signed controller 전달 |
-| `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-1~R5-6 구현, 1차 clean public FAIL·receipt 0. R4 v2 입력에서 v1 RPP 추적오차 한계 초과를 별도 진단, R5 v2 제한 후진 미구현 | v2 signed static tracking 통과, R5-B/C는 R2 temporal·observation gate 필요 |
+| `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-A signed static public 완료. R5-B v2 공개 첫 LEFT에서 RPP·DWB 모두 추월·재합류·도착 PASS. 좌·우 10-case와 Normal·Stress는 미완료 | R5-B 나머지 공개 case와 R5-C는 별도 gate 필요 |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
-| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 미시작 | R1~R6 기능·안전 증거 완결 |
+| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | C++ 전체 DWB 수치 코어와 첫 LEFT semantic parity만 구현. 고정 머신 50ms·manifest·진입 판정은 미실행 | R1~R6 기능·안전 증거 완결 |
 
 ## 8. 산출물과 보존
 
@@ -674,10 +674,11 @@ R5-A 첫 clean public 실행에서 ready 8개 모두 reverse edge를 포함하�
 source primitive의 signed `travel_direction`을 명시하고 R5 v2가 해당 reverse section에서만
 최대 `0.10m/s` 후진하도록 보정한다. 기존 v1 결과와 receipt는 보존한다.
 
-현재 다음 구현 후보는 R5 v2 signed static reference tracking이다. R5-B temporal Actor와
-R5-C observation-integrated lane은 R2 evidence 결합과 R2-B hard failure를 닫기 전 시작하지 않는다.
-따라서 R2-B를 통과하기 전에는
-perception-integrated R6, hidden과 제품 안전 주장을 허용하지 않는다.
+R5 v2 signed static reference tracking은 완료됐고, R5-B v2 공개 첫 LEFT에서 RPP와 DWB의
+추월·재합류·도착을 확인했다. source-derived DWB의 후보 생성·41-pose 적분·7개 critic·선택·
+Manhattan 거리 지도도 C++20 수치 코어로 옮겨 첫 LEFT Python 의미를 보존했다. 그러나 좌·우
+공개 10-case와 Normal·Stress는 아직 완료하지 않았고 R2-B hard failure도 남아 있다. 따라서
+perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

@@ -5,8 +5,9 @@ path and therefore resets all stateful critics.  R5 sliding windows have a
 different lifetime: the immutable full reference owns the controller session,
 while the moving local window only updates the four map-grid scoring critics.
 
-This module keeps that split explicit.  It is a Python simulation-research
-adapter, not a ROS plugin, product controller, or real-time qualification.
+This module keeps that split explicit.  Python owns the project/session boundary
+and may call the optional C++ DWB numerical core.  It is not a ROS plugin,
+product controller, or real-time qualification.
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ from .composition import (
 )
 from .contracts import DwbGeneratorRequest, DwbPose2D
 from .core import DwbCoreResult, DwbCriticBinding, DwbReferenceCore
+from .cpp_full_core import CppDwbReferenceCore
 from .critics import (
     GoalAlignCritic,
     GoalDistCritic,
@@ -65,7 +67,7 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v5"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v6-cpp-full"
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -156,6 +158,12 @@ class PersistentDwbCoreSession:
     @property
     def critic_names(self) -> tuple[str, ...]:
         return self._core.critic_names
+
+    @property
+    def native_full_core_used(self) -> bool:
+        """Whether the last translational batch ran in the complete C++ core."""
+
+        return bool(getattr(self._core, "native_used", False))
 
     @property
     def diagnostics(self) -> PersistentDwbSessionDiagnostics:
@@ -301,12 +309,16 @@ class PersistentSourceDerivedDwbController:
         config: SourceDerivedDwbConfig | None = None,
         executor: ReferenceSectionExecutor | None = None,
         use_cpp_safety_core: bool = True,
+        use_cpp_full_core: bool = True,
     ) -> None:
         if not isinstance(use_cpp_safety_core, bool):
             raise TypeError("use_cpp_safety_core must be bool")
+        if not isinstance(use_cpp_full_core, bool):
+            raise TypeError("use_cpp_full_core must be bool")
         self._executor = executor or ReferenceSectionExecutor()
         self._config = config
         self._use_cpp_safety_core = use_cpp_safety_core
+        self._use_cpp_full_core = use_cpp_full_core
         self._stack: _PersistentDwbStack | None = None
         self._stack_build_count = 0
         self._bound_reference_session_id: str | None = None
@@ -338,6 +350,10 @@ class PersistentSourceDerivedDwbController:
     @property
     def native_safety_batch_used(self) -> bool:
         return self._stack is not None and self._stack.safety_critic.native_batch_used
+
+    @property
+    def native_full_core_used(self) -> bool:
+        return self._stack is not None and self._stack.session_core.native_full_core_used
 
     def step(self, tick_input: PersistentControllerTickInput) -> PersistentControllerResult:
         started_at = perf_counter_ns()
@@ -531,7 +547,11 @@ class PersistentSourceDerivedDwbController:
             ),
         )
         generator = SectionBoundDwbReferenceTrajectoryGenerator(config.generator)
-        core = DwbReferenceCore(generator, bindings)
+        core = (
+            CppDwbReferenceCore(generator, bindings)
+            if self._use_cpp_full_core
+            else DwbReferenceCore(generator, bindings)
+        )
         session_core = PersistentDwbCoreSession(
             core,
             scoring_critics=(goal_align, path_align, path_dist, goal_dist),

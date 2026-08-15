@@ -5,8 +5,9 @@ critics, and latched goal handler with the project's existing dynamic safety
 contract.  It deliberately does not import corpus labels, evaluator oracles,
 runner splits, or hidden-test data.
 
-The result remains a Python ``simulation_only`` reference.  It is neither a
-Nav2 plugin nor evidence of product or human-rider safety.
+The project boundary remains a Python ``simulation_only`` reference and uses
+the optional C++ numerical core when available.  It is neither a Nav2 plugin
+nor evidence of product or human-rider safety.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from .contracts import (
     DwbTwist2D,
 )
 from .core import DwbCriticBinding, DwbReferenceCore, IllegalTrajectoryError
+from .cpp_full_core import CppDwbReferenceCore
 from .critics import (
     DwbCriticGrid,
     GoalAlignCritic,
@@ -110,7 +112,7 @@ class _ControllerStack:
 
 
 class SourceDerivedDynamicDwbController:
-    """Complete Python source-derived DWB controller behind project contracts."""
+    """Source-derived DWB controller with optional full C++ numerical core."""
 
     name = "dynamic_dwb_reference"
 
@@ -119,13 +121,17 @@ class SourceDerivedDynamicDwbController:
         vehicle_profile: VehicleProfile = VIRTUAL_DOLL_WHEELCHAIR_V0_1,
         *,
         config: SourceDerivedDwbConfig | None = None,
+        use_cpp_full_core: bool = True,
     ) -> None:
         if not vehicle_profile.simulation_only:
             raise ValueError("source-derived DWB requires a simulation-only profile")
+        if not isinstance(use_cpp_full_core, bool):
+            raise TypeError("use_cpp_full_core must be bool")
         self.vehicle_profile = vehicle_profile
         self.config = config or SourceDerivedDwbConfig(
             generator=_generator_config_for(vehicle_profile)
         )
+        self._use_cpp_full_core = use_cpp_full_core
         _validate_generator_profile(self.config.generator, vehicle_profile)
         self._goal_controller = DwbLatchedGoalController()
         self._stack: _ControllerStack | None = None
@@ -141,6 +147,13 @@ class SourceDerivedDynamicDwbController:
     def selected_safety_evidence(self):
         stack = self._stack
         return None if stack is None else stack.safety_critic.selected_evidence
+
+    @property
+    def native_full_core_used(self) -> bool:
+        stack = self._stack
+        if stack is None:
+            return False
+        return bool(getattr(stack.adapter.core, "native_used", False))
 
     def step(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
         if not isinstance(snapshot, ControllerSnapshot):
@@ -252,7 +265,11 @@ class SourceDerivedDynamicDwbController:
             ),
         )
         generator = DwbReferenceTrajectoryGenerator(self.config.generator)
-        core = DwbReferenceCore(generator, bindings)
+        core = (
+            CppDwbReferenceCore(generator, bindings)
+            if self._use_cpp_full_core
+            else DwbReferenceCore(generator, bindings)
+        )
         adapter = SourceDerivedDwbController(
             self.vehicle_profile,
             core=core,

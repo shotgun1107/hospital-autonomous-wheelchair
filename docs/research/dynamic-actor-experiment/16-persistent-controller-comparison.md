@@ -1248,4 +1248,18 @@ R5가 성공해도 다음을 의미하지 않는다.
 
 > 동결된 합성 static grid, R4 immutable reference와 가상 차체에서 persistent RPP와
 > source-derived DWB가 같은 section/session/safety 계약 아래 reference를 연속 추종할 수
-> 있는지를 비교한 Python simulation 연구 결과다.
+> 있는지를 비교한 simulation 연구 결과다. Python reference와 선택적 C++ DWB 수치 코어를
+> 대조하지만 제품 controller나 실제 차체 증거는 아니다.
+
+## 25. 2026-08-15 C++ 전체 DWB 수치 코어 이식 기록
+
+R5-B v2 첫 LEFT 기능 PASS 뒤 source-derived DWB의 후보 217개 생성, 후보당 41 pose 적분,
+7개 critic 점수 순서, short-circuit, exact tie, 최종 선택과 Manhattan 거리 지도를 C++20
+수치 코어로 옮겼다. 기존 별도 C++ 동적 안전 배치, Python reference/session·권한 경계와
+독립 shared gate는 유지한다. native가 없으면 Python reference로 fallback한다.
+
+Python과 정·후진 후보 축, tie 순서, 정상·전 후보 탈락, 첫 LEFT release trace를 대조했고,
+900틱은 기존 `459→779→797`, gate override·hard failure `0`을 유지하며 `108.37s`에
+완료됐다. 상세 근거는
+[`R5-B v2 C++ 전체 DWB 이식 결과`](r5b-v2-cpp-full-dwb-port-result-2026-08-15.md)에 둔다.
+이 기록은 R7의 고정 머신 50ms 자격·manifest·hidden 진입 판정이 아니다.

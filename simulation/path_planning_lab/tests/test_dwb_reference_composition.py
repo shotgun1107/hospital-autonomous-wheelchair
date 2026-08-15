@@ -33,6 +33,9 @@ from hospital_path_lab.local_algorithms.dwb_reference.composition import (
     _map_grid_scale,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.contracts import DwbGeneratorConfig
+from hospital_path_lab.local_algorithms.dwb_reference.cpp_full_core import (
+    CPP_DWB_FULL_CORE_AVAILABLE,
+)
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1
 
 
@@ -120,6 +123,62 @@ def test_composed_controller_selects_a_safe_source_derived_candidate() -> None:
     assert len(result.predicted_trajectory) == 41
     assert controller.selected_safety_evidence is not None
     assert controller.selected_safety_evidence.safe
+
+
+@pytest.mark.skipif(
+    not CPP_DWB_FULL_CORE_AVAILABLE,
+    reason="optional C++ full DWB core has not been built",
+)
+def test_cpp_full_core_preserves_python_command_trajectory_and_diagnostics() -> None:
+    snapshot = _snapshot()
+    python_controller = SourceDerivedDynamicDwbController(
+        config=_fast_config(),
+        use_cpp_full_core=False,
+    )
+    cpp_controller = SourceDerivedDynamicDwbController(
+        config=_fast_config(),
+        use_cpp_full_core=True,
+    )
+
+    python_result = python_controller.step(snapshot)
+    cpp_result = cpp_controller.step(snapshot)
+
+    assert cpp_controller.native_full_core_used
+    assert cpp_result.status is python_result.status
+    assert cpp_result.requested_twist == python_result.requested_twist
+    assert cpp_result.predicted_trajectory == python_result.predicted_trajectory
+    assert cpp_result.failure_reason == python_result.failure_reason
+    assert cpp_result.decision_trace == python_result.decision_trace
+    assert cpp_controller.selected_safety_evidence == (
+        python_controller.selected_safety_evidence
+    )
+
+
+@pytest.mark.skipif(
+    not CPP_DWB_FULL_CORE_AVAILABLE,
+    reason="optional C++ full DWB core has not been built",
+)
+def test_cpp_full_core_preserves_python_all_candidates_rejected_result() -> None:
+    actor = ActorTrack(
+        track_id="track-cpp-reject",
+        actor_binding_id="actor-cpp-reject",
+        observed_position=Point2D(0.70, 2.50),
+        observed_velocity=Vector2D(0.0, 0.0),
+        position_sigma_m=0.0,
+        velocity_sigma_mps=0.0,
+    )
+    snapshot = _snapshot(actor=actor)
+    python_controller = SourceDerivedDynamicDwbController(use_cpp_full_core=False)
+    cpp_controller = SourceDerivedDynamicDwbController(use_cpp_full_core=True)
+
+    python_result = python_controller.step(snapshot)
+    cpp_result = cpp_controller.step(snapshot)
+
+    assert cpp_controller.native_full_core_used
+    assert cpp_result.status is PlanStatus.NO_PATH
+    assert cpp_result.status is python_result.status
+    assert cpp_result.failure_reason == python_result.failure_reason
+    assert cpp_result.decision_trace == python_result.decision_trace
 
 
 def test_same_tick_is_idempotent_and_does_not_rebuild_the_stack() -> None:

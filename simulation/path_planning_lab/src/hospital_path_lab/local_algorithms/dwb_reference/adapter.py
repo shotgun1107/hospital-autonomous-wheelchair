@@ -154,6 +154,12 @@ class SourceDerivedDwbController:
 
         return self._installed_path_signature
 
+    @property
+    def core(self) -> DwbCore:
+        """Expose the bound core for read-only execution diagnostics."""
+
+        return self._core
+
     def step(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
         """Compute one command while preserving the snapshot's exact provenance."""
 

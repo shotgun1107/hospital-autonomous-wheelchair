@@ -21,3 +21,13 @@ target_compile_options(
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 set_target_properties(dwb_safety_core PROPERTIES OUTPUT_NAME "dwb_safety_core")
+
+add_library(dwb_full_core SHARED dwb_full_core.cpp)
+target_compile_features(dwb_full_core PRIVATE cxx_std_20)
+target_compile_options(
+  dwb_full_core
+  PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/O2;/W4;/fp:precise>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3;-Wall;-Wextra;-Wpedantic;-ffp-contract=off;-fno-builtin-sin;-fno-builtin-cos>
+)
+set_target_properties(dwb_full_core PROPERTIES OUTPUT_NAME "dwb_full_core")
