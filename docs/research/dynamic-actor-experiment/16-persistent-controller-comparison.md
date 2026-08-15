@@ -4,7 +4,8 @@
 
 - 작성일: `2026-08-14`
 - 상태: `R5-1~R5-7` 구현·감사, R4 v2 signed reference와 R5-A v3 persistent controller
-  clean public qualification·receipt 완료
+  clean public qualification·receipt 완료. R5-B Ideal temporal 공개 1차 실행은 기능 `FAIL`,
+  receipt `0`
 - 범위: Python `simulation_only`, 합성 static grid, 가상 차체
 - 상위 기준:
   - [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)
@@ -84,12 +85,14 @@ R2-B observation/prediction hard failure 2건을 보존하고 있으므로 R5를
 | lane | 입력 evidence | 현재 진입 | 말할 수 있는 것 |
 |---|---|---|---|
 | `R5-A STATIC_REFERENCE_TRACKING` | R4 `SPATIAL_ONLY`, fresh-empty infrastructure stream | 가능 | 정적 reference·window·section의 연속 추종 |
-| `R5-B IDEAL_TEMPORAL_TRACKING` | R4 `GROUND_TRUTH_TEMPORAL` + R2-A exact witness + Ideal causal stream | 차단 | 동결된 합성 Actor 시간 경로에서의 실행 |
+| `R5-B IDEAL_TEMPORAL_TRACKING` | R4 `GROUND_TRUTH_TEMPORAL` + R2-A exact witness + Ideal causal stream | 1차 공개 실행 `FAIL` | 동결된 합성 Actor 시간 경로에서의 실행 |
 | `R5-C OBSERVATION_INTEGRATED` | R4 `OBSERVATION_INTEGRATED` + R2-B 통과 | 차단 | no-dropout·Normal·Stress 관측 아래 실행 |
 
 `R5-A` 통과를 전체 R5 완료, Actor 추월 성공 또는 perception 통합으로 부르지 않는다. R5-B는
-R2 temporal evidence가 R4 reference에 실제 결박된 뒤 시작하고, R5-C는 R2-B hard failure를
-닫기 전 시작하지 않는다.
+R2 temporal evidence를 R4 reference에 결박해 시작했지만, 첫 공개 실행에서 Actor active
+interval 안의 완전 추월을 만들지 못했다. 상세 수치는
+[`R5-B 1차 공개 temporal tracking 결과`](r5b-initial-public-temporal-tracking-result-2026-08-15.md)에
+고정한다. R5-C는 R2-B hard failure를 닫기 전 시작하지 않는다.
 
 `fresh-empty infrastructure stream`은 shared gate의 provenance·tick 계약을 실행하기 위한 합성
 빈 관측이다. 카메라가 사람이 없음을 증명했다는 의미가 아니다.
@@ -1179,10 +1182,11 @@ source recheck를 모두 통과할 때만 생성한다.
 
 ### 전체 R5는 아직 완료 아님
 
-R5-A 통과 뒤에도 다음은 별도 미완료다.
+R5-A 통과 뒤에도 다음은 별도 미완료다. R5-B는 더 이상 미착수가 아니라 1차 공개
+실행에서 실패 원인을 보존한 상태다.
 
 ```text
-R5-B Ideal temporal Actor execution
+R5-B Ideal temporal Actor execution: 1차 FAIL, receipt 0
 R5-C no-dropout / Normal / Stress observation integration
 WAIT_AND_FOLLOW authorized release
 ```

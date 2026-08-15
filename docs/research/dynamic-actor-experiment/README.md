@@ -32,9 +32,11 @@
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
 `R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 public 21/21·ready
-  reference 8개·receipt·794 전체 회귀 완료`, `R5-1~R5-6 구현·1차 clean public FAIL·receipt 0`,
-  `R4 v2 clean qualification 완료·R5 v2 대표 signed 후진 종단 통과·전체 21-case 자격 미실행`
-  상태다.
+reference 8개·receipt·794 전체 회귀 완료`, `R5-A v3 static public 21/21·ready 8개 RPP/DWB
+종단·receipt·864 전체 회귀 완료` 상태다. `R5-B`는 R2 archive 복원, tick 40 causal 경로
+10/10, GROUND_TRUTH_TEMPORAL reference와 tick-bound 실행 허가까지 구현했으나 공개 RPP
+좌·우 10개와 첫 LEFT DWB가 Actor active interval 안에 완전 추월하지 못해
+`FAIL·receipt 0`이다. gate override·clearance 위반은 없었다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -43,6 +45,9 @@ R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약�
 Ideal·Normal·Stress 관측과 자동 witness의 결합은
 [`13-witness-profile-replay.md`](13-witness-profile-replay.md)에 분리했다.
 ground-truth feasible과 관측상 판단 가능, 실제 controller 실행을 서로 다른 증거로 유지한다.
+R5-B 상세 명세와 첫 실패 결과는 각각
+[`17-r5b-ideal-temporal-tracking.md`](17-r5b-ideal-temporal-tracking.md),
+[`r5b-initial-public-temporal-tracking-result-2026-08-15.md`](r5b-initial-public-temporal-tracking-result-2026-08-15.md)에 기록한다.
 R3의 검증된 pose·heading path를 persistent controller용 immutable reference와 revision-bound
 sliding window로 바꾸는 계약은
 [`15-local-maneuver-reference-contract.md`](15-local-maneuver-reference-contract.md)에 정의했다.

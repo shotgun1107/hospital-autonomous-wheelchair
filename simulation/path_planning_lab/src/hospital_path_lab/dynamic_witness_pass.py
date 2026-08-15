@@ -513,6 +513,67 @@ def generate_pass_candidate(
     실패했다는 뜻이며 일반적인 PASS 부재 증거가 아니다.
     """
 
+    return _generate_pass_candidate(
+        world,
+        request,
+        search_config=search_config,
+        permit_causal_release_tick=False,
+    )
+
+
+def generate_causal_release_pass_candidate(
+    world: WitnessWorldSnapshot,
+    request: PassCandidateRequest,
+    *,
+    search_config: WitnessSearchConfig = FROZEN_WITNESS_SEARCH_CONFIG,
+) -> AutomatedWitness | None:
+    """Validate one PASS candidate at an explicitly chosen causal release tick.
+
+    R2's frozen exhaustive search only evaluates event-anchor release ticks.  A
+    later path-only controller lane can require a prediction warm-up before
+    departure.  This API keeps every frozen geometry, kinematic and strict
+    validation rule, but accepts any 20 Hz release tick while the target Actor is
+    still active.  It does not alter the R2 search frontier or its hashes.
+    """
+
+    return _generate_pass_candidate(
+        world,
+        request,
+        search_config=search_config,
+        permit_causal_release_tick=True,
+    )
+
+
+def pass_candidate_lateral_offsets(
+    world: WitnessWorldSnapshot,
+    *,
+    actor_binding_id: str,
+    side: PassSide,
+    search_config: WitnessSearchConfig = FROZEN_WITNESS_SEARCH_CONFIG,
+) -> tuple[float, ...]:
+    """Return the frozen label-free lateral axis for one eligible Actor and side."""
+
+    if not isinstance(world, WitnessWorldSnapshot):
+        raise TypeError("world must be a WitnessWorldSnapshot")
+    if not isinstance(side, PassSide):
+        raise TypeError("side must be a PassSide")
+    targets = _eligible_targets(world, _straight_segments(world), search_config)
+    target = next(
+        (item for item in targets if item.actor.actor_binding_id == actor_binding_id),
+        None,
+    )
+    if target is None:
+        return ()
+    return _lateral_offsets(world, target, side, search_config)
+
+
+def _generate_pass_candidate(
+    world: WitnessWorldSnapshot,
+    request: PassCandidateRequest,
+    *,
+    search_config: WitnessSearchConfig,
+    permit_causal_release_tick: bool,
+) -> AutomatedWitness | None:
     if not isinstance(world, WitnessWorldSnapshot):
         raise TypeError("world must be a WitnessWorldSnapshot")
     if not isinstance(search_config, WitnessSearchConfig):
@@ -534,7 +595,11 @@ def generate_pass_candidate(
         return None
     if request.lateral_offset_m not in _lateral_offsets(world, target, request.side, search_config):
         return None
-    if request.release_tick not in _release_ticks(world, target):
+    if permit_causal_release_tick:
+        release_time_s = request.release_tick * world.kinematic_contract.control_period_s
+        if not target.actor.active_from_s <= release_time_s < target.actor.active_until_s:
+            return None
+    elif request.release_tick not in _release_ticks(world, target):
         return None
     if (
         request.linear_target_mps
@@ -1816,8 +1881,10 @@ def _empty_result(
 
 __all__ = [
     "PassCandidateRequest",
+    "generate_causal_release_pass_candidate",
     "generate_frozen_frontier_pass_candidate",
     "generate_pass_candidate",
+    "pass_candidate_lateral_offsets",
     "search_pass_structured",
     "search_pass_structured_parallel",
 ]

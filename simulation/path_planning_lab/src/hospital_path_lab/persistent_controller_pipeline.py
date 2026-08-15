@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from math import cos, isfinite, sin
 from typing import Protocol
 
-from hospital_path_lab.contracts import Pose2D, RobotState, Twist2D
+from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_CONTROL_PERIOD_S,
     DynamicCommandProposal,
@@ -41,6 +41,9 @@ from hospital_path_lab.persistent_controller_contracts import (
     PersistentControllerTickInput,
     PersistentReferenceBinding,
     build_persistent_reference_binding,
+)
+from hospital_path_lab.r5b_temporal_authorization import (
+    R5BTemporalExecutionAuthorization,
 )
 
 PERSISTENT_CONTROLLER_PIPELINE_VERSION = "persistent-controller-pipeline-v2"
@@ -146,6 +149,8 @@ class PersistentControllerPipeline:
         path_still_valid: bool = True,
         local_safety_recheck_passed: bool = True,
         resume_authorization: ResumeAuthorization | None = None,
+        temporal_execution_authorization: R5BTemporalExecutionAuthorization | None = None,
+        grid_snapshot: GridSnapshot | None = None,
         mission_cancelled: bool = False,
     ) -> PersistentPipelineStep:
         """Run one exact 20 Hz step; current twist moves before gate output applies."""
@@ -164,11 +169,27 @@ class PersistentControllerPipeline:
         tick = self.tick_id
         simulation_time_s = tick * DYNAMIC_CONTROL_PERIOD_S
         state_before = self.robot_state
+        current_grid_snapshot = grid_snapshot or self.build_context.static_grid_snapshot
+        if not isinstance(current_grid_snapshot, GridSnapshot):
+            raise TypeError("grid_snapshot must be a GridSnapshot when supplied")
+        frozen_metadata = self.build_context.static_grid_snapshot.metadata
+        current_metadata = current_grid_snapshot.metadata
+        if (
+            current_grid_snapshot.grid is not self.build_context.static_grid_snapshot.grid
+            or current_grid_snapshot.forbidden_cells
+            != self.build_context.static_grid_snapshot.forbidden_cells
+            or current_metadata.map_id != frozen_metadata.map_id
+            or current_metadata.map_revision != frozen_metadata.map_revision
+            or current_metadata.mission_revision != frozen_metadata.mission_revision
+            or current_metadata.content_hash != frozen_metadata.content_hash
+        ):
+            raise ValueError("current grid snapshot changed the frozen spatial source")
         current_build_context = replace(
             self.build_context,
             current_robot_pose=state_before.pose,
             control_tick=tick,
             simulation_time_s=simulation_time_s,
+            static_grid_snapshot=current_grid_snapshot,
             context_content_hash="",
         )
         update = self.window_manager.update(
@@ -211,6 +232,7 @@ class PersistentControllerPipeline:
                 if resume_authorization is None
                 else resume_authorization.authorization_revision
             ),
+            temporal_execution_authorization=temporal_execution_authorization,
         )
         controller_result = self.controller.step(tick_input)
         direction_failure = _section_bound_direction_failure(

@@ -344,12 +344,14 @@ def test_nonavailable_binding_is_rejected_before_controller_use() -> None:
         )
 
 
-def test_r5_a_contract_rejects_temporal_evidence_until_later_lane_is_unblocked() -> None:
+def test_temporal_reference_without_tick_bound_authorization_is_rejected() -> None:
     tick_input, _context, reference, _validation = _initial_tick_input()
     temporal_reference = replace(
         reference,
         evidence_level=ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL,
+        source_spatial_seed_hash=None,
         source_temporal_evidence_hash="1" * 64,
+        source_temporal_geometry_hash="2" * 64,
         reference_content_hash="",
     )
     temporal_window = replace(
@@ -362,7 +364,7 @@ def test_r5_a_contract_rejects_temporal_evidence_until_later_lane_is_unblocked()
         temporal_window,
     )
 
-    with pytest.raises(ValueError, match="SPATIAL_ONLY"):
+    with pytest.raises(ValueError, match="tick-bound authorization"):
         replace(
             tick_input,
             full_reference=temporal_reference,

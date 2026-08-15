@@ -33,6 +33,8 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceSectionKind,
     ReferenceTravelDirection,
     SpatialReferenceSeed,
+    TemporalReferenceEvidence,
+    TemporalReferenceGeometryEvidence,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.spatial_oracle_contracts import (
@@ -145,6 +147,8 @@ def validate_local_maneuver_reference(
     reference: LocalManeuverReference,
     *,
     spatial_seed: SpatialReferenceSeed | None = None,
+    temporal_evidence: TemporalReferenceEvidence | None = None,
+    temporal_geometry: TemporalReferenceGeometryEvidence | None = None,
 ) -> LocalReferenceValidation:
     """R4 reference를 source builder와 독립적으로 다시 검증한다."""
 
@@ -154,9 +158,28 @@ def validate_local_maneuver_reference(
         raise TypeError("reference must be a LocalManeuverReference")
     if spatial_seed is not None and not isinstance(spatial_seed, SpatialReferenceSeed):
         raise TypeError("spatial_seed must be a SpatialReferenceSeed or None")
+    if temporal_evidence is not None and not isinstance(
+        temporal_evidence,
+        TemporalReferenceEvidence,
+    ):
+        raise TypeError("temporal_evidence must be a TemporalReferenceEvidence or None")
+    if temporal_geometry is not None and not isinstance(
+        temporal_geometry,
+        TemporalReferenceGeometryEvidence,
+    ):
+        raise TypeError(
+            "temporal_geometry must be a TemporalReferenceGeometryEvidence or None"
+        )
 
     failures: set[str] = set()
-    _validate_integrity(context, reference, spatial_seed, failures)
+    _validate_integrity(
+        context,
+        reference,
+        spatial_seed,
+        temporal_evidence,
+        temporal_geometry,
+        failures,
+    )
     _validate_structure(reference, spatial_seed, failures)
     maximum_excursion = _validate_side_and_rejoin(
         context,
@@ -215,6 +238,8 @@ def _validate_integrity(
     context: ReferenceBuildContext,
     reference: LocalManeuverReference,
     spatial_seed: SpatialReferenceSeed | None,
+    temporal_evidence: TemporalReferenceEvidence | None,
+    temporal_geometry: TemporalReferenceGeometryEvidence | None,
     failures: set[str],
 ) -> None:
     try:
@@ -281,6 +306,25 @@ def _validate_integrity(
             failures.add("spatial_reference_claims_temporal_evidence")
         if spatial_seed is None:
             failures.add("source_validation_missing")
+        if temporal_evidence is not None or temporal_geometry is not None:
+            failures.add("spatial_reference_claims_temporal_evidence")
+    elif reference.evidence_level is ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL:
+        is_pass = reference.maneuver_kind in (
+            LocalManeuverKind.PASS_LEFT,
+            LocalManeuverKind.PASS_RIGHT,
+        )
+        if is_pass and spatial_seed is not None:
+            failures.add("temporal_reference_claims_spatial_seed")
+        if temporal_evidence is None or (is_pass and temporal_geometry is None):
+            failures.add("source_validation_missing")
+        elif temporal_geometry is not None:
+            _validate_temporal_sources(
+                context,
+                reference,
+                temporal_evidence,
+                temporal_geometry,
+                failures,
+            )
     if spatial_seed is None:
         return
     try:
@@ -309,6 +353,57 @@ def _validate_integrity(
             failures.add("source_hash_mismatch")
     except (AttributeError, TypeError, ValueError):
         failures.add("source_hash_mismatch")
+
+
+def _validate_temporal_sources(
+    context: ReferenceBuildContext,
+    reference: LocalManeuverReference,
+    temporal_evidence: TemporalReferenceEvidence,
+    temporal_geometry: TemporalReferenceGeometryEvidence,
+    failures: set[str],
+) -> None:
+    try:
+        if temporal_evidence.evidence_content_hash != temporal_evidence.expected_content_hash:
+            failures.add("source_hash_mismatch")
+        if temporal_geometry.geometry_content_hash != temporal_geometry.expected_content_hash:
+            failures.add("source_hash_mismatch")
+    except (AttributeError, TypeError, ValueError):
+        failures.add("source_hash_mismatch")
+        return
+    if reference.source_temporal_evidence_hash != temporal_evidence.evidence_content_hash:
+        failures.add("source_hash_mismatch")
+    if reference.source_temporal_geometry_hash != temporal_geometry.geometry_content_hash:
+        failures.add("source_hash_mismatch")
+    if (
+        reference.maneuver_kind is not temporal_evidence.maneuver_kind
+        or reference.maneuver_kind is not temporal_geometry.maneuver_kind
+        or temporal_evidence.target_actor_binding_ids
+        != temporal_geometry.target_actor_binding_ids
+        or temporal_evidence.source_witness_hash != temporal_geometry.source_witness_hash
+        or temporal_evidence.source_validation_hash != temporal_geometry.source_validation_hash
+        or temporal_geometry.grid_content_hash != context.grid_content_hash
+    ):
+        failures.add("temporal_source_provenance_mismatch")
+    expected_geometry_hash = canonical_content_hash(
+        {
+            "maneuver_kind": reference.maneuver_kind,
+            "knots": reference.knots,
+            "sections": reference.sections,
+            "departure_knot_index": reference.departure_knot_index,
+            "pass_section_index": reference.pass_section_index,
+            "rejoin_knot_index": reference.rejoin_knot_index,
+            "minimum_validated_static_clearance_m": (
+                reference.minimum_validated_static_clearance_m
+            ),
+        }
+    )
+    if temporal_geometry.reference_geometry_hash != expected_geometry_hash:
+        failures.add("temporal_geometry_hash_mismatch")
+    if abs(
+        temporal_geometry.minimum_static_clearance_m
+        - reference.minimum_validated_static_clearance_m
+    ) > R4_COMPARISON_TOLERANCE:
+        failures.add("source_minimum_clearance_mismatch")
 
 
 def _validate_structure(

@@ -26,6 +26,24 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
+### R5-B Ideal temporal tracking 1차 결과 — 2026-08-15
+
+R2 완료 ZIP을 엄격히 복원하고, `2.0 s / tick 40`까지 실제 정지한 현재 상태에서 같은
+동결 측면 offset 축을 다시 검사했다. causal 좌·우 경로 `10/10`과 이를 변환한
+`GROUND_TRUTH_TEMPORAL` reference `10/10`은 현재 ground-truth·공간 validator를 통과했다.
+Ideal 10 Hz 관측의 최신 revision을 20 Hz controller·shared gate에 연결하고, release 전
+controller 무호출·0 command와 tick-bound temporal 허가를 구현했다.
+
+첫 공개 RPP 실행은 tick `40` 최초 호출, tick `44` 최초 이동, gate override `0`이었으나,
+Actor가 존재하는 마지막 정합 tick `599`에서 완전 추월에 필요한 `0.400 m` 중
+`0.18533733027495725 m`만 앞섰다. tick `604`의 fresh-empty에서 이전 허가를 자동 연장하지
+않고 fail-closed로 중단하므로 R5-B는 현재 `FAIL·receipt 0`이다. 상세 결과는
+[R5-B 1차 결과](../../docs/research/dynamic-actor-experiment/r5b-initial-public-temporal-tracking-result-2026-08-15.md)를 따른다.
+RPP 공개 좌·우 10개가 모두 같은 판정이었고, 첫 LEFT DWB도 마지막 진행 차이
+`-0.08294597353371147 m`, gate override·clearance 위반 `0`으로 추월·재합류 없이 끝났다.
+순수 Python DWB 전체 실행의 약 51분 wall-clock은 운영 병목이지 기능 판정 기준이 아니다.
+R5-B·직접 영향권은 `95 passed`, 전체 회귀는 `884 passed, 3 skipped`다.
+
 ### 동적 지역 기동 연구 R2 실행 결과 — 2026-08-13
 
 R1 prediction 계약 감사 뒤 R2의 두 번째 구현 묶음까지 공개 episode용 label-free

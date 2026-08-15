@@ -30,6 +30,7 @@ LOCAL_REFERENCE_WINDOW_SCHEMA_VERSION = "local-reference-window-v2"
 REFERENCE_BUILD_CONTEXT_SCHEMA_VERSION = "reference-build-context-v1"
 SPATIAL_REFERENCE_SEED_SCHEMA_VERSION = "spatial-reference-seed-v1"
 TEMPORAL_REFERENCE_EVIDENCE_SCHEMA_VERSION = "temporal-reference-evidence-v1"
+TEMPORAL_REFERENCE_GEOMETRY_SCHEMA_VERSION = "temporal-reference-geometry-v1"
 REFERENCE_SESSION_BINDING_VERSION = "reference-session-binding-v1"
 R4_MINIMUM_CLEARANCE_M = 0.08
 R4_COMPARISON_TOLERANCE = 1e-9
@@ -362,6 +363,69 @@ class TemporalReferenceEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class TemporalReferenceGeometryEvidence:
+    """Ground-truth temporal witness와 변환 reference geometry의 결박."""
+
+    schema_version: str
+    source_causal_evidence_hash: str
+    source_witness_hash: str
+    source_validation_hash: str
+    world_content_hash: str
+    grid_content_hash: str
+    maneuver_kind: LocalManeuverKind
+    target_actor_binding_ids: tuple[str, ...]
+    reference_geometry_hash: str
+    minimum_static_clearance_m: float
+    limitations: tuple[str, ...]
+    geometry_content_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if self.schema_version != TEMPORAL_REFERENCE_GEOMETRY_SCHEMA_VERSION:
+            raise ValueError("unsupported temporal reference geometry schema")
+        for name in (
+            "source_causal_evidence_hash",
+            "source_witness_hash",
+            "source_validation_hash",
+            "world_content_hash",
+            "grid_content_hash",
+            "reference_geometry_hash",
+        ):
+            _require_sha256(getattr(self, name), name)
+        if not isinstance(self.maneuver_kind, LocalManeuverKind):
+            raise TypeError("maneuver_kind must be a LocalManeuverKind")
+        actors = _normalize_codes(self.target_actor_binding_ids, "target_actor_binding_ids")
+        if len(actors) != 1:
+            raise ValueError("R5-B temporal geometry requires exactly one Actor binding")
+        object.__setattr__(self, "target_actor_binding_ids", actors)
+        _require_finite_nonnegative(
+            self.minimum_static_clearance_m,
+            "minimum_static_clearance_m",
+        )
+        if self.minimum_static_clearance_m + R4_COMPARISON_TOLERANCE < R4_MINIMUM_CLEARANCE_M:
+            raise ValueError("temporal geometry cannot violate the frozen minimum clearance")
+        object.__setattr__(self, "limitations", _normalize_codes(self.limitations, "limitations"))
+        _bind_or_check_hash(self, "geometry_content_hash", self.expected_content_hash)
+
+    @property
+    def expected_content_hash(self) -> str:
+        return canonical_content_hash(
+            {
+                "schema_version": self.schema_version,
+                "source_causal_evidence_hash": self.source_causal_evidence_hash,
+                "source_witness_hash": self.source_witness_hash,
+                "source_validation_hash": self.source_validation_hash,
+                "world_content_hash": self.world_content_hash,
+                "grid_content_hash": self.grid_content_hash,
+                "maneuver_kind": self.maneuver_kind,
+                "target_actor_binding_ids": self.target_actor_binding_ids,
+                "reference_geometry_hash": self.reference_geometry_hash,
+                "minimum_static_clearance_m": self.minimum_static_clearance_m,
+                "limitations": self.limitations,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceKnot:
     knot_index: int
     pose: Pose2D
@@ -530,6 +594,7 @@ class LocalManeuverReference:
     validity: ReferenceValidity
     generation_reason_codes: tuple[str, ...]
     limitations: tuple[str, ...]
+    source_temporal_geometry_hash: str | None = None
     reference_content_hash: str = ""
 
     def __post_init__(self) -> None:
@@ -564,6 +629,7 @@ class LocalManeuverReference:
         for name in (
             "source_spatial_seed_hash",
             "source_temporal_evidence_hash",
+            "source_temporal_geometry_hash",
             "original_reference_hash",
             "grid_content_hash",
             "vehicle_profile_hash",
@@ -620,8 +686,11 @@ class LocalManeuverReference:
             LocalManeuverKind.PASS_RIGHT,
         )
         if is_pass:
-            if self.source_spatial_seed_hash is None:
-                raise ValueError("PASS reference requires a spatial seed")
+            if (
+                self.evidence_level is ReferenceEvidenceLevel.SPATIAL_ONLY
+                and self.source_spatial_seed_hash is None
+            ):
+                raise ValueError("spatial-only PASS reference requires a spatial seed")
             if self.departure_knot_index is None or self.pass_section_index is None:
                 raise ValueError("PASS reference requires departure and pass anchors")
             _require_exact_nonnegative_int(self.departure_knot_index, "departure_knot_index")
@@ -672,9 +741,17 @@ class LocalManeuverReference:
                 raise ValueError("spatial-only reference cannot depend on observation")
             if self.source_temporal_evidence_hash is not None:
                 raise ValueError("spatial-only reference cannot claim temporal evidence")
+            if self.source_temporal_geometry_hash is not None:
+                raise ValueError("spatial-only reference cannot claim temporal geometry")
         elif self.evidence_level is ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL:
             if self.source_temporal_evidence_hash is None:
                 raise ValueError("ground-truth temporal reference needs temporal evidence")
+            if is_pass and self.source_temporal_geometry_hash is None:
+                raise ValueError("ground-truth temporal reference needs temporal geometry")
+            if is_pass and self.source_spatial_seed_hash is not None:
+                raise ValueError(
+                    "ground-truth temporal reference cannot impersonate a spatial seed"
+                )
             if self.observation_dependency is not ObservationDependency.STATIC_ONLY:
                 raise ValueError(
                     "ground-truth temporal reference cannot claim observation integration"
@@ -687,8 +764,7 @@ class LocalManeuverReference:
 
     @property
     def expected_content_hash(self) -> str:
-        return canonical_content_hash(
-            {
+        payload = {
                 "schema_version": self.schema_version,
                 "reference_contract_version": self.reference_contract_version,
                 "candidate_id": self.candidate_id,
@@ -722,7 +798,9 @@ class LocalManeuverReference:
                 "generation_reason_codes": self.generation_reason_codes,
                 "limitations": self.limitations,
             }
-        )
+        if self.source_temporal_geometry_hash is not None:
+            payload["source_temporal_geometry_hash"] = self.source_temporal_geometry_hash
+        return canonical_content_hash(payload)
 
 
 @dataclass(frozen=True, slots=True)

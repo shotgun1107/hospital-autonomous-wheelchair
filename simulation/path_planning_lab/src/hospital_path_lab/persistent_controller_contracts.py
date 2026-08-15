@@ -36,6 +36,10 @@ from hospital_path_lab.local_reference_contracts import (
 )
 from hospital_path_lab.local_reference_window import window_is_exact_slice
 from hospital_path_lab.map_factory import canonical_content_hash
+from hospital_path_lab.r5b_temporal_authorization import (
+    R5BTemporalExecutionAuthorization,
+    validate_r5b_temporal_authorization_for_tick,
+)
 from hospital_path_lab.spatial_oracle_contracts import spatial_grid_content_hash
 from hospital_path_lab.vehicle import VehicleProfile
 
@@ -199,6 +203,7 @@ class PersistentControllerTickInput:
     current_gate_motion_state: DynamicMotionState
     current_gate_stop_epoch: int
     current_resume_authorization_revision: int | None
+    temporal_execution_authorization: R5BTemporalExecutionAuthorization | None = None
     tick_input_content_hash: str = ""
 
     def __post_init__(self) -> None:
@@ -239,13 +244,19 @@ class PersistentControllerTickInput:
                 self.current_resume_authorization_revision,
                 "current_resume_authorization_revision",
             )
+        if self.temporal_execution_authorization is not None and not isinstance(
+            self.temporal_execution_authorization,
+            R5BTemporalExecutionAuthorization,
+        ):
+            raise TypeError(
+                "temporal_execution_authorization has an unsupported type"
+            )
         _validate_reference_input_identity(self)
         _bind_or_check_hash(self, "tick_input_content_hash", self.expected_content_hash)
 
     @property
     def expected_content_hash(self) -> str:
-        return canonical_content_hash(
-            {
+        payload = {
                 "schema_version": self.schema_version,
                 "contract_version": PERSISTENT_CONTROLLER_CONTRACT_VERSION,
                 "controller_tick": self.controller_tick,
@@ -268,7 +279,11 @@ class PersistentControllerTickInput:
                     self.current_resume_authorization_revision
                 ),
             }
-        )
+        if self.temporal_execution_authorization is not None:
+            payload["temporal_execution_authorization_hash"] = (
+                self.temporal_execution_authorization.authorization_content_hash
+            )
+        return canonical_content_hash(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -546,8 +561,29 @@ def _validate_reference_input_identity(value: PersistentControllerTickInput) -> 
         raise ValueError("local window semantic hash mismatch")
     if not window_is_exact_slice(reference, window):
         raise ValueError("local window is not an exact full-reference slice")
-    if reference.evidence_level is not PERSISTENT_CONTROLLER_EVIDENCE_LEVEL:
-        raise ValueError("R5-A controller input requires SPATIAL_ONLY evidence")
+    if reference.evidence_level is PERSISTENT_CONTROLLER_EVIDENCE_LEVEL:
+        if value.temporal_execution_authorization is not None:
+            raise ValueError("R5-A spatial input cannot claim temporal authorization")
+    elif reference.evidence_level is ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL:
+        authorization = value.temporal_execution_authorization
+        if authorization is None:
+            raise ValueError("R5-B temporal input requires tick-bound authorization")
+        prediction = value.actor_prediction_set
+        if not isinstance(prediction, DirectionalPredictionSet):
+            raise ValueError("R5-B temporal input requires directional prediction")
+        validate_r5b_temporal_authorization_for_tick(
+            authorization,
+            reference=reference,
+            observation_snapshot=value.validated_observation,
+            prediction_set=prediction,
+            controller_tick=value.controller_tick,
+            simulation_time_s=value.simulation_time_s,
+            gate_motion_state=value.current_gate_motion_state,
+            gate_stop_epoch=value.current_gate_stop_epoch,
+            resume_authorization_revision=value.current_resume_authorization_revision,
+        )
+    else:
+        raise ValueError("persistent controller input rejects observation-integrated evidence")
     expected = build_persistent_reference_binding(
         reference,
         window,
