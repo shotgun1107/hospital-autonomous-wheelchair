@@ -2,7 +2,7 @@
 
 - 작업일: `2026-08-15`
 - 범위: Python `simulation_only` R5-A static reference tracking
-- 상태: **좌·우 교차 DWB 종단 통과, signed relation 판정 보정 뒤 clean 재qualification 대기**
+- 상태: **R5-A v3 clean public qualification PASS·receipt 생성**
 - hidden: 미사용
 - 제품 controller 채택·G1~G5·제품 경로분석 7단계: 미수행
 
@@ -114,16 +114,19 @@ safety를 통과했다. semantic hash는
 
 관계 판정은 좌우 signed mirror에서 중심 geometry만 비교하고, travel direction을 보존하는
 수평·수직 rigid relation에서는 footprint axis 비교를 유지하도록 보정했다. 보고 모듈 `9 passed`,
-기존 clean output의 여섯 관계 재계산 `6/6 PASS`, Ruff·diff check를 통과했다. 이 보정 뒤 새 clean
-full 실행은 아직 남아 있다.
+기존 clean output의 여섯 관계 재계산 `6/6 PASS`, Ruff·diff check를 통과했다.
+
+commit `7810432`의 새 clean full 실행은 ready 8개 RPP·DWB 종단, non-ready 무호출,
+hard·relation failure `0`, deadlock·gate override `0`, serial/process parity·repeat determinism
+`PASS`로 qualification receipt를 생성했다. 최종 상세와 전달 ZIP은
+[`R5-A v3 공개 qualification 결과`](r5a-v3-public-persistent-controller-qualification-result-2026-08-15.md)에
+기록한다.
 
 ## 5. 다음 작업
 
-1. 코드·시험·이 문서를 commit·push한다.
-2. clean commit에서 새 output 경로로 public 21-case를 한 번 실행한다.
-3. ready 8개 paired 완료, non-ready 무호출, hard failure·deadlock·gate override `0`, 관계 오류
-   `0`, repeat·serial/process parity를 확인한다.
-4. 모두 통과할 때만 receipt와 최종 결과 문서를 만든다.
+R5-A 정적 reference tracking은 완료됐다. 다음 작업은 사용자 승인과 해당 단계 명세에 따라
+R5-B Actor temporal execution 또는 보류된 Actor 출현 입력 문제를 다루는 것이다. R5-A output을
+동적 Actor 성공이나 제품 DWB 채택 근거로 재사용하지 않는다.
 
 하지 말 것: hidden, 기존 output 덮어쓰기, 제품 알고리즘 채택, G1~G5 결정, 제품 경로분석
 7단계, 실제 사람 탑승 안전 주장.

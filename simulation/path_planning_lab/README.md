@@ -177,8 +177,8 @@ safe selected rollout과 완전한 candidate diagnostics를 반환했다. 전용
 직접 영향권 포함 `130 passed`, 별도 R5 영향권 `50 passed`를 확인했다. shared gate 연결,
 R5 v2 20Hz DWB closed loop는 실제 후진 `24 tick`을 포함해 tick `378`·`18.90s`, 최대 tracking
 error 약 `0.04808m`, external gate rejection·deadlock·hard failure `0`으로 대표 경로를
-완료했다. RPP도 실제 후진 12 tick을 포함해 tick `296`에 완료했다. 8-case public full은 아직
-미실행이며 전체 회귀는 `859 passed, 3 skipped`였다.
+완료했다. RPP도 실제 후진 12 tick을 포함해 tick `296`에 완료했다. 이 문단의 `859 passed,
+3 skipped`는 R5 v2 대표 검증 당시 기록이며, 이후 R5 v3 clean public 결과는 아래에 따로 기록한다.
 [`persistent_controller_pipeline.py`](src/hospital_path_lab/persistent_controller_pipeline.py)와
 [`test_persistent_controller_pipeline.py`](tests/test_persistent_controller_pipeline.py)는 R5-5에서
 두 persistent controller result를 동일한 reference-bound proposal과 shared gate에 연결한다.
@@ -189,8 +189,8 @@ old tick·51ms·stale 결과를 새 명령으로 적용하지 않는다. 대표 
 planned stop은 protective
 stop으로 집계하지 않으며, 보호정지 뒤 epoch가 바뀌면 controller를 재호출하지 않고 HOLD를
 유지한다. 이번 planned-stop rollout 수정 뒤 RPP·executor·pipeline·safety·authority·timing
-집중 영향권을 통과했고 최신 전체 회귀는 `859 passed, 3 skipped`였다.
-8-case 종단 full 실행·receipt는 아직 미실행이다.
+집중 영향권을 통과했고 당시 전체 회귀는 `859 passed, 3 skipped`였다. 이 시점의 8-case 종단
+full 실행·receipt는 미실행이었으며, 후속 R5 v3 결과가 아래에서 이를 대체한다.
 
 [`persistent_controller_reporting.py`](src/hospital_path_lab/persistent_controller_reporting.py)와
 [`run_persistent_controller_public.py`](scripts/run_persistent_controller_public.py)는 R5-6에서 R4
@@ -221,8 +221,12 @@ failure `0`으로 완료했고, 영향권 `66 passed`, 전체 회귀 `864 passed
 commit `5400000`의 clean 21-case에서도 ready 8개 종단과 parity·repeat는 통과했지만, 좌우
 signed relation의 동일 chassis yaw를 강제로 mirror한 관계 판정 4건 때문에 receipt는 만들지
 않았다. 좌우 signed relation은 중심 geometry만, travel direction을 보존하는 수평·수직 rigid
-relation은 중심 geometry와 footprint axis를 비교하도록 분리해 재qualification 중이다. 상세는
+relation은 중심 geometry와 footprint axis를 비교하도록 분리했다. commit `7810432`의 새 clean
+21-case는 ready 8개 RPP·DWB 종단, non-ready 무호출, hard·relation failure `0`, deadlock·gate
+override `0`, parity·repeat `PASS`로 receipt를 생성했다. 상세는
 [`R5-A v3 교차 연결 보정`](../../docs/research/dynamic-actor-experiment/r5a-v3-crossing-connector-correction-2026-08-15.md)에 기록했다.
+최종 증거는
+[`R5-A v3 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r5a-v3-public-persistent-controller-qualification-result-2026-08-15.md)에 기록했다.
 hidden은 사용하지 않았다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
