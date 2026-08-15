@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from hospital_path_lab.contracts import RobotState, Twist2D
+from hospital_path_lab.contracts import Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DynamicMotionState,
     DynamicObservationFrame,
@@ -363,6 +363,51 @@ def test_public_reverse_section_selects_only_a_bounded_negative_dwb_command(
     assert decision.command == result.requested_twist
     assert decision.command.linear < 0.0
     assert decision.failure_reasons == ()
+
+
+def test_short_reverse_section_does_not_prefer_zero_after_yaw_alignment(
+    public_wide_left,
+) -> None:
+    context = public_wide_left.build_context
+    reference = public_wide_left.reference_set.candidates[0]
+    validation = public_wide_left.validations[0]
+    initial = LocalReferenceWindowManager().update(context, reference, validation)
+    assert initial.window is not None
+    full_window = replace(
+        initial.window,
+        end_knot_index=reference.knots[-1].knot_index,
+        knots=reference.knots,
+        sections=reference.sections,
+        terminal_rejoin_included=True,
+        window_content_hash="",
+    )
+    controller, _first, first_input = _advance_to_first_reverse_translation(
+        context,
+        reference,
+        full_window,
+    )
+    aligned_input = _fresh_empty_input(
+        context,
+        reference,
+        full_window,
+        tick=first_input.controller_tick + 1,
+        pose=Pose2D(
+            1.5201507246898855,
+            0.9384748649171547,
+            1.7716896432411682,
+        ),
+        twist=Twist2D(),
+    )
+
+    result = controller.step(aligned_input)
+
+    assert result.status is PersistentControllerStatus.COMMAND_FOUND
+    assert -0.10 <= result.requested_twist.linear < 0.0
+    assert "travel_direction=reverse" in result.decision_trace
+    assert any(
+        item == "selected_critic.path_align=0x0.0p+0*0x1.47ae147ae147bp-2"
+        for item in result.candidate_diagnostics
+    )
 
 
 def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_left) -> None:

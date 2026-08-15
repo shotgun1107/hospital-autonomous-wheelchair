@@ -694,9 +694,14 @@ def _bind_stack_travel_direction(
     stack.adapter.set_command_linear_bounds(minimum_linear, maximum_linear)
     stack.goal_align_critic.set_projection_sign(projection_sign)
     stack.path_align_critic.set_projection_sign(projection_sign)
-    disable_alignment_near_goal = direction is ReferenceTravelDirection.FORWARD
-    stack.goal_align_critic.set_disable_near_goal(disable_alignment_near_goal)
-    stack.path_align_critic.set_disable_near_goal(disable_alignment_near_goal)
+    stack.goal_align_critic.set_disable_near_goal(
+        direction is ReferenceTravelDirection.FORWARD
+    )
+    # Keep upstream PathAlign's near-goal stabilization for both signs.  On a
+    # short reverse section its discretized field otherwise prefers the zero
+    # command over every safe negative sample.  Reverse GoalAlign remains active
+    # and rear-projected so the correct yaw direction is still observable.
+    stack.path_align_critic.set_disable_near_goal(True)
 
 
 def _freeze_dwb_path(path: Sequence[DwbPose2D], label: str) -> tuple[DwbPose2D, ...]:

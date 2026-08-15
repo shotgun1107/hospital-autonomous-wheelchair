@@ -20,11 +20,12 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceBuildContext,
     ReferenceKnotRole,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.local_reference_validation import LocalReferenceValidation
 from hospital_path_lab.map_factory import canonical_content_hash
 
-LOCAL_REFERENCE_WINDOW_MANAGER_VERSION = "local-reference-window-manager-v2"
+LOCAL_REFERENCE_WINDOW_MANAGER_VERSION = "local-reference-window-manager-v3"
 LOCAL_REFERENCE_WINDOW_UPDATE_SCHEMA_VERSION = "local-reference-window-update-v2"
 R4_WINDOW_CONTROL_PERIOD_S = 0.05
 R4_REAR_CONTEXT_ARC_M = 0.10
@@ -349,6 +350,13 @@ def project_reference_cursor(
         distance = hypot(robot_pose.x - projected_x, robot_pose.y - projected_y)
         cursor = left.cumulative_translation_arc_m + fraction * length
         section_index = left.section_index
+        travel_direction = reference.sections[section_index].travel_direction
+        edge_yaw = atan2(dy, dx)
+        expected_chassis_yaw = (
+            atan2(-dy, -dx)
+            if travel_direction is ReferenceTravelDirection.REVERSE
+            else (left.pose.yaw if travel_direction is ReferenceTravelDirection.NONE else edge_yaw)
+        )
         candidates.append(
             (
                 distance,
@@ -359,7 +367,7 @@ def project_reference_cursor(
                 dy / length,
                 projected_x,
                 projected_y,
-                abs(_angle_delta(robot_pose.yaw, atan2(dy, dx))),
+                abs(_angle_delta(robot_pose.yaw, expected_chassis_yaw)),
             )
         )
     for knot in knots:
@@ -386,6 +394,32 @@ def project_reference_cursor(
         if abs(candidate[0] - minimum_distance) <= R4_PROJECTION_TIE_TOLERANCE_M
     )
     tied = geometrically_tied
+    # A self-near reference can put an already-completed edge a few millimetres
+    # closer than the active signed edge.  Only when the geometric winner would
+    # exceed the existing regression limit, recover a non-regressing candidate
+    # that is itself within that same spatial limit.  A robot that actually
+    # moved farther back still produces cursor_regression_exceeded.
+    if cursor_hint_m is not None and all(
+        candidate[1] < cursor_hint_m - R4_MAXIMUM_CURSOR_REGRESSION_M - _TOLERANCE
+        for candidate in tied
+    ):
+        local_nonregressing = tuple(
+            candidate
+            for candidate in candidates
+            if candidate[1] + R4_PROJECTION_TIE_TOLERANCE_M >= cursor_hint_m
+            and candidate[0]
+            <= minimum_distance
+            + R4_MAXIMUM_CURSOR_REGRESSION_M
+            + R4_PROJECTION_TIE_TOLERANCE_M
+        )
+        if local_nonregressing:
+            minimum_local_distance = min(candidate[0] for candidate in local_nonregressing)
+            tied = tuple(
+                candidate
+                for candidate in local_nonregressing
+                if abs(candidate[0] - minimum_local_distance)
+                <= R4_PROJECTION_TIE_TOLERANCE_M
+            )
     # 동일 위치 회전 중에는 robot yaw가 translation tangent 사이를 지나간다. 이때
     # heading을 먼저 고르면 이미 통과한 비인접 section으로 cursor가 되돌아갈 수 있다.
     # 같은 위치의 기하 동률은 이전 cursor의 monotonic locality를 먼저 적용하고, 그

@@ -33,7 +33,8 @@
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
 `R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 public 21/21·ready
   reference 8개·receipt·794 전체 회귀 완료`, `R5-1~R5-6 구현·1차 clean public FAIL·receipt 0`,
-  `R4/R5 v2 section-bound 제한 후진 명세 승인·구현 미시작` 상태다.
+  `R4 v2 clean qualification 완료·R5 v2 대표 signed 후진 종단 통과·전체 21-case 자격 미실행`
+  상태다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -51,8 +52,9 @@ section executor, full terminal과 local window의 분리 및 reference-bound sh
 [`16-persistent-controller-comparison.md`](16-persistent-controller-comparison.md)에 정의했다.
 첫 R5-A clean 실패에서 R4 ready 8개 모두 reverse edge를 포함하지만 R5 v1 controller는 후진을
 지원하지 않는 계약 충돌이 확인됐다. [`ADR 0014`](../../decisions/0014-section-bound-bounded-reverse-translation.md)는
-R4 v2가 명시한 reverse section에서만 최대 `0.10m/s` 제한 후진을 허용한다. 현재 구현 후보는
-signed static `R5-A`이며 temporal·observation-integrated R5-B/C는 차단 상태다.
+R4 v2가 명시한 reverse section에서만 최대 `0.10m/s` 제한 후진을 허용한다. signed static
+`R5-A` 대표 case는 RPP·DWB 모두 실제 후진과 종단 완료를 확인했지만 전체 21-case clean
+qualification과 receipt는 아직 없으며 temporal·observation-integrated R5-B/C는 차단 상태다.
 
 | 단계 | 상태 |
 |---|---|

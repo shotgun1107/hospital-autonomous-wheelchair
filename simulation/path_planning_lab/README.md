@@ -110,12 +110,16 @@ R3의 feasible·독립 검증·hash/provenance가 일치한 결과만 `SPATIAL_O
 temporal evidence 결합과 R5 controller 실행 연결이 미구현이었으나, R5-1~R5-6에서 controller와
 public runner 연결을 진행했다. 다만 첫 clean qualification은 실패했고, section-bound signed
 direction을 추가하는 R4 v2 계약·builder·독립 validator·hash·reporting은 구현됐고 clean public
-qualification `21/21`과 receipt 생성을 완료했다. R5 v2 controller·executor는 아직 구현하지 않았다. R4-3 validator는 builder를 import하지
+qualification `21/21`과 receipt 생성을 완료했다. R5 v2 controller·executor도 구현했고 대표
+`wide-straight-left`에서 RPP·DWB 실제 후진과 종단 완료를 확인했다. 전체 21-case clean
+qualification과 receipt는 아직 없다. R4-3 validator는 builder를 import하지
 않고 source primitive·회전/정지 marker·side/rejoin과 5 mm/0.5° oriented swept geometry를
 독립 재검사한다. 전용 14개와 R4/R3 영향권 63개 시험이 통과했고, 대표 public
 `wide-straight-left`는 616개 sample에서 최소 여유 `0.244508m`로 통과했다.
-R4-4 manager는 whole-section contiguous slice만 발행해 회전을 절단하지 않고, pose heading과
-이전 cursor로 self-overlap을 구분한다. 동일 slice는 hash·subgoal revision을 유지하며, stale
+R4-4 manager는 whole-section contiguous slice만 발행해 회전을 절단하지 않고, signed section
+heading과 이전 cursor로 self-overlap을 구분한다. 과거 edge가 수 mm 더 가까운 self-near
+구간에서도 기존 5cm 진행 회귀 한계 안의 비회귀 edge를 보존한다. 동일 slice는 hash·subgoal
+revision을 유지하며, stale
 tick·same-tick different input·5 cm 초과 cursor 후퇴·다른 session/path를 fail-closed한다.
 전용 16개, 구현 직후 R4/R3 영향권 77개 시험이 통과했고, 대표 public 23-knot 순회는 같은
 session에서 subgoal revision `0→4`, terminal window `(15..22)`까지 통과했다.
@@ -166,13 +170,15 @@ rejection `0`으로 terminal까지 완료했다.
 session reset과 local scoring-window update를 분리한다. full terminal은 RotateToGoal에 고정하고
 window update는 현재 active translation section의 exact slice로 4개 path critic만 갱신해
 Oscillation 상태를 보존한다. scoring goal의 forward 거리 안에서는 미래 회전 경계 너머로
-`GoalAlign`을 투영하지 않는다. 대표 public
+`GoalAlign`을 투영하지 않는다. R5 v2 reverse에서는 GoalAlign rear projection을 유지하고
+PathAlign의 near-goal 안정화로 짧은 reverse 종점의 zero-command local minimum을 막는다. 대표 public
 `wide-straight-left` 첫 translation tick은 reset `1`, scoring update `1`, 후보 `217`, 41-pose
 safe selected rollout과 완전한 candidate diagnostics를 반환했다. 전용 `6 passed`, 기존 DWB
 직접 영향권 포함 `130 passed`, 별도 R5 영향권 `50 passed`를 확인했다. shared gate 연결,
-20Hz DWB closed loop는 tick `393`·`19.65s`, 최소 정적 여유 약 `0.23562m`, 최대 tracking error
-약 `0.04803m`, external gate rejection `0`으로 대표 경로를 완료했다. 8-case public full과
-전체 회귀는 아직 미실행이다. 관련 집중 영향권은 `93 passed`였다.
+R5 v2 20Hz DWB closed loop는 실제 후진 `24 tick`을 포함해 tick `378`·`18.90s`, 최대 tracking
+error 약 `0.04808m`, external gate rejection·deadlock·hard failure `0`으로 대표 경로를
+완료했다. RPP도 실제 후진 12 tick을 포함해 tick `296`에 완료했다. 8-case public full은 아직
+미실행이며 전체 회귀는 `859 passed, 3 skipped`였다.
 [`persistent_controller_pipeline.py`](src/hospital_path_lab/persistent_controller_pipeline.py)와
 [`test_persistent_controller_pipeline.py`](tests/test_persistent_controller_pipeline.py)는 R5-5에서
 두 persistent controller result를 동일한 reference-bound proposal과 shared gate에 연결한다.
@@ -183,8 +189,8 @@ old tick·51ms·stale 결과를 새 명령으로 적용하지 않는다. 대표 
 planned stop은 protective
 stop으로 집계하지 않으며, 보호정지 뒤 epoch가 바뀌면 controller를 재호출하지 않고 HOLD를
 유지한다. 이번 planned-stop rollout 수정 뒤 RPP·executor·pipeline·safety·authority·timing
-집중 영향권 `80 passed`를 통과했다. 최신 전체 회귀는 실행하지 않았다.
-8-case 종단 full 실행·receipt와 전체 회귀는 아직 미실행이다.
+집중 영향권을 통과했고 최신 전체 회귀는 `859 passed, 3 skipped`였다.
+8-case 종단 full 실행·receipt는 아직 미실행이다.
 
 [`persistent_controller_reporting.py`](src/hospital_path_lab/persistent_controller_reporting.py)와
 [`run_persistent_controller_public.py`](scripts/run_persistent_controller_public.py)는 R5-6에서 R4
@@ -201,8 +207,11 @@ R4 reference가 모두 reverse translation edge를 포함하는 반면 R5 DWB는
 primitive의 `travel_direction`을 명시하고, R5 v2 RPP·DWB는 reverse section에서만 최대
 `0.10m/s` 후진하며 방향 전환 전 실제 정지 3 tick과 뒤쪽 shared-gate 검사를 요구한다. 명세는
 [`ADR 0014`](../../docs/decisions/0014-section-bound-bounded-reverse-translation.md)에 두었다. R4 v2는
-clean public qualification과 receipt까지 끝났으며, R5 v2 실행 구현은 시작하지 않았다. 결과는
+clean public qualification과 receipt까지 끝났다. R5 v2는 대표 case에서 signed 실행을
+완료했지만 dirty·1-case partial 결과이므로 전체 21-case 자격과 receipt는 남아 있다. 결과는
 [`R4 v2 공개 qualification`](../../docs/research/dynamic-actor-experiment/r4v2-public-signed-reference-qualification-result-2026-08-14.md)에 보존한다.
+R5 v2 대표 결과는
+[`R5-A v2 구간 제한 후진 결과`](../../docs/research/dynamic-actor-experiment/r5a-v2-section-bound-reverse-progress-2026-08-15.md)에 기록했다.
 hidden은 사용하지 않았다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을

@@ -1101,8 +1101,9 @@ scripts/run_persistent_controller_public.py
 ### R5 v2 — Section-bound 제한 후진 계약 보정
 
 - 사용자 연구 방향: 제한 후진 허용
-- 상태: R4 v2 signed reference clean public qualification 완료, R5 v2 controller·executor 구현과
-  재qualification 미시작
+- 상태: R4 v2 signed reference clean public qualification 완료. R5 v2 controller·executor는
+  대표 `wide-straight-left`에서 RPP·DWB 실제 후진과 종단 완료를 확인했고 전체 21-case clean
+  재qualification은 미실행
 - R4 v2가 source primitive에 결박된 `travel_direction`을 발행한다.
 - RPP·DWB는 reverse section에서만 최대 `0.10m/s` 음의 선속도를 사용할 수 있다.
 - common executor는 forward↔reverse 전환 전 실제 정지 3 tick을 확인한다.

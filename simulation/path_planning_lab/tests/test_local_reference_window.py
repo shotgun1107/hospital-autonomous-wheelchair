@@ -14,6 +14,10 @@ from hospital_path_lab.local_reference_builder import (
     project_validated_spatial_seed,
 )
 from hospital_path_lab.local_reference_contracts import ReferenceSectionKind
+from hospital_path_lab.local_reference_reporting import (
+    evaluate_local_reference_public_case,
+    public_local_reference_cases,
+)
 from hospital_path_lab.local_reference_validation import (
     validate_local_maneuver_reference,
 )
@@ -409,6 +413,33 @@ def test_cursor_hint_precedes_heading_during_in_place_rotation_at_overlap() -> N
 
     assert not resolved.ambiguous
     assert resolved.cursor_arc_m >= later_left.cumulative_translation_arc_m
+
+
+def test_self_near_reverse_branch_does_not_project_to_completed_forward_edge() -> None:
+    case = next(
+        item for item in public_local_reference_cases() if item.public_id == "wide-straight-left"
+    )
+    result = evaluate_local_reference_public_case(case)
+    reference = result.reference_set.candidates[0]
+    cursor_hint_m = 1.0797968221734229
+    failure_pose = Pose2D(
+        1.5137222365350886,
+        0.9258915970585265,
+        1.41115630999078435,
+    )
+
+    unhinted = project_reference_cursor(reference, failure_pose)
+    resolved = project_reference_cursor(
+        reference,
+        failure_pose,
+        cursor_hint_m=cursor_hint_m,
+    )
+
+    assert unhinted.source_section_index == 1
+    assert unhinted.cursor_arc_m < cursor_hint_m - 0.05
+    assert not resolved.ambiguous
+    assert resolved.source_section_index == 5
+    assert resolved.cursor_arc_m >= cursor_hint_m
 
 
 def test_window_module_does_not_import_builder_corpus_or_evaluator() -> None:
