@@ -71,9 +71,11 @@ _EXPECTED_GOAL_CONTRACT_ERRORS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class SourceDerivedDwbConfig:
-    """Explicit v7 critic order, scales, and generator configuration."""
+    """Explicit v8 critic order, scales, and generator configuration."""
 
-    generator: DwbGeneratorConfig = field(default_factory=DwbGeneratorConfig)
+    generator: DwbGeneratorConfig = field(
+        default_factory=lambda: DwbGeneratorConfig(maximum_forward_speed_mps=0.30)
+    )
     safety_scale: float = 1.0
     rotate_to_goal_scale: float = 32.0
     oscillation_scale: float = 1.0
@@ -580,7 +582,7 @@ def _generator_config_for(profile: VehicleProfile) -> DwbGeneratorConfig:
         control_period_s=profile.control_period_s,
         rollout_duration_s=2.0,
         integration_step_s=0.05,
-        maximum_forward_speed_mps=profile.nominal_speed_mps,
+        maximum_forward_speed_mps=profile.max_forward_speed_mps,
         maximum_reverse_speed_mps=profile.max_reverse_speed_mps,
         linear_acceleration_mps2=profile.max_acceleration_mps2,
         linear_deceleration_mps2=profile.max_deceleration_mps2,
@@ -607,7 +609,7 @@ def _validate_generator_profile(
 ) -> None:
     expected = replace(_generator_config_for(profile), allow_reverse=allow_reverse)
     if config != expected:
-        raise ValueError("composition generator must match every frozen v7 parameter")
+        raise ValueError("composition generator must match every frozen v8 parameter")
 
 
 __all__ = [

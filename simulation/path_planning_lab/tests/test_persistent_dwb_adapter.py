@@ -341,7 +341,7 @@ def test_section_bound_generator_never_samples_the_opposite_translation_sign() -
     assert any(value < 0.0 for value in reverse.linear_samples_mps)
 
 
-def test_connector_progress_tie_order_only_reverses_forward_linear_blocks() -> None:
+def test_aligned_forward_progress_tie_order_only_reverses_linear_blocks() -> None:
     generator = SectionBoundDwbReferenceTrajectoryGenerator(
         replace(DwbGeneratorConfig(), allow_reverse=True)
     )

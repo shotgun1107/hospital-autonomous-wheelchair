@@ -165,3 +165,17 @@ LEFT 사례의 마지막 정합 진행 차이는 `+0.18533733027495725 m`이고 
 따라서 이 명세의 `fresh empty` 차단과 target-bound READY 조건을 유지한다. Actor active
 interval을 늘리거나 empty frame을 이전 허가의 자동 연장으로 바꾸지 않는다. 상세 결과는
 `r5b-initial-public-temporal-tracking-result-2026-08-15.md`에 기록한다.
+
+## 10. 2026-08-15 v2 공개 첫 LEFT 판정
+
+1차 실패를 안전 수치 완화 없이 다시 분리했다. controller-matched `0.20m/s` reference,
+최소 `0.65m` 측면 offset과 `0.20m` completion buffer를 사용하고, 로봇 전체가 현재 Actor
+capsule 전체를 기존 최소 clearance만큼 지난 뒤에만 post-pass completion을 허가한다.
+fresh empty는 이 증명 뒤의 같은 source 연속 완료에서만 사용할 수 있고 no-frame·stale·invalid는
+계속 거부한다.
+
+첫 LEFT closed loop에서 RPP는 `566→788→806`, C++ safety batch를 사용한 source-derived DWB는
+`459→779→797` tick에 각각 추월→재합류→도착했다. 두 실행의 gate override·hard failure는
+모두 `0`이다. 상세 결과는
+`r5b-v2-first-left-controller-matched-result-2026-08-15.md`에 기록한다. 공개 10-case
+qualification·50ms·hidden·제품 채택은 아직 수행하지 않았다.

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from hospital_path_lab.contracts import Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import DynamicGroundTruthFrame, DynamicMotionState
 from hospital_path_lab.dynamic_directional_prediction import (
     DirectionalActorPredictor,
@@ -25,6 +26,7 @@ from hospital_path_lab.persistent_controller_contracts import (
 from hospital_path_lab.r5b_temporal_authorization import (
     R5BTemporalAuthorizationIssuer,
     R5BTemporalAuthorizationPhase,
+    validate_r5b_temporal_authorization_for_tick,
 )
 from hospital_path_lab.r5b_temporal_evidence import frozen_r2_archive_path
 from hospital_path_lab.r5b_temporal_reference import (
@@ -108,6 +110,8 @@ def test_issuer_rejects_early_release_and_issues_tick_bound_chain(bundle) -> Non
             reference=bundle.reference,
             temporal_evidence=bundle.temporal_evidence,
             temporal_geometry=bundle.temporal_geometry,
+            robot_state=bundle.source.world.initial_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
             observation_snapshot=snapshot39,
             prediction_result=prediction39,
             controller_tick=39,
@@ -124,6 +128,8 @@ def test_issuer_rejects_early_release_and_issues_tick_bound_chain(bundle) -> Non
         reference=bundle.reference,
         temporal_evidence=bundle.temporal_evidence,
         temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
         observation_snapshot=snapshot40,
         prediction_result=prediction40,
         controller_tick=40,
@@ -140,6 +146,8 @@ def test_issuer_rejects_early_release_and_issues_tick_bound_chain(bundle) -> Non
         reference=bundle.reference,
         temporal_evidence=bundle.temporal_evidence,
         temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
         observation_snapshot=snapshot41,
         prediction_result=prediction41,
         controller_tick=41,
@@ -163,6 +171,8 @@ def test_persistent_tick_input_requires_and_accepts_temporal_authorization(bundl
         reference=bundle.reference,
         temporal_evidence=bundle.temporal_evidence,
         temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
         observation_snapshot=snapshot,
         prediction_result=prediction_result,
         controller_tick=40,
@@ -255,6 +265,8 @@ def test_authorization_rejects_not_ready_and_wrong_gate_state(bundle) -> None:
             reference=bundle.reference,
             temporal_evidence=bundle.temporal_evidence,
             temporal_geometry=bundle.temporal_geometry,
+            robot_state=bundle.source.world.initial_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
             observation_snapshot=snapshot,
             prediction_result=prediction,
             controller_tick=40,
@@ -264,4 +276,218 @@ def test_authorization_rejects_not_ready_and_wrong_gate_state(bundle) -> None:
             resume_authorization_revision=7,
             actual_stop_confirmed=True,
             local_safety_recheck_passed=True,
+        )
+
+
+def _issue_initial(bundle, issuer, results):
+    snapshot, prediction = results[40]
+    return issuer.issue(
+        reference=bundle.reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot,
+        prediction_result=prediction,
+        controller_tick=40,
+        simulation_time_s=2.0,
+        gate_motion_state=DynamicMotionState.HOLDING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=7,
+        actual_stop_confirmed=True,
+        local_safety_recheck_passed=True,
+    )
+
+
+def _far_ahead_state(bundle) -> RobotState:
+    end = bundle.reference.knots[-1].pose
+    return RobotState(Pose2D(end.x + 2.0, end.y, end.yaw), Twist2D())
+
+
+def test_fresh_empty_requires_a_prior_conservative_post_pass_proof(bundle) -> None:
+    _, _, results = _ideal_tick(bundle, target_tick=604)
+    issuer = R5BTemporalAuthorizationIssuer()
+    _issue_initial(bundle, issuer, results)
+    snapshot, prediction = results[604]
+    with pytest.raises(ValueError, match="post-pass completion input"):
+        issuer.issue(
+            reference=bundle.reference,
+            temporal_evidence=bundle.temporal_evidence,
+            temporal_geometry=bundle.temporal_geometry,
+            robot_state=_far_ahead_state(bundle),
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=snapshot,
+            prediction_result=prediction,
+            controller_tick=41,
+            simulation_time_s=2.05,
+            gate_motion_state=DynamicMotionState.MOVING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=None,
+            actual_stop_confirmed=False,
+            local_safety_recheck_passed=True,
+        )
+
+
+def test_post_pass_chain_accepts_fresh_empty_but_rejects_stale_or_target_regression(
+    bundle,
+) -> None:
+    _, _, results = _ideal_tick(bundle, target_tick=604)
+    far_state = _far_ahead_state(bundle)
+    issuer = R5BTemporalAuthorizationIssuer()
+    _issue_initial(bundle, issuer, results)
+    authorization = None
+    for tick in range(41, 605):
+        snapshot, prediction = results[tick]
+        authorization = issuer.issue(
+            reference=bundle.reference,
+            temporal_evidence=bundle.temporal_evidence,
+            temporal_geometry=bundle.temporal_geometry,
+            robot_state=far_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=snapshot,
+            prediction_result=prediction,
+            controller_tick=tick,
+            simulation_time_s=tick * 0.05,
+            gate_motion_state=DynamicMotionState.MOVING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=None,
+            actual_stop_confirmed=False,
+            local_safety_recheck_passed=True,
+        )
+    assert authorization is not None
+    assert authorization.phase is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
+    empty_snapshot, empty_prediction = results[604]
+    validate_r5b_temporal_authorization_for_tick(
+        authorization,
+        reference=bundle.reference,
+        robot_state=far_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=empty_snapshot,
+        prediction_set=empty_prediction.prediction_set,
+        controller_tick=604,
+        simulation_time_s=604 * 0.05,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+    )
+
+    stale_snapshot = replace(
+        empty_snapshot,
+        availability=empty_snapshot.availability.STALE,
+    )
+    with pytest.raises(ValueError, match="not fresh"):
+        validate_r5b_temporal_authorization_for_tick(
+            authorization,
+            reference=bundle.reference,
+            robot_state=far_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=stale_snapshot,
+            prediction_set=empty_prediction.prediction_set,
+            controller_tick=604,
+            simulation_time_s=604 * 0.05,
+            gate_motion_state=DynamicMotionState.MOVING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=None,
+        )
+
+    no_frame_snapshot = replace(empty_snapshot, last_event_was_no_frame=True)
+    with pytest.raises(ValueError, match="not usable"):
+        validate_r5b_temporal_authorization_for_tick(
+            authorization,
+            reference=bundle.reference,
+            robot_state=far_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=no_frame_snapshot,
+            prediction_set=empty_prediction.prediction_set,
+            controller_tick=604,
+            simulation_time_s=604 * 0.05,
+            gate_motion_state=DynamicMotionState.MOVING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=None,
+        )
+
+    regression_issuer = R5BTemporalAuthorizationIssuer()
+    _issue_initial(bundle, regression_issuer, results)
+    snapshot41, prediction41 = results[41]
+    post = regression_issuer.issue(
+        reference=bundle.reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        robot_state=far_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot41,
+        prediction_result=prediction41,
+        controller_tick=41,
+        simulation_time_s=2.05,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+        actual_stop_confirmed=False,
+        local_safety_recheck_passed=True,
+    )
+    assert post.phase is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
+    snapshot42, prediction42 = results[42]
+    with pytest.raises(ValueError, match="no longer conservatively behind"):
+        regression_issuer.issue(
+            reference=bundle.reference,
+            temporal_evidence=bundle.temporal_evidence,
+            temporal_geometry=bundle.temporal_geometry,
+            robot_state=bundle.source.world.initial_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=snapshot42,
+            prediction_result=prediction42,
+            controller_tick=42,
+            simulation_time_s=2.1,
+            gate_motion_state=DynamicMotionState.MOVING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=None,
+            actual_stop_confirmed=False,
+            local_safety_recheck_passed=True,
+        )
+
+
+def test_post_pass_proof_payload_cannot_be_rehashed_with_a_forged_margin(bundle) -> None:
+    _, _, results = _ideal_tick(bundle, target_tick=41)
+    issuer = R5BTemporalAuthorizationIssuer()
+    _issue_initial(bundle, issuer, results)
+    snapshot, prediction = results[41]
+    authorization = issuer.issue(
+        reference=bundle.reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        robot_state=_far_ahead_state(bundle),
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot,
+        prediction_result=prediction,
+        controller_tick=41,
+        simulation_time_s=2.05,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+        actual_stop_confirmed=False,
+        local_safety_recheck_passed=True,
+    )
+    forged = replace(
+        authorization,
+        post_pass_actor_front_progress_m=(
+            authorization.post_pass_actor_front_progress_m - 1.0
+        ),
+        post_pass_clearance_margin_m=(
+            authorization.post_pass_clearance_margin_m + 1.0
+        ),
+        authorization_content_hash="",
+    )
+    with pytest.raises(ValueError, match="current post-pass proof"):
+        validate_r5b_temporal_authorization_for_tick(
+            forged,
+            reference=bundle.reference,
+            robot_state=_far_ahead_state(bundle),
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=snapshot,
+            prediction_set=prediction.prediction_set,
+            controller_tick=41,
+            simulation_time_s=2.05,
+            gate_motion_state=DynamicMotionState.MOVING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=None,
         )

@@ -43,6 +43,9 @@ from hospital_path_lab.local_reference_validation import (
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.r5b_temporal_evidence import (
+    R5B_CONTROLLER_COMPLETION_BUFFER_M,
+    R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS,
+    R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M,
     CausalR5BPassEvidence,
     build_causal_r5b_pass_evidence,
 )
@@ -51,8 +54,8 @@ from hospital_path_lab.spatial_oracle_contracts import (
     spatial_grid_content_hash,
 )
 
-R5B_TEMPORAL_REFERENCE_BUNDLE_SCHEMA_VERSION = "r5b-temporal-reference-bundle-v1"
-R5B_TEMPORAL_REFERENCE_BUILDER_VERSION = "r5b-temporal-reference-builder-v1"
+R5B_TEMPORAL_REFERENCE_BUNDLE_SCHEMA_VERSION = "r5b-temporal-reference-bundle-v2"
+R5B_TEMPORAL_REFERENCE_BUILDER_VERSION = "r5b-temporal-reference-builder-v2"
 R5B_REFERENCE_MISSION_ID = "r5b-path-only-public-mission"
 R5B_REFERENCE_STOP_EPOCH = 1
 R5B_REFERENCE_MANEUVER_REVISION = 1
@@ -101,7 +104,12 @@ class R5BTemporalReferenceBundle:
 def build_r5b_temporal_reference_bundles(
     archive_path: Path,
 ) -> tuple[R5BTemporalReferenceBundle, ...]:
-    sources = build_causal_r5b_pass_evidence(Path(archive_path))
+    sources = build_causal_r5b_pass_evidence(
+        Path(archive_path),
+        linear_target_mps=R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS,
+        longitudinal_pass_buffer_m=R5B_CONTROLLER_COMPLETION_BUFFER_M,
+        minimum_lateral_offset_m=R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M,
+    )
     bundles = tuple(_build_bundle(source) for source in sources)
     if len(bundles) != 10 or len({item.bundle_content_hash for item in bundles}) != 10:
         raise RuntimeError("R5-B temporal reference build did not produce ten unique bundles")

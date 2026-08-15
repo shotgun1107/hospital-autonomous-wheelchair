@@ -68,7 +68,7 @@ from hospital_path_lab.r5b_temporal_reference import (
     build_r5b_temporal_reference_bundles,
 )
 
-R5B_TEMPORAL_EXECUTION_VERSION = "r5b-ideal-temporal-execution-v1"
+R5B_TEMPORAL_EXECUTION_VERSION = "r5b-ideal-temporal-execution-v2"
 R5B_AUTHORIZATION_REVISION = 1
 R5B_REJOIN_DISTANCE_M = 0.10
 R5B_REJOIN_HEADING_RAD = 10.0 * pi / 180.0
@@ -258,6 +258,7 @@ def run_r5b_temporal_case(
     minimum_static = float("inf")
     rejoin_streak = 0
     passed_actor_once = False
+    terminal_stop_started = False
     last_target_present_tick: int | None = None
     last_target_present_robot_pose: Pose2D | None = None
     last_target_progress_gap_m: float | None = None
@@ -274,10 +275,7 @@ def run_r5b_temporal_case(
         else:
             snapshot, _, directional_result = stream.tick(tick)
         assert snapshot is not None and directional_result is not None
-        if (
-            directional_result.status is not DirectionalPredictionStatus.READY
-            or directional_result.prediction_set is None
-        ):
+        if directional_result.prediction_set is None:
             failures.append(
                 f"directional_prediction_not_ready:{tick}:{directional_result.status.value}"
             )
@@ -287,6 +285,8 @@ def run_r5b_temporal_case(
                 reference=bundle.reference,
                 temporal_evidence=bundle.temporal_evidence,
                 temporal_geometry=bundle.temporal_geometry,
+                robot_state=pipeline.robot_state,
+                vehicle_profile=bundle.build_context.vehicle_profile,
                 observation_snapshot=snapshot,
                 prediction_result=directional_result,
                 controller_tick=tick,
@@ -334,6 +334,8 @@ def run_r5b_temporal_case(
         }:
             failures.append(f"controller:{tick}:{result.status.value}:{result.failure_reason}")
             break
+        if result.status is PersistentControllerStatus.COMPLETED:
+            terminal_stop_started = True
 
         pose = record.robot_state_after.pose
         deviation, heading_error = _original_reference_error(bundle.reference, pose)
@@ -386,7 +388,13 @@ def run_r5b_temporal_case(
         if record.safety_decision.motion_state is DynamicMotionState.COMPLETED:
             completion_tick = tick
             break
-        if gate.motion_state is not DynamicMotionState.MOVING:
+        if (
+            gate.motion_state is not DynamicMotionState.MOVING
+            and not (
+                terminal_stop_started
+                and gate.motion_state is DynamicMotionState.BRAKING
+            )
+        ):
             failures.append(f"shared_gate_left_moving_state:{tick}:{gate.motion_state.value}")
             break
 

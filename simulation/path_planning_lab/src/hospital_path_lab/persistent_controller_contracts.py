@@ -574,6 +574,8 @@ def _validate_reference_input_identity(value: PersistentControllerTickInput) -> 
         validate_r5b_temporal_authorization_for_tick(
             authorization,
             reference=reference,
+            robot_state=value.robot_state,
+            vehicle_profile=value.vehicle_profile,
             observation_snapshot=value.validated_observation,
             prediction_set=prediction,
             controller_tick=value.controller_tick,

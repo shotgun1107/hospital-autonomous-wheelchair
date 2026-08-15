@@ -61,6 +61,9 @@ R5B_CAUSAL_RELEASE_TICK = 40
 R5B_CAUSAL_RELEASE_TIME_S = 2.0
 R5B_CAUSAL_DEPARTURE_PROGRESS_M = 0.0
 R5B_CAUSAL_LINEAR_TARGET_MPS = 0.30
+R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS = 0.20
+R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M = 0.65
+R5B_CONTROLLER_COMPLETION_BUFFER_M = 0.20
 R5B_CAUSAL_ANGULAR_MAGNITUDE_RADPS = 0.80
 _EXPECTED_VARIANT_PREFIXES = tuple(f"v6_primary-{index:02d}-" for index in range(5))
 
@@ -283,11 +286,28 @@ def load_frozen_r2_pass_evidence(
     return result
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def build_causal_r5b_pass_evidence(
     archive_path: Path,
+    *,
+    linear_target_mps: float = R5B_CAUSAL_LINEAR_TARGET_MPS,
+    longitudinal_pass_buffer_m: float = 0.0,
+    minimum_lateral_offset_m: float = 0.0,
 ) -> tuple[CausalR5BPassEvidence, ...]:
     """Find the first strict PASS per frozen side after the Ideal warm-up hold."""
+
+    if linear_target_mps not in (
+        R5B_CAUSAL_LINEAR_TARGET_MPS,
+        R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS,
+    ):
+        raise ValueError("R5-B only exposes the frozen or controller-matched speed")
+    if longitudinal_pass_buffer_m not in (0.0, R5B_CONTROLLER_COMPLETION_BUFFER_M):
+        raise ValueError("R5-B only exposes the frozen or controller completion buffer")
+    if minimum_lateral_offset_m not in (
+        0.0,
+        R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M,
+    ):
+        raise ValueError("R5-B only exposes the frozen or controller lateral floor")
 
     result: list[CausalR5BPassEvidence] = []
     for source in load_frozen_r2_pass_evidence(Path(archive_path)):
@@ -301,6 +321,9 @@ def build_causal_r5b_pass_evidence(
         selected_offset: float | None = None
         rejected_count = 0
         for offset in offsets:
+            if offset < minimum_lateral_offset_m:
+                rejected_count += 1
+                continue
             selected = generate_causal_release_pass_candidate(
                 source.world,
                 PassCandidateRequest(
@@ -309,9 +332,10 @@ def build_causal_r5b_pass_evidence(
                     departure_progress_m=R5B_CAUSAL_DEPARTURE_PROGRESS_M,
                     lateral_offset_m=offset,
                     release_tick=R5B_CAUSAL_RELEASE_TICK,
-                    linear_target_mps=R5B_CAUSAL_LINEAR_TARGET_MPS,
+                    linear_target_mps=linear_target_mps,
                     angular_magnitude_radps=R5B_CAUSAL_ANGULAR_MAGNITUDE_RADPS,
                     wait_policy=PassSideWaitPolicy.IMMEDIATE,
+                    longitudinal_pass_buffer_m=longitudinal_pass_buffer_m,
                 ),
             )
             if selected is not None:
@@ -677,6 +701,9 @@ __all__ = [
     "CausalR5BPassEvidence",
     "FrozenR2PassEvidence",
     "R5B_CAUSAL_RELEASE_TICK",
+    "R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS",
+    "R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M",
+    "R5B_CONTROLLER_COMPLETION_BUFFER_M",
     "R5B_CAUSAL_RELEASE_TIME_S",
     "R5B_EXPECTED_PASS_EVIDENCE_COUNT",
     "R5B_R2_ARCHIVE_RELATIVE_PATH",

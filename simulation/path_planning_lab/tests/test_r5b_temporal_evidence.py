@@ -9,6 +9,9 @@ import pytest
 from hospital_path_lab.dynamic_witness_contracts import PassSide, WitnessKind
 from hospital_path_lab.r5b_temporal_evidence import (
     R5B_CAUSAL_RELEASE_TICK,
+    R5B_CONTROLLER_COMPLETION_BUFFER_M,
+    R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS,
+    R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M,
     R5B_EXPECTED_PASS_EVIDENCE_COUNT,
     R5B_R2_ARCHIVE_SHA256,
     build_causal_r5b_pass_evidence,
@@ -119,3 +122,21 @@ def test_causal_release_api_does_not_change_frozen_r2_witnesses(
         derived.witness.points[40].twist == derived.witness.points[0].twist
         for derived in causal
     )
+
+
+def test_controller_matched_causal_passes_finish_overtake_before_actor_disappears() -> None:
+    evidence = build_causal_r5b_pass_evidence(
+        frozen_r2_archive_path(REPOSITORY_ROOT),
+        linear_target_mps=R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS,
+        longitudinal_pass_buffer_m=R5B_CONTROLLER_COMPLETION_BUFFER_M,
+        minimum_lateral_offset_m=R5B_CONTROLLER_MINIMUM_LATERAL_OFFSET_M,
+    )
+    assert len(evidence) == 10
+    for item in evidence:
+        actor = item.world.actors[0]
+        pass_time_s = item.witness.pass_times_by_actor[0][1]
+        rejoin_time_s = item.witness.rejoin_confirmed_at_s
+        assert rejoin_time_s is not None
+        assert pass_time_s < actor.active_until_s
+        assert rejoin_time_s > actor.active_until_s
+        assert item.selected_lateral_offset_m in (0.65, 0.66)

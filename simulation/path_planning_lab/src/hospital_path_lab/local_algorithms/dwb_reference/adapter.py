@@ -129,7 +129,7 @@ class SourceDerivedDwbController:
         self._snapshot_binders = tuple(snapshot_binders)
         self._installed_path_signature: str | None = None
         self._prepared_snapshot_identity: tuple[int, str] | None = None
-        self._command_linear_bounds = (0.0, vehicle_profile.nominal_speed_mps)
+        self._command_linear_bounds = (0.0, vehicle_profile.max_forward_speed_mps)
 
     def set_command_linear_bounds(self, minimum_mps: float, maximum_mps: float) -> None:
         """Set section-bound output limits without changing generator ordering."""
@@ -543,7 +543,7 @@ class SourceDerivedDwbController:
             if self.generator_config.allow_reverse
             else 0.0
         )
-        if not configured_minimum <= twist.linear <= self.vehicle_profile.nominal_speed_mps:
+        if not configured_minimum <= twist.linear <= self.vehicle_profile.max_forward_speed_mps:
             return "linear_state_outside_frozen_range"
         if abs(twist.angular) > self.vehicle_profile.max_angular_speed_radps:
             return "angular_state_outside_vehicle_limits"
@@ -668,7 +668,7 @@ def source_derived_dwb_semantic_digest(result: ControllerCommandResult) -> str:
 def _generator_config_for(profile: VehicleProfile) -> DwbGeneratorConfig:
     return DwbGeneratorConfig(
         control_period_s=profile.control_period_s,
-        maximum_forward_speed_mps=profile.nominal_speed_mps,
+        maximum_forward_speed_mps=profile.max_forward_speed_mps,
         maximum_reverse_speed_mps=profile.max_reverse_speed_mps,
         linear_acceleration_mps2=profile.max_acceleration_mps2,
         linear_deceleration_mps2=profile.max_deceleration_mps2,
@@ -685,7 +685,7 @@ def _validate_generator_profile(
 ) -> None:
     expected = (
         (config.control_period_s, profile.control_period_s),
-        (config.maximum_forward_speed_mps, profile.nominal_speed_mps),
+        (config.maximum_forward_speed_mps, profile.max_forward_speed_mps),
         (config.maximum_reverse_speed_mps, profile.max_reverse_speed_mps),
         (config.linear_acceleration_mps2, profile.max_acceleration_mps2),
         (config.linear_deceleration_mps2, profile.max_deceleration_mps2),

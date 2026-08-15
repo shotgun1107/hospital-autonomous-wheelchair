@@ -93,7 +93,7 @@ def test_temporal_reference_geometry_is_independently_reproduced(bundles) -> Non
         assert validation.minimum_clearance_m is not None
         assert validation.minimum_clearance_m >= 0.08
         assert validation.maximum_signed_side_excursion_m is not None
-        assert validation.maximum_signed_side_excursion_m >= 1.0
+        assert validation.maximum_signed_side_excursion_m >= 0.649
 
 
 def test_temporal_geometry_hash_tampering_fails_closed(bundles) -> None:

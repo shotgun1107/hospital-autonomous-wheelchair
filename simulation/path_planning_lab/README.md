@@ -26,7 +26,22 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
-### R5-B Ideal temporal tracking 1차 결과 — 2026-08-15
+### R5-B v2 공개 첫 LEFT 기능 PASS — 2026-08-15
+
+1차 실패 뒤 공개 연구용 reference를 controller와 같은 `0.20m/s`, 최소 측면 offset `0.65m`,
+종방향 completion buffer `0.20m`로 다시 만들었다. 로봇 뒤 외곽이 현재 directional capsule
+앞 외곽보다 기존 minimum clearance 이상 앞선 경우에만 post-pass completion으로 전환한다.
+그 전의 fresh empty와 모든 no-frame·stale·invalid 입력은 계속 거부한다.
+
+첫 LEFT에서 RPP는 `566→788→806`, C++ safety batch를 사용한 source-derived DWB는
+`459→779→797` tick에 추월→재합류→도착했다. 두 결과 모두 gate override·hard failure `0`이다.
+DWB는 차량의 기존 최대 전진속도 `0.30m/s`까지 사용하되 후보 수·rollout·terminal stopping·
+critic·안전 수치·shared gate는 유지했다. 상세 결과는
+[R5-B v2 첫 LEFT 결과](../../docs/research/dynamic-actor-experiment/r5b-v2-first-left-controller-matched-result-2026-08-15.md)를
+따른다. 영향권 `52 passed`, 전체 회귀 `897 passed`, failure·skip `0`이다. 공개 10-case
+qualification·50ms·hidden·제품 채택은 아직 수행하지 않았다.
+
+### R5-B Ideal temporal tracking 1차 결과 — 2026-08-15 (이전 실패 기준선)
 
 R2 완료 ZIP을 엄격히 복원하고, `2.0 s / tick 40`까지 실제 정지한 현재 상태에서 같은
 동결 측면 offset 축을 다시 검사했다. causal 좌·우 경로 `10/10`과 이를 변환한

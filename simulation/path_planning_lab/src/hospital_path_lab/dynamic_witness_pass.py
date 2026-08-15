@@ -61,6 +61,7 @@ class PassCandidateRequest:
     linear_target_mps: float
     angular_magnitude_radps: float
     wait_policy: PassSideWaitPolicy
+    longitudinal_pass_buffer_m: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.actor_binding_id:
@@ -76,11 +77,14 @@ class PassCandidateRequest:
             self.lateral_offset_m,
             self.linear_target_mps,
             self.angular_magnitude_radps,
+            self.longitudinal_pass_buffer_m,
         )
         if not all(type(value) is float and isfinite(value) for value in values):
             raise TypeError("PASS numeric request fields must be finite exact floats")
-        if min(values[1:]) <= 0.0:
+        if min(values[1:4]) <= 0.0:
             raise ValueError("PASS offset and speed magnitudes must be positive")
+        if self.longitudinal_pass_buffer_m < 0.0:
+            raise ValueError("PASS longitudinal buffer must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,10 +134,11 @@ class _CandidateSpec:
     linear_target_mps: float
     angular_magnitude_radps: float
     wait_policy: PassSideWaitPolicy
+    longitudinal_pass_buffer_m: float = 0.0
 
     @property
     def frozen_parameter_tuple(self) -> tuple[float, ...]:
-        return (
+        frozen = (
             float(self.target.segment.index),
             0.0 if self.side is PassSide.LEFT else 1.0,
             self.departure_progress_m,
@@ -143,6 +148,9 @@ class _CandidateSpec:
             self.angular_magnitude_radps,
             0.0 if self.wait_policy is PassSideWaitPolicy.IMMEDIATE else 1.0,
         )
+        if self.longitudinal_pass_buffer_m == 0.0:
+            return frozen
+        return (*frozen, self.longitudinal_pass_buffer_m)
 
 
 @dataclass(frozen=True, slots=True)
@@ -621,6 +629,7 @@ def _generate_pass_candidate(
         request.linear_target_mps,
         request.angular_magnitude_radps,
         request.wait_policy,
+        request.longitudinal_pass_buffer_m,
     )
     validated, _rejection = _evaluate_candidate(world, spec, search_config)
     return None if validated is None else validated.witness
@@ -1339,7 +1348,8 @@ def _build_candidate(
         segment.length_m - profile.collision_length_m / 2.0 - profile.minimum_clearance_m,
         actor_end_projection.progress_on_segment_m
         + longitudinal_extent_m
-        + max(world.grid.resolution_m, config.pass_synthesis_pose_tolerance_m),
+        + max(world.grid.resolution_m, config.pass_synthesis_pose_tolerance_m)
+        + spec.longitudinal_pass_buffer_m,
     )
     if pass_stop_progress <= spec.departure_progress_m + 0.10:
         return None

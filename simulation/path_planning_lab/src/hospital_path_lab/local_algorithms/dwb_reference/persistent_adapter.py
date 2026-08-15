@@ -65,7 +65,7 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v4"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v5"
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -247,11 +247,11 @@ class SectionBoundDwbReferenceTrajectoryGenerator(DwbReferenceTrajectoryGenerato
         """Reverse only the forward linear blocks used for exact-score ties.
 
         The source-derived core deliberately keeps the first generated candidate
-        when totals are exactly equal.  A stopped moving ``NONE`` connector can
-        tighten the preceding section completion tolerance below one map cell;
-        every safe forward speed can then receive the same discretized score.
-        This R5-only ordering prevents the minimum-speed candidate from winning
-        forever without changing candidates, critic scores, or safety checks.
+        when totals are exactly equal.  Once a forward translation is heading-
+        aligned, every safe speed can receive the same discretized map-grid
+        score near a waypoint.  This R5-only ordering prevents the minimum-
+        speed candidate from winning forever without changing candidates,
+        critic scores, or safety checks.
         """
 
         self._prefer_forward_progress_on_exact_ties = bool(enabled)
@@ -735,7 +735,7 @@ def _bind_stack_travel_direction(
 ) -> None:
     if direction is ReferenceTravelDirection.FORWARD:
         minimum_linear = 0.0
-        maximum_linear = tick_input.vehicle_profile.nominal_speed_mps
+        maximum_linear = tick_input.vehicle_profile.max_forward_speed_mps
         projection_sign = 1.0
     elif direction is ReferenceTravelDirection.REVERSE:
         minimum_linear = -min(
@@ -764,8 +764,8 @@ def _bind_stack_travel_direction(
         direction,
         completion_tolerance,
     )
-    stack.generator.set_prefer_forward_progress_on_exact_ties(connector_tightened)
     aligned_forward = _aligned_forward_section(direction, yaw_error)
+    stack.generator.set_prefer_forward_progress_on_exact_ties(aligned_forward)
     stack.goal_align_critic.set_disable_near_goal(aligned_forward)
     # A connector-tightened forward remainder keeps both alignment critics only
     # until its heading is aligned.  Leaving their forward-projection scores on

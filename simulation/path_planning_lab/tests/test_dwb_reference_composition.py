@@ -355,12 +355,12 @@ def test_invalid_grid_snapshot_fails_closed_before_stack_build() -> None:
         ("allow_reverse", True),
     ],
 )
-def test_every_frozen_v7_generator_parameter_is_enforced(
+def test_every_frozen_v8_generator_parameter_is_enforced(
     field_name: str,
     replacement,
 ) -> None:
     generator = replace(DwbGeneratorConfig(), **{field_name: replacement})
     config = SourceDerivedDwbConfig(generator=generator)
 
-    with pytest.raises(ValueError, match="every frozen v7 parameter"):
+    with pytest.raises(ValueError, match="every frozen v8 parameter"):
         SourceDerivedDynamicDwbController(config=config)

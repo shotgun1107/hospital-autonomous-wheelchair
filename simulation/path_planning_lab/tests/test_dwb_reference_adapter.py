@@ -299,7 +299,7 @@ def _wrong_actor_identity(snapshot):
 def _out_of_range_speed(snapshot):
     return replace(
         snapshot,
-        robot_state=replace(snapshot.robot_state, twist=Twist2D(0.201, 0.0)),
+        robot_state=replace(snapshot.robot_state, twist=Twist2D(0.301, 0.0)),
     )
 
 
