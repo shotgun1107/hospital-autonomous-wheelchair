@@ -12,7 +12,12 @@ from .contracts import (
     DwbTrajectory,
     DwbTwist2D,
 )
-from .core import DwbCriticBinding, DwbReferenceCore, IllegalTrajectoryError
+from .core import (
+    CriticBatchScore,
+    DwbCriticBinding,
+    DwbReferenceCore,
+    IllegalTrajectoryError,
+)
 from .goal_controller import DwbLatchedGoalController
 from .persistent_adapter import (
     PERSISTENT_DWB_ADAPTER_VERSION,
@@ -29,6 +34,7 @@ __all__ = [
     "PERSISTENT_DWB_CONTROLLER_NAME",
     "ROS1_NAVIGATION_COMMIT",
     "DwbCriticBinding",
+    "CriticBatchScore",
     "DwbGeneratorConfig",
     "DwbGeneratorRequest",
     "DwbGeneratorResult",

@@ -18,6 +18,10 @@ from dataclasses import dataclass
 from math import cos, isclose, pi, sin
 
 from hospital_path_lab.contracts import Pose2D, TrajectoryPoint, Twist2D
+from hospital_path_lab.cpp_dwb_safety_core import (
+    CppDwbSafetyFailure,
+    evaluate_dwb_safety_batch,
+)
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_COMMAND_APPLY_LATENCY_S,
     ControllerSnapshot,
@@ -35,7 +39,10 @@ from hospital_path_lab.local_algorithms.dwb_reference.contracts import (
     DwbTrajectory,
     DwbTwist2D,
 )
-from hospital_path_lab.local_algorithms.dwb_reference.core import IllegalTrajectoryError
+from hospital_path_lab.local_algorithms.dwb_reference.core import (
+    CriticBatchScore,
+    IllegalTrajectoryError,
+)
 
 _POSE_ABSOLUTE_TOLERANCE = 1e-9
 
@@ -62,12 +69,17 @@ class ProjectDynamicSafetyConstraintCritic:
 
     name = "project_dynamic_safety_constraint"
 
-    def __init__(self) -> None:
+    def __init__(self, *, use_cpp_batch: bool = True) -> None:
+        if not isinstance(use_cpp_batch, bool):
+            raise TypeError("use_cpp_batch must be bool")
+        self._use_cpp_batch = use_cpp_batch
         self._snapshot: ControllerSnapshot | None = None
         self._checkers: DynamicTrajectorySafetyCheckers | None = None
         self._prepared = False
         self._records: dict[DwbTrajectory, DynamicTrajectoryConstraintRecord] = {}
+        self._batch_trajectories: tuple[DwbTrajectory, ...] = ()
         self._selected_record: DynamicTrajectoryConstraintRecord | None = None
+        self._native_batch_used = False
 
     @property
     def bound_snapshot(self) -> ControllerSnapshot | None:
@@ -94,6 +106,12 @@ class ProjectDynamicSafetyConstraintCritic:
 
         return len(self._records)
 
+    @property
+    def native_batch_used(self) -> bool:
+        """Whether the most recently prepared tick used the optional C++ batch."""
+
+        return self._native_batch_used
+
     def bind_snapshot(self, snapshot: ControllerSnapshot) -> None:
         """Bind one already validated controller snapshot and start a new tick."""
 
@@ -108,14 +126,18 @@ class ProjectDynamicSafetyConstraintCritic:
         )
         self._prepared = False
         self._records.clear()
+        self._batch_trajectories = ()
         self._selected_record = None
+        self._native_batch_used = False
 
     def prepare(self, request: DwbGeneratorRequest) -> bool:
         """Verify that DWB starts at the shared contract's 50 ms apply pose."""
 
         snapshot = self._require_snapshot()
         self._records.clear()
+        self._batch_trajectories = ()
         self._selected_record = None
+        self._native_batch_used = False
         self._prepared = False
 
         expected_pose = _post_apply_pose(snapshot)
@@ -126,6 +148,41 @@ class ProjectDynamicSafetyConstraintCritic:
 
         self._prepared = True
         return True
+
+    def score_batch(
+        self,
+        trajectories: tuple[DwbTrajectory, ...],
+    ) -> tuple[CriticBatchScore, ...] | None:
+        """Use the optional C++ core for one complete candidate safety batch."""
+
+        snapshot = self._require_prepared_snapshot()
+        checkers = self._require_checkers()
+        if not self._use_cpp_batch:
+            return None
+        results = evaluate_dwb_safety_batch(
+            trajectories=trajectories,
+            snapshot=snapshot,
+            checkers=checkers,
+        )
+        if results is None:
+            return None
+        self._native_batch_used = True
+        self._batch_trajectories = tuple(trajectories)
+        reason_codes = {
+            CppDwbSafetyFailure.FORBIDDEN_ZONE: "forbidden_zone_entry",
+            CppDwbSafetyFailure.STATIC_CLEARANCE: "static_clearance_below_minimum",
+            CppDwbSafetyFailure.ACTOR_CLEARANCE: "actor_clearance_below_minimum",
+            CppDwbSafetyFailure.PREDICTION_INVALID: "prediction_set_malformed",
+        }
+        return tuple(
+            CriticBatchScore(raw_score=0.0)
+            if result.failure is CppDwbSafetyFailure.SAFE
+            else CriticBatchScore(
+                reason_code=reason_codes[result.failure],
+                message=reason_codes[result.failure],
+            )
+            for result in results
+        )
 
     def score(self, trajectory: DwbTrajectory) -> float:
         """Return zero for a safe candidate or raise with all failure evidence."""
@@ -164,6 +221,22 @@ class ProjectDynamicSafetyConstraintCritic:
             for trajectory, record in self._records.items()
             if trajectory.command == selected_command
         )
+        if not matches and self._batch_trajectories:
+            trajectories = tuple(
+                trajectory
+                for trajectory in self._batch_trajectories
+                if trajectory.command == selected_command
+            )
+            if len(trajectories) != 1:
+                raise RuntimeError(
+                    "selected command must identify exactly one native batch trajectory"
+                )
+            self.score(trajectories[0])
+            matches = tuple(
+                record
+                for trajectory, record in self._records.items()
+                if trajectory.command == selected_command
+            )
         if len(matches) != 1:
             raise RuntimeError(
                 "selected command must identify exactly one scored safety record"
@@ -179,7 +252,9 @@ class ProjectDynamicSafetyConstraintCritic:
         self._checkers = None
         self._prepared = False
         self._records.clear()
+        self._batch_trajectories = ()
         self._selected_record = None
+        self._native_batch_used = False
 
     def evidence_for(
         self,

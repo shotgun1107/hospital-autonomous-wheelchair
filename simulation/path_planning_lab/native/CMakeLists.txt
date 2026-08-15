@@ -11,3 +11,13 @@ target_compile_options(
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 set_target_properties(dwa_core PROPERTIES OUTPUT_NAME "dwa_core")
+
+add_library(dwb_safety_core SHARED dwb_safety_core.cpp)
+target_compile_features(dwb_safety_core PRIVATE cxx_std_20)
+target_compile_options(
+  dwb_safety_core
+  PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/O2;/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+set_target_properties(dwb_safety_core PROPERTIES OUTPUT_NAME "dwb_safety_core")

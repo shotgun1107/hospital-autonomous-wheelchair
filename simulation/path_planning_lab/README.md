@@ -44,6 +44,21 @@ RPP 공개 좌·우 10개가 모두 같은 판정이었고, 첫 LEFT DWB도 마�
 순수 Python DWB 전체 실행의 약 51분 wall-clock은 운영 병목이지 기능 판정 기준이 아니다.
 R5-B·직접 영향권은 `95 passed`, 전체 회귀는 `884 passed, 3 skipped`다.
 
+후속 C++20 안전 배치 코어는 동일한 217개 후보·41 pose·rollout·terminal stopping·안전
+수치와 shared gate를 유지한다. 같은 첫 LEFT 610틱은 `109.597374s`에 끝났고 Python 결과의
+최종 pose·clearance·실패·trace hash와 정확히 일치해 전체 사례가 약 `28.05배` 빨라졌다.
+그러나 추월·재합류는 여전히 없으므로 R5-B 판정은 `FAIL·receipt 0`이다. 상세 결과는
+[R5-B C++ DWB 안전 배치 가속 결과](../../docs/research/dynamic-actor-experiment/r5b-cpp-dwb-safety-acceleration-result-2026-08-15.md)를
+따른다. native를 실제 로드한 최종 전체 회귀는 `892 passed`, failure·skip `0`이다.
+
+선택적 native 빌드는 다음과 같이 수행한다. 라이브러리가 없으면 기존 Python 경로로
+fallback하며 생성 DLL·SO·dylib는 Git에 포함하지 않는다.
+
+```powershell
+python -m pip install -e ".\simulation\path_planning_lab[native]"
+python .\simulation\path_planning_lab\scripts\build_cpp_dwb_safety_core.py
+```
+
 ### 동적 지역 기동 연구 R2 실행 결과 — 2026-08-13
 
 R1 prediction 계약 감사 뒤 R2의 두 번째 구현 묶음까지 공개 episode용 label-free

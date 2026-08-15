@@ -90,6 +90,23 @@ class CandidateFailureKind(StrEnum):
     INVALID_SCORE = "invalid_score"
 
 
+@dataclass(frozen=True, slots=True)
+class CriticBatchScore:
+    """Optional one-candidate result produced by a critic's native batch path."""
+
+    raw_score: float | None = None
+    reason_code: str | None = None
+    message: str = ""
+
+    def __post_init__(self) -> None:
+        scored = self.raw_score is not None
+        rejected = self.reason_code is not None
+        if scored == rejected:
+            raise ValueError("batch critic outcome must be exactly scored or rejected")
+        if rejected and not self.reason_code.strip():
+            raise ValueError("batch critic reason_code must not be blank")
+
+
 class IllegalTrajectoryError(Exception):
     """Expected critic signal that one trajectory violates a hard condition."""
 
@@ -238,6 +255,7 @@ class DwbReferenceCore:
 
         self._prepare_critics(request)
         generator_result = self._generator.generate(request)
+        batch_scores = self._batch_critic_scores(generator_result.trajectories)
         evaluations: list[CandidateEvaluationDiagnostic] = []
         best_trajectory: DwbTrajectory | None = None
         best_score: float | None = None
@@ -248,6 +266,7 @@ class DwbReferenceCore:
                 candidate_index,
                 trajectory,
                 best_score,
+                batch_scores,
             )
             evaluations.append(evaluation)
             if evaluation.status is not CandidateEvaluationStatus.LEGAL:
@@ -280,11 +299,36 @@ class DwbReferenceCore:
             if prepared is False:
                 raise DwbPreparationError(binding.name)
 
+    def _batch_critic_scores(
+        self,
+        trajectories: tuple[DwbTrajectory, ...],
+    ) -> dict[str, tuple[CriticBatchScore, ...]]:
+        outcomes: dict[str, tuple[CriticBatchScore, ...]] = {}
+        for binding in self._critics:
+            if binding.scale == 0.0:
+                continue
+            score_batch = getattr(binding.critic, "score_batch", None)
+            if score_batch is None:
+                continue
+            candidate_scores = score_batch(trajectories)
+            if candidate_scores is None:
+                continue
+            frozen = tuple(candidate_scores)
+            if len(frozen) != len(trajectories) or any(
+                not isinstance(item, CriticBatchScore) for item in frozen
+            ):
+                raise RuntimeError(
+                    f"critic batch result shape is invalid: {binding.name}"
+                )
+            outcomes[binding.name] = frozen
+        return outcomes
+
     def _evaluate_candidate(
         self,
         candidate_index: int,
         trajectory: DwbTrajectory,
         best_score: float | None,
+        batch_scores: dict[str, tuple[CriticBatchScore, ...]],
     ) -> CandidateEvaluationDiagnostic:
         accumulated_score = 0.0
         scores: list[CriticScoreDiagnostic] = []
@@ -292,9 +336,9 @@ class DwbReferenceCore:
         for binding in self._critics:
             if binding.scale == 0.0:
                 continue
-            try:
-                raw_score = binding.critic.score(trajectory)
-            except IllegalTrajectoryError as error:
+            batch = batch_scores.get(binding.name)
+            batch_score = None if batch is None else batch[candidate_index]
+            if batch_score is not None and batch_score.reason_code is not None:
                 return CandidateEvaluationDiagnostic(
                     candidate_index=candidate_index,
                     command=trajectory.command,
@@ -304,10 +348,30 @@ class DwbReferenceCore:
                     failure=CandidateFailureDiagnostic(
                         kind=CandidateFailureKind.CRITIC_REJECTION,
                         critic_name=binding.name,
-                        reason_code=error.reason_code,
-                        message=error.detail,
+                        reason_code=batch_score.reason_code,
+                        message=batch_score.message,
                     ),
                 )
+            if batch_score is not None:
+                raw_score = batch_score.raw_score
+                assert raw_score is not None
+            else:
+                try:
+                    raw_score = binding.critic.score(trajectory)
+                except IllegalTrajectoryError as error:
+                    return CandidateEvaluationDiagnostic(
+                        candidate_index=candidate_index,
+                        command=trajectory.command,
+                        status=CandidateEvaluationStatus.ILLEGAL,
+                        accumulated_score=accumulated_score,
+                        critic_scores=tuple(scores),
+                        failure=CandidateFailureDiagnostic(
+                            kind=CandidateFailureKind.CRITIC_REJECTION,
+                            critic_name=binding.name,
+                            reason_code=error.reason_code,
+                            message=error.detail,
+                        ),
+                    )
 
             weighted_score = raw_score * binding.scale
             if (

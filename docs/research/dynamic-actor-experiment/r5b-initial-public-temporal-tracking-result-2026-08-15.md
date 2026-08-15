@@ -126,6 +126,17 @@ fresh-empty에서 fail-closed했다. 따라서 첫 사례에서는 RPP와 DWB가
 lane의 기능 실패 근거로 사용하지 않으며, 50 ms qualification도 적용하지 않는다. 이 장시간
 실행을 일반 회귀에 반복 포함하지 않는다.
 
+### C++ 안전 배치 가속 재실행
+
+후속 구현에서 후보 `217개`, 후보당 `41 pose`, rollout·terminal stopping, 안전 수치,
+critic·tie-break와 최종 shared gate를 유지한 채 후보별 동적 안전 판정만 C++20 배치
+코어로 옮겼다. 같은 첫 LEFT 610틱은 `109.597374s`에 끝났고, 최종 pose·clearance·
+실패 이유와 trace hash가 위 순수 Python 결과와 정확히 일치했다. 전체 사례 wall-clock은
+약 `28.05배` 줄었지만 추월·재합류가 생기지는 않았다. 따라서 이는 기능 수정이나 DWB
+채택 근거가 아니라 동작 보존형 계산 가속이다. 상세 내용은
+[R5-B C++ DWB 안전 배치 가속 결과](r5b-cpp-dwb-safety-acceleration-result-2026-08-15.md)에
+기록한다.
+
 ## 6. 판정
 
 현재 상태에서 다음을 주장할 수 있다.

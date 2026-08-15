@@ -14,6 +14,7 @@ from hospital_path_lab.local_algorithms.dwb_reference.contracts import (
 from hospital_path_lab.local_algorithms.dwb_reference.core import (
     CandidateEvaluationStatus,
     CandidateFailureKind,
+    CriticBatchScore,
     DwbCriticBinding,
     DwbPreparationError,
     DwbReferenceCore,
@@ -89,6 +90,18 @@ class RecordingCritic:
         self.paths.append(path)
 
 
+@dataclass
+class BatchRecordingCritic(RecordingCritic):
+    batch: tuple[CriticBatchScore, ...] | None = None
+
+    def score_batch(
+        self,
+        trajectories: tuple[DwbTrajectory, ...],
+    ) -> tuple[CriticBatchScore, ...] | None:
+        self.events.append(f"score_batch:{self.name}:{len(trajectories)}")
+        return self.batch
+
+
 def _core(
     trajectories: tuple[DwbTrajectory, ...],
     critics: tuple[tuple[RecordingCritic, float], ...],
@@ -146,6 +159,36 @@ def test_illegal_candidate_is_removed_immediately_and_diagnosed() -> None:
     assert rejected.failure.critic_name == "obstacle"
     assert rejected.failure.reason_code == "blocked"
     assert "score:later:0.1" not in events
+
+
+def test_optional_batch_critic_preserves_order_scores_and_rejections() -> None:
+    events: list[str] = []
+    critic = BatchRecordingCritic(
+        "native",
+        events,
+        batch=(
+            CriticBatchScore(reason_code="native_blocked", message="blocked"),
+            CriticBatchScore(raw_score=2.0),
+        ),
+    )
+    core, _, _ = _core(
+        (_trajectory(0.1), _trajectory(0.2)),
+        ((critic, 3.0),),
+    )
+
+    result = core.compute(_request())
+
+    assert result.selected_candidate_index == 1
+    assert result.total_score == 6.0
+    assert result.candidate_evaluations[0].failure is not None
+    assert result.candidate_evaluations[0].failure.reason_code == "native_blocked"
+    assert not any(item.startswith("score:native") for item in events)
+    assert events == [
+        "prepare:native",
+        "generate",
+        "score_batch:native:2",
+        "debrief:native:0.2",
+    ]
 
 
 def test_weighted_sum_and_strict_less_keep_first_exact_tie() -> None:

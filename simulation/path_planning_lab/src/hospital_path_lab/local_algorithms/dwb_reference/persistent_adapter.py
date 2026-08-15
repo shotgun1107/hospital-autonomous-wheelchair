@@ -300,9 +300,13 @@ class PersistentSourceDerivedDwbController:
         *,
         config: SourceDerivedDwbConfig | None = None,
         executor: ReferenceSectionExecutor | None = None,
+        use_cpp_safety_core: bool = True,
     ) -> None:
+        if not isinstance(use_cpp_safety_core, bool):
+            raise TypeError("use_cpp_safety_core must be bool")
         self._executor = executor or ReferenceSectionExecutor()
         self._config = config
+        self._use_cpp_safety_core = use_cpp_safety_core
         self._stack: _PersistentDwbStack | None = None
         self._stack_build_count = 0
         self._bound_reference_session_id: str | None = None
@@ -330,6 +334,10 @@ class PersistentSourceDerivedDwbController:
     @property
     def selected_safety_evidence(self) -> DynamicTrajectorySafetyEvidence | None:
         return None if self._stack is None else self._stack.safety_critic.selected_evidence
+
+    @property
+    def native_safety_batch_used(self) -> bool:
+        return self._stack is not None and self._stack.safety_critic.native_batch_used
 
     def step(self, tick_input: PersistentControllerTickInput) -> PersistentControllerResult:
         started_at = perf_counter_ns()
@@ -477,7 +485,9 @@ class PersistentSourceDerivedDwbController:
         )
         _validate_generator_profile(config.generator, profile, allow_reverse=True)
         grid = _critic_grid(snapshot, profile)
-        safety = ProjectDynamicSafetyConstraintCritic()
+        safety = ProjectDynamicSafetyConstraintCritic(
+            use_cpp_batch=self._use_cpp_safety_core
+        )
         rotate = RotateToGoalCritic(
             xy_goal_tolerance_m=0.05,
             path_length_tolerance_m=0.10,

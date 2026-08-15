@@ -577,6 +577,48 @@ def test_public_wide_first_tick_has_complete_candidate_diagnostics(public_wide_l
     assert "travel_direction=forward" in result.decision_trace
 
 
+def test_cpp_safety_batch_preserves_first_public_dwb_command(public_wide_left) -> None:
+    context = public_wide_left.build_context
+    reference = public_wide_left.reference_set.candidates[0]
+    validation = public_wide_left.validations[0]
+    pose = reference.knots[0].pose
+    current_context = replace(
+        context,
+        current_robot_pose=pose,
+        control_tick=0,
+        simulation_time_s=0.0,
+        context_content_hash="",
+    )
+    update = LocalReferenceWindowManager().update(current_context, reference, validation)
+    assert update.window is not None
+    python_controller = PersistentSourceDerivedDwbController(use_cpp_safety_core=False)
+    native_controller = PersistentSourceDerivedDwbController(use_cpp_safety_core=True)
+
+    python_result = _advance_to_first_signed_translation(
+        python_controller,
+        context,
+        reference,
+        update.window,
+    )
+    native_result = _advance_to_first_signed_translation(
+        native_controller,
+        context,
+        reference,
+        update.window,
+    )
+
+    assert native_controller.native_safety_batch_used
+    assert native_result.status is python_result.status
+    assert native_result.requested_twist == python_result.requested_twist
+    assert native_result.predicted_trajectory == python_result.predicted_trajectory
+    assert native_result.failure_reason == python_result.failure_reason
+    assert native_result.decision_trace == python_result.decision_trace
+    assert native_result.candidate_diagnostics == python_result.candidate_diagnostics
+    assert native_controller.selected_safety_evidence == (
+        python_controller.selected_safety_evidence
+    )
+
+
 def test_missing_fresh_observation_fails_closed_before_candidate_motion(public_wide_left) -> None:
     context = public_wide_left.build_context
     reference = public_wide_left.reference_set.candidates[0]

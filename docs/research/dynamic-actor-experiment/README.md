@@ -37,6 +37,10 @@ reference 8개·receipt·794 전체 회귀 완료`, `R5-A v3 static public 21/21
 10/10, GROUND_TRUTH_TEMPORAL reference와 tick-bound 실행 허가까지 구현했으나 공개 RPP
 좌·우 10개와 첫 LEFT DWB가 Actor active interval 안에 완전 추월하지 못해
 `FAIL·receipt 0`이다. gate override·clearance 위반은 없었다.
+순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정을 C++20 배치 코어로
+옮겨 `109.597374s`로 줄였고, 최종 pose·clearance·실패·trace hash의 exact 동등성을
+확인했다. 계산만 약 `28.05배` 빨라졌으며 R5-B 기능 실패와 receipt `0`은 그대로다.
+native 라이브러리를 실제 로드한 최종 전체 회귀는 `892 passed`, failure·skip `0`이다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -47,7 +51,8 @@ Ideal·Normal·Stress 관측과 자동 witness의 결합은
 ground-truth feasible과 관측상 판단 가능, 실제 controller 실행을 서로 다른 증거로 유지한다.
 R5-B 상세 명세와 첫 실패 결과는 각각
 [`17-r5b-ideal-temporal-tracking.md`](17-r5b-ideal-temporal-tracking.md),
-[`r5b-initial-public-temporal-tracking-result-2026-08-15.md`](r5b-initial-public-temporal-tracking-result-2026-08-15.md)에 기록한다.
+[`r5b-initial-public-temporal-tracking-result-2026-08-15.md`](r5b-initial-public-temporal-tracking-result-2026-08-15.md),
+[`R5-B C++ DWB 안전 배치 가속 결과`](r5b-cpp-dwb-safety-acceleration-result-2026-08-15.md)에 기록한다.
 R3의 검증된 pose·heading path를 persistent controller용 immutable reference와 revision-bound
 sliding window로 바꾸는 계약은
 [`15-local-maneuver-reference-contract.md`](15-local-maneuver-reference-contract.md)에 정의했다.

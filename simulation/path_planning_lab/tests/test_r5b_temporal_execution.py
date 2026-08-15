@@ -50,6 +50,29 @@ def test_ideal_temporal_execution_holds_until_release_and_then_moves(
     assert_finite_r5b_result(result)
 
 
+def test_cpp_dwb_safety_batch_preserves_r5b_release_trace(first_left_bundle) -> None:
+    python_controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=False
+    )
+    native_controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=True
+    )
+
+    python_result = run_r5b_temporal_case(
+        first_left_bundle,
+        controller=python_controller,
+        tick_limit=97,
+    )
+    native_result = run_r5b_temporal_case(
+        first_left_bundle,
+        controller=native_controller,
+        tick_limit=97,
+    )
+
+    assert native_controller.native_safety_batch_used
+    assert native_result == python_result
+
+
 def test_current_rpp_is_still_overlapping_target_at_last_ground_truth_tick(
     first_left_bundle,
 ) -> None:

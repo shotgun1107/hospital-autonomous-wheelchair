@@ -21,6 +21,9 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.9",
 ]
+native = [
+    "ziglang>=0.16,<0.17",
+]
 
 [project.scripts]
 hospital-path-lab = "hospital_path_lab.cli:main"
