@@ -218,7 +218,10 @@ tick 단위 mirror 관계 판정 때문에 실패해 receipt를 만들지 않았
 tolerance를 각각 적용하고, connector-tightened forward DWB의 exact tie·near-goal alignment
 교착을 보정했다. 좌·우 crossing DWB는 각각 `667/655 tick`에 deadlock·gate override·hard
 failure `0`으로 완료했고, 영향권 `66 passed`, 전체 회귀 `864 passed, 3 skipped`를 통과했다.
-dirty 표적 결과이므로 새 clean 21-case qualification과 receipt는 아직 남아 있다. 상세는
+commit `5400000`의 clean 21-case에서도 ready 8개 종단과 parity·repeat는 통과했지만, 좌우
+signed relation의 동일 chassis yaw를 강제로 mirror한 관계 판정 4건 때문에 receipt는 만들지
+않았다. 좌우 signed relation은 중심 geometry만, travel direction을 보존하는 수평·수직 rigid
+relation은 중심 geometry와 footprint axis를 비교하도록 분리해 재qualification 중이다. 상세는
 [`R5-A v3 교차 연결 보정`](../../docs/research/dynamic-actor-experiment/r5a-v3-crossing-connector-correction-2026-08-15.md)에 기록했다.
 hidden은 사용하지 않았다.
 먼저 R4

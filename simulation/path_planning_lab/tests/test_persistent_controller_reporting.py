@@ -105,6 +105,40 @@ def test_mirror_relation_compares_section_geometry_not_equal_tick_timing() -> No
     )
 
 
+def test_signed_mirror_relation_does_not_mirror_the_chassis_axis() -> None:
+    def sample(*, x: float, y: float, yaw: float, section: int):
+        return SimpleNamespace(
+            pose_before=Pose2D(0.0, 0.0, 0.0),
+            pose_after=Pose2D(x, y, yaw),
+            active_section_index=section,
+            active_section_kind="depart",
+        )
+
+    forward_left = SimpleNamespace(
+        samples=(
+            sample(x=0.0, y=0.0, yaw=0.0, section=0),
+            sample(x=1.0, y=0.05, yaw=0.95, section=1),
+        )
+    )
+    reverse_right = SimpleNamespace(
+        samples=(
+            sample(x=0.0, y=0.0, yaw=0.0, section=0),
+            sample(x=1.0, y=-0.05, yaw=1.94, section=1),
+        )
+    )
+
+    assert _section_geometry_relation_matches(
+        forward_left,
+        reverse_right,
+        mirror_lateral=True,
+    )
+    assert not _section_geometry_relation_matches(
+        forward_left,
+        reverse_right,
+        mirror_lateral=False,
+    )
+
+
 def test_ready_pair_uses_one_frozen_input_and_fresh_controller_runs(public_cases) -> None:
     case = next(item for item in public_cases if item.expected_candidate_count == 1)
 

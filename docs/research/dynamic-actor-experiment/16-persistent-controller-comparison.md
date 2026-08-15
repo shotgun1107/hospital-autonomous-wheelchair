@@ -1112,6 +1112,10 @@ scripts/run_persistent_controller_public.py
 - 기존 R4 v1 receipt와 R5-A 1차 실패 output은 변경하지 않고 새 version·output으로 재실행한다.
 - R5 v3 상세 보정은
   [교차 경로 연결 교착 보정 결과](r5a-v3-crossing-connector-correction-2026-08-15.md)에 보존한다.
+- commit `5400000`의 clean v3 21-case는 모든 개별 주행·parity·repeat를 통과했지만 좌우 signed
+  relation에서 같은 chassis yaw까지 mirror한 관계 판정 4건으로 receipt 없이 닫혔다. 좌우 signed
+  관계는 중심 geometry, travel direction 보존 rigid 관계는 중심 geometry와 footprint axis를
+  비교하도록 의미를 분리한 뒤 재qualification 중이다.
 
 ### R5-7 — 최종 감사·회귀
 

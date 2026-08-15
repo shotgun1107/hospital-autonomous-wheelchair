@@ -2,7 +2,7 @@
 
 - 작업일: `2026-08-15`
 - 범위: Python `simulation_only` R5-A static reference tracking
-- 상태: **좌·우 교차 DWB 종단 통과, 전체 21-case clean 재qualification 대기**
+- 상태: **좌·우 교차 DWB 종단 통과, signed relation 판정 보정 뒤 clean 재qualification 대기**
 - hidden: 미사용
 - 제품 controller 채택·G1~G5·제품 경로분석 7단계: 미수행
 
@@ -50,8 +50,11 @@ serial/process parity와 repeat determinism을 끝까지 실행했지만 hard `F
 ### 2.3 relation audit
 
 - status와 section sequence는 그대로 exact 비교한다.
-- 매 tick 동일성 대신 section별 시작·끝·최소·최대 중심 위치를 기존 `0.05m`, footprint axis
-  yaw를 기존 `0.08rad` 안에서 비교한다.
+- 매 tick 동일성 대신 section별 시작·끝·최소·최대 중심 위치를 기존 `0.05m` 안에서 비교한다.
+- 좌우 signed mirror는 한쪽이 전진하고 다른 쪽이 같은 chassis yaw로 후진하므로 중심 경로만
+  mirror 비교한다. 각 실행의 oriented footprint 안전은 shared gate가 독립 검사한다.
+- travel direction을 보존하는 수평·수직 rigid relation만 footprint axis yaw를 기존 `0.08rad`
+  안에서 비교한다.
 - 5cm를 넘는 합성 geometry 변조는 계속 실패한다.
 
 ## 3. 중간 실패와 원인 추적
@@ -95,6 +98,24 @@ shared gate는 완화하지 않았다.
 - Ruff·compileall·`git diff --check`: 통과
 
 위 좌·우 실행은 dirty source에서 수행한 표적 기능시험이므로 qualification receipt가 아니다.
+
+### 첫 clean v3 실행
+
+commit `5400000`의
+`outputs/persistent-controller-public-20260815-r5a-v3-5400000`은 public `21/21`, ready 8개
+RPP·DWB 종단, non-ready 무호출, serial/process parity, repeat determinism과 모든 case별 hard
+safety를 통과했다. semantic hash는
+`a793efc1c738603c18ac3b898a852218bd9efe07da4b5b139e909e805063369f`다.
+
+최종 hard 판정만 좌우 signed relation의 DWB trajectory 4건으로 실패했다. 원인은 좌우 reference가
+중심 경로는 mirror지만, 한쪽은 전진하고 다른 쪽은 **같은 `+90°` chassis yaw를 유지한 채 후진**하도록
+동결돼 있는데 audit가 chassis yaw까지 mirror했기 때문이다. 위치 관계는 최대 약 `0.0173m`로 기존
+`0.05m` 안이었다. 따라서 이 output은 그대로 실패 증거로 보존하고 receipt를 만들지 않았다.
+
+관계 판정은 좌우 signed mirror에서 중심 geometry만 비교하고, travel direction을 보존하는
+수평·수직 rigid relation에서는 footprint axis 비교를 유지하도록 보정했다. 보고 모듈 `9 passed`,
+기존 clean output의 여섯 관계 재계산 `6/6 PASS`, Ruff·diff check를 통과했다. 이 보정 뒤 새 clean
+full 실행은 아직 남아 있다.
 
 ## 5. 다음 작업
 

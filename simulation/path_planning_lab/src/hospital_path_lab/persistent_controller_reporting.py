@@ -1444,11 +1444,20 @@ def _section_geometry_relation_matches(
         for left_value, right_value in zip(left_values[:8], right_values[:8], strict=True):
             if abs(left_value - right_value) > R5_POSITION_TOLERANCE_M + _TOLERANCE:
                 return False
-        for left_yaw, right_yaw in zip(left_values[8:], right_values[8:], strict=True):
-            if abs(_footprint_axis_distance(left_yaw, right_yaw)) > (
-                R5_YAW_TOLERANCE_RAD + _TOLERANCE
+        # The lateral mirror relations intentionally pair a forward section
+        # with a reverse section while both references keep the same chassis
+        # yaw.  Their center paths mirror, but their footprint axes do not.
+        # Each run's oriented footprint is still checked independently by the
+        # shared gate.  Rigid horizontal/vertical relations preserve travel
+        # direction, so their footprint axes remain a valid metamorphic check.
+        if not mirror_lateral:
+            for left_yaw, right_yaw in zip(
+                left_values[8:], right_values[8:], strict=True
             ):
-                return False
+                if abs(_footprint_axis_distance(left_yaw, right_yaw)) > (
+                    R5_YAW_TOLERANCE_RAD + _TOLERANCE
+                ):
+                    return False
     return True
 
 
