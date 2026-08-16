@@ -1,6 +1,6 @@
 # R5-B v2 컨트롤러 속도 정합 및 추월 후 재합류 명세
 
-- 상태: 구현 및 C++ DWB 공개 Ideal 좌·우 10-case 기능 검증 완료, RPP 10-case·Normal·Stress 대기
+- 상태: C++ DWB 공개 Ideal `10/10`, RPP 공개 Ideal `4/10` 비교 완료, Normal·Stress 대기
 - 작성일: 2026-08-15
 - 범위: 공개 Ideal same-direction PASS 5개 × 좌·우 2개, RPP 및 source-derived DWB
 - 비범위: hidden, 실제 perception, 안전 임계값 변경, 후보 수·rollout 변경, 제품 알고리즘 채택
@@ -101,3 +101,8 @@ DWB의 BYPASS 점수 경로에만 종점 앞 `0.30m` 가상 앞보기 점을 추
 gate override와 hard failure는 모두 `0`이었다. 상세 결과는
 [C++ DWB 공개 10개 결과](r5b-v2-cpp-dwb-public-10case-result-2026-08-16.md)를 따른다.
 이는 Ideal 공개 기능 결과이며 Normal·Stress, 50ms, hidden, 실물 안전과 제품 채택 증거가 아니다.
+
+같은 공개 10개 RPP 비교는 `4/10`만 도착했다. 순번 1·2는 추월 사건 뒤에도 post-pass
+completion 허가를 만들지 못했고, 순번 4는 ordered overtake도 만들지 못했다. 공통 안전
+장치는 모두 fail-closed로 정지했으며 약화하지 않았다. 상세 결과는
+[RPP 공개 10개 비교 결과](r5b-v2-rpp-public-10case-comparison-2026-08-16.md)를 따른다.

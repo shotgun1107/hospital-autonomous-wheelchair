@@ -42,6 +42,13 @@ BYPASS 완료 오차만 `0.02m`로 제한했다. 실제 reference·안전거리�
 [C++ DWB 공개 10개 결과](../../docs/research/dynamic-actor-experiment/r5b-v2-cpp-dwb-public-10case-result-2026-08-16.md)를
 따른다. 이는 Ideal 공개 기능 결과이며 Normal·Stress, 50ms, hidden, 실물·제품 채택 증거가 아니다.
 
+같은 공개 10개 RPP 비교는 `4/10` 도착이었다. 순번 0·3의 좌·우는 도착했지만 순번 1·2는
+추월 사건 뒤 post-pass completion 허가를 만들지 못했고, 순번 4는 ordered overtake도 만들지
+못했다. gate override는 모두 `0`이며 안전 장치를 약화하지 않았다. 상세 결과는
+[RPP 공개 10개 비교 결과](../../docs/research/dynamic-actor-experiment/r5b-v2-rpp-public-10case-comparison-2026-08-16.md)를
+따른다. 이 제한된 Ideal same-direction 문제에서는 C++ DWB `10/10`이 RPP `4/10`보다
+일관되지만 제품 알고리즘 채택 근거는 아니다.
+
 ### R5-B v2 공개 첫 LEFT 기능 PASS — 2026-08-15
 
 1차 실패 뒤 공개 연구용 reference를 controller와 같은 `0.20m/s`, 최소 측면 offset `0.65m`,
