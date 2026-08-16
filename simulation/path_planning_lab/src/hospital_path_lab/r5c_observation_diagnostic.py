@@ -58,8 +58,12 @@ from hospital_path_lab.r5b_restop_execution import (
     _hold_step,
     build_r5b_follow_reference,
     build_r5b_restop_evidence,
+    build_world_follow_reference,
 )
-from hospital_path_lab.r5b_temporal_authorization import R5BTemporalAuthorizationIssuer
+from hospital_path_lab.r5b_temporal_authorization import (
+    R5BTemporalAuthorizationIssuer,
+    R5BTemporalAuthorizationPhase,
+)
 from hospital_path_lab.r5b_temporal_execution import (
     _grid_snapshot_for_observation,
     _pre_release_hold_step,
@@ -100,6 +104,8 @@ class R5CObservationDiagnosticResult:
     release_ticks: tuple[int, ...]
     prediction_loss_ticks: tuple[int, ...]
     authorization_loss_ticks: tuple[int, ...]
+    post_pass_proof_tick: int | None
+    follow_original_release_tick: int | None
     confirmed_stop_ticks: tuple[int, ...]
     session_stop_epochs: tuple[int, ...]
     observation_status_counts: tuple[tuple[str, int], ...]
@@ -126,6 +132,7 @@ class _ProfileObservationStream:
         tick_limit: int,
         stream_id: str,
         mission_revision: int,
+        hold_terminal_actor_state: bool = False,
     ) -> None:
         self._source = DynamicObservationSourceIdentity(
             stream_id=stream_id,
@@ -141,7 +148,12 @@ class _ProfileObservationStream:
                 tick_id=tick,
                 simulation_time_s=tick * DYNAMIC_CONTROL_PERIOD_S,
                 robot_state=world.initial_state,
-                actors=world.actor_states_at(tick * DYNAMIC_CONTROL_PERIOD_S),
+                actors=(
+                    ()
+                    if hold_terminal_actor_state
+                    and tick * DYNAMIC_CONTROL_PERIOD_S > world.duration_s
+                    else world.actor_states_at(tick * DYNAMIC_CONTROL_PERIOD_S)
+                ),
                 map_revision=world.map_revision,
                 mission_revision=mission_revision,
             )
@@ -201,6 +213,7 @@ def run_r5c_crossing_diagnostic(
     profile: DynamicObservationProfile,
     tick_limit: int = 780,
     recover_after_loss: bool = False,
+    complete_after_post_pass: bool = False,
 ) -> R5CObservationDiagnosticResult:
     """Run one public crossing side until completion or the first safe hold."""
 
@@ -209,6 +222,9 @@ def run_r5c_crossing_diagnostic(
     source_bundle = build_r5b_crossing_reference_bundles()[side_index]
     active_bundle = source_bundle
     world = source_bundle.source.world
+    post_pass_authorization_hash: str | None = None
+    post_pass_proof_tick: int | None = None
+    follow_original_release_tick: int | None = None
     gate = DynamicSafetyGate(
         profile=source_bundle.build_context.vehicle_profile,
         initial_stop_epoch=0,
@@ -230,7 +246,49 @@ def run_r5c_crossing_diagnostic(
         )
 
     def launch(state: RobotState, tick: int) -> _Runtime:
-        nonlocal active_bundle
+        nonlocal active_bundle, follow_original_release_tick
+        if post_pass_authorization_hash is not None:
+            follow_bundle = build_world_follow_reference(
+                world,
+                mission_id=R5B_REFERENCE_MISSION_ID,
+                current_pose=state.pose,
+                stop_epoch=gate.stop_epoch,
+                valid_from_tick=tick,
+                identity={
+                    "version": R5C_OBSERVATION_DIAGNOSTIC_VERSION,
+                    "source_bundle_hash": source_bundle.bundle_content_hash,
+                    "post_pass_authorization_hash": post_pass_authorization_hash,
+                    "stop_epoch": gate.stop_epoch,
+                    "valid_from_tick": tick,
+                    "start_pose": state.pose,
+                    "goal_pose": source_bundle.reference.knots[-1].pose,
+                },
+                generation_reason_codes=("r5c_post_pass_follow_original",),
+                goal_pose=source_bundle.reference.knots[-1].pose,
+            )
+            controller = PersistentSourceDerivedDwbController(
+                use_cpp_safety_core=True,
+                use_cpp_full_core=True,
+            )
+            pipeline = PersistentControllerPipeline(
+                controller=controller,
+                build_context=follow_bundle.build_context,
+                full_reference=follow_bundle.reference,
+                validation=follow_bundle.validation,
+                initial_robot_state=state,
+                gate=gate,
+                authorization_revision=gate.stop_epoch,
+                initial_tick=tick,
+            )
+            resume = build_resume_authorization(
+                mission_id=follow_bundle.reference.mission_id,
+                stop_epoch=gate.stop_epoch,
+                issued_or_revalidated_at_s=tick * DYNAMIC_CONTROL_PERIOD_S,
+                authorization_revision=gate.stop_epoch,
+            )
+            if follow_original_release_tick is None:
+                follow_original_release_tick = tick
+            return _Runtime(pipeline, None, resume)
         if (
             gate.stop_epoch == source_bundle.reference.stop_epoch
             and tick == source_bundle.reference.validity.valid_from_control_tick
@@ -271,7 +329,31 @@ def run_r5c_crossing_diagnostic(
         snapshot: DynamicObservationSnapshot,
         directional: DirectionalPredictionResult,
     ) -> PersistentPipelineStep:
-        assert runtime.issuer is not None and directional.prediction_set is not None
+        nonlocal post_pass_authorization_hash, post_pass_proof_tick
+        assert directional.prediction_set is not None
+        if runtime.issuer is None:
+            frozen_grid = runtime.pipeline.build_context.static_grid_snapshot
+            observation_revision = (
+                frozen_grid.metadata.observation_revision
+                if snapshot.frame is None
+                else snapshot.frame.observation_revision
+            )
+            current_grid = GridSnapshot(
+                metadata=replace(
+                    frozen_grid.metadata,
+                    observation_revision=observation_revision,
+                ),
+                grid=frozen_grid.grid,
+                forbidden_cells=frozen_grid.forbidden_cells,
+            )
+            record = runtime.pipeline.step(
+                observation_snapshot=snapshot,
+                prediction_set=directional.prediction_set,
+                resume_authorization=runtime.resume_authorization,
+                grid_snapshot=current_grid,
+            )
+            runtime.resume_authorization = None
+            return record
         temporal = runtime.issuer.issue(
             reference=active_bundle.reference,
             temporal_evidence=active_bundle.temporal_evidence,
@@ -292,6 +374,10 @@ def run_r5c_crossing_diagnostic(
             actual_stop_confirmed=runtime.resume_authorization is not None,
             local_safety_recheck_passed=True,
         )
+        if temporal.phase is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION:
+            post_pass_authorization_hash = temporal.authorization_content_hash
+            if post_pass_proof_tick is None:
+                post_pass_proof_tick = tick
         record = runtime.pipeline.step(
             observation_snapshot=snapshot,
             prediction_set=directional.prediction_set,
@@ -302,7 +388,7 @@ def run_r5c_crossing_diagnostic(
         runtime.resume_authorization = None
         return record
 
-    return _run_profile_diagnostic(
+    result = _run_profile_diagnostic(
         case_id=(
             f"crossing-{source_bundle.source.side.value}-recovery"
             if recover_after_loss
@@ -325,6 +411,12 @@ def run_r5c_crossing_diagnostic(
         controller_step=controller_step,
         recover_after_loss=recover_after_loss,
         finish_with_confirmed_stop=recover_after_loss,
+        hold_terminal_actor_state=complete_after_post_pass,
+    )
+    return replace(
+        result,
+        post_pass_proof_tick=post_pass_proof_tick,
+        follow_original_release_tick=follow_original_release_tick,
     )
 
 
@@ -341,6 +433,23 @@ def run_r5c_crossing_recovery_diagnostic(
         profile=profile,
         tick_limit=tick_limit,
         recover_after_loss=True,
+    )
+
+
+def run_r5c_crossing_completion_diagnostic(
+    *,
+    side_index: int,
+    profile: DynamicObservationProfile,
+    tick_limit: int = 1600,
+) -> R5CObservationDiagnosticResult:
+    """Run the extended public scene through post-pass return and goal completion."""
+
+    return run_r5c_crossing_diagnostic(
+        side_index=side_index,
+        profile=profile,
+        tick_limit=tick_limit,
+        recover_after_loss=True,
+        complete_after_post_pass=True,
     )
 
 
@@ -577,6 +686,7 @@ def _run_profile_diagnostic(
     controller_step: Callable,
     recover_after_loss: bool = False,
     finish_with_confirmed_stop: bool = False,
+    hold_terminal_actor_state: bool = False,
 ) -> R5CObservationDiagnosticResult:
     if profile not in (NORMAL_OBSERVATION_PROFILE, STRESS_OBSERVATION_PROFILE):
         raise ValueError("R5-C diagnostic accepts only frozen Normal or Stress")
@@ -588,6 +698,7 @@ def _run_profile_diagnostic(
         tick_limit=tick_limit,
         stream_id=stream_id,
         mission_revision=mission_revision,
+        hold_terminal_actor_state=hold_terminal_actor_state,
     )
     state = RobotState(world.initial_state.pose, Twist2D())
     runtime: _Runtime | None = None
@@ -622,7 +733,14 @@ def _run_profile_diagnostic(
         status_counts[directional.status.value] += 1
         no_frame_tick_count += int(snapshot.last_event_was_no_frame)
         current_sequence = None if snapshot.frame is None else snapshot.frame.sequence
-        if directional.status is DirectionalPredictionStatus.READY:
+        release_input_usable = (
+            directional.status is DirectionalPredictionStatus.READY
+            or (
+                hold_terminal_actor_state
+                and directional.status is DirectionalPredictionStatus.EMPTY_FRAME
+            )
+        )
+        if release_input_usable:
             if current_sequence is not None and current_sequence != last_ready_sequence:
                 consecutive_ready_frames += 1
                 last_ready_sequence = current_sequence
@@ -658,6 +776,9 @@ def _run_profile_diagnostic(
                 minimum_static,
                 minimum_actor,
             )
+            if gate.motion_state is DynamicMotionState.COMPLETED:
+                completion_tick = tick
+                break
             if gate.motion_state is DynamicMotionState.HOLDING:
                 if not confirmed_stop_ticks or confirmed_stop_ticks[-1] != tick:
                     confirmed_stop_ticks.append(tick)
@@ -669,7 +790,7 @@ def _run_profile_diagnostic(
 
         if runtime is None:
             current_frame_adds_ready_evidence = int(
-                directional.status is DirectionalPredictionStatus.READY
+                release_input_usable
                 and current_sequence is not None
                 and current_sequence != last_confirmed_safe_sequence
             )
@@ -681,7 +802,7 @@ def _run_profile_diagnostic(
             can_release = all(
                 (
                     tick >= planned_release_tick,
-                    directional.status is DirectionalPredictionStatus.READY,
+                    release_input_usable,
                     gate.motion_state is DynamicMotionState.HOLDING,
                     (
                         gate.stop_epoch >= 1
@@ -700,7 +821,7 @@ def _run_profile_diagnostic(
             else:
                 decision = hold(state, tick, snapshot, circular)
                 if recover_after_loss and (
-                    directional.status is DirectionalPredictionStatus.READY
+                    release_input_usable
                     and decision.consecutive_safe_frames > 0
                 ):
                     confirmed_safe_frame_count = min(
@@ -898,6 +1019,8 @@ def _run_profile_diagnostic(
         release_ticks=tuple(release_ticks),
         prediction_loss_ticks=tuple(prediction_loss_ticks),
         authorization_loss_ticks=tuple(authorization_loss_ticks),
+        post_pass_proof_tick=None,
+        follow_original_release_tick=None,
         confirmed_stop_ticks=tuple(confirmed_stop_ticks),
         session_stop_epochs=tuple(session_stop_epochs),
         observation_status_counts=tuple(sorted(status_counts.items())),
@@ -931,7 +1054,8 @@ def _update_clearances(
 ) -> tuple[float, float | None]:
     minimum_static = min(minimum_static, checker.clearance(state.pose))
     time_s = (tick + 1) * DYNAMIC_CONTROL_PERIOD_S
-    for actor in world.actor_states_at(time_s):
+    actors = () if time_s > world.duration_s else world.actor_states_at(time_s)
+    for actor in actors:
         clearance = oriented_footprint_circle_surface_distance(
             state.pose,
             circle_center=(actor.position.x, actor.position.y),
@@ -946,6 +1070,7 @@ __all__ = [
     "R5C_OBSERVATION_DIAGNOSTIC_VERSION",
     "R5CDiagnosticOutcome",
     "R5CObservationDiagnosticResult",
+    "run_r5c_crossing_completion_diagnostic",
     "run_r5c_crossing_diagnostic",
     "run_r5c_crossing_recovery_diagnostic",
     "run_r5c_restop_diagnostic",

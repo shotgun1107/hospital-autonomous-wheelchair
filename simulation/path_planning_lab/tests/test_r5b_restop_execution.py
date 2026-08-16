@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from hospital_path_lab.contracts import Pose2D
 from hospital_path_lab.dynamic_witness_events import ground_truth_hazard_intervals
 from hospital_path_lab.local_reference_contracts import (
     LocalManeuverKind,
@@ -13,6 +14,7 @@ from hospital_path_lab.r5b_restop_execution import (
     R5B_RESTOP_SECOND_HAZARD_DELAY_S,
     build_r5b_follow_reference,
     build_r5b_restop_evidence,
+    build_world_follow_reference,
     run_r5b_restop_case,
 )
 
@@ -62,6 +64,27 @@ def test_restop_reissues_distinct_original_path_reference_for_each_stop_epoch() 
         assert bundle.reference.validity.required_stop_epoch == stop_epoch
     assert first.reference.reference_session_id != second.reference.reference_session_id
     assert first.reference.reference_content_hash != second.reference.reference_content_hash
+
+
+def test_world_follow_reference_can_keep_a_prevalidated_terminal_pose() -> None:
+    evidence = build_r5b_restop_evidence()
+    world = evidence.controller_world
+    terminal = Pose2D(world.goal_pose.x - 0.02, world.goal_pose.y, world.goal_pose.yaw)
+    bundle = build_world_follow_reference(
+        world,
+        mission_id="r5c-test-mission",
+        current_pose=world.initial_state.pose,
+        stop_epoch=3,
+        valid_from_tick=100,
+        identity={"test": "prevalidated-terminal"},
+        generation_reason_codes=("test_prevalidated_terminal",),
+        goal_pose=terminal,
+    )
+
+    assert bundle.validation.passed
+    assert bundle.reference.knots[-1].pose == terminal
+    assert bundle.reference.stop_epoch == 3
+    assert bundle.reference.validity.valid_from_control_tick == 100
 
 
 def test_cpp_dwb_restarts_twice_and_completes_public_restop_case() -> None:

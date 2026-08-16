@@ -74,6 +74,12 @@ v6·legacy 대표 Ideal replay는 원본 miss `38/22`를 재현하고 파생 wor
 상세는 [`횡단 복구 명세`](22-r5c-crossing-recovery.md)와
 [`횡단 복구 결과`](r5c-crossing-recovery-result-2026-08-16.md)에 기록한다.
 
+통과 완료 증거 뒤에는 기존 횡단 경로를 다시 시작하지 않고, 실제 정지 후 새 stop epoch에
+묶인 `FOLLOW_ORIGINAL` 경로로 기존 terminal을 향하게 했다. 확장 Normal 진단에서 왼쪽은
+완료했고 오른쪽은 도착 허용값 약 `0.0006m` 밖에서 보수 정지했다. 상세는
+[`통과 후 원 경로 복귀 결과`](r5c-post-pass-return-result-2026-08-16.md)에 기록하며,
+오른쪽 잔여 이동 문제와 실제 카메라 검증은 미완료다.
+
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
 횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한

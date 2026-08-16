@@ -257,7 +257,39 @@ def build_r5b_follow_reference(
     valid_from_tick: int,
 ) -> R5BFollowReferenceBundle:
     world = evidence.controller_world
-    goal = world.goal_pose
+    identity = {
+        "version": R5B_RESTOP_EXECUTION_VERSION,
+        "evidence_hash": evidence.evidence_content_hash,
+        "stop_epoch": stop_epoch,
+        "valid_from_tick": valid_from_tick,
+        "start_pose": current_pose,
+        "goal_pose": world.goal_pose,
+    }
+    return build_world_follow_reference(
+        world,
+        mission_id=R5B_REFERENCE_MISSION_ID,
+        current_pose=current_pose,
+        stop_epoch=stop_epoch,
+        valid_from_tick=valid_from_tick,
+        identity=identity,
+        generation_reason_codes=("r5b_restop_follow_original",),
+    )
+
+
+def build_world_follow_reference(
+    world: WitnessWorldSnapshot,
+    *,
+    mission_id: str,
+    current_pose: Pose2D,
+    stop_epoch: int,
+    valid_from_tick: int,
+    identity: dict[str, object],
+    generation_reason_codes: tuple[str, ...],
+    goal_pose: Pose2D | None = None,
+) -> R5BFollowReferenceBundle:
+    """Build a new stop-bound spatial reference from the current pose to the goal."""
+
+    goal = world.goal_pose if goal_pose is None else goal_pose
     grid = world.grid.to_grid_map()
     forbidden = tuple(sorted(world.grid.forbidden_cells))
     snapshot = GridSnapshot(
@@ -268,7 +300,7 @@ def build_r5b_follow_reference(
     allowed = SpatialAllowedRegion()
     context = ReferenceBuildContext(
         schema_version=REFERENCE_BUILD_CONTEXT_SCHEMA_VERSION,
-        mission_id=R5B_REFERENCE_MISSION_ID,
+        mission_id=mission_id,
         stop_epoch=stop_epoch,
         map_id=world.map_id,
         map_revision=world.map_revision,
@@ -328,14 +360,6 @@ def build_r5b_follow_reference(
             source_primitive_indices=(),
         ),
     )
-    identity = {
-        "version": R5B_RESTOP_EXECUTION_VERSION,
-        "evidence_hash": evidence.evidence_content_hash,
-        "stop_epoch": stop_epoch,
-        "valid_from_tick": valid_from_tick,
-        "start_pose": current_pose,
-        "goal_pose": goal,
-    }
     reference = LocalManeuverReference(
         schema_version=LOCAL_REFERENCE_SCHEMA_VERSION,
         reference_contract_version=LOCAL_REFERENCE_CONTRACT_VERSION,
@@ -375,7 +399,7 @@ def build_r5b_follow_reference(
             valid_from_control_tick=valid_from_tick,
             valid_until_control_tick=None,
         ),
-        generation_reason_codes=("r5b_restop_follow_original",),
+        generation_reason_codes=generation_reason_codes,
         limitations=("ideal_path_only", "public_simulation_only", "no_perception_claim"),
     )
     validation = validate_local_maneuver_reference(context, reference)
@@ -757,6 +781,7 @@ __all__ = [
     "R5BRestopEvidence",
     "R5BRestopExecutionResult",
     "build_r5b_follow_reference",
+    "build_world_follow_reference",
     "build_r5b_restop_evidence",
     "run_r5b_restop_case",
 ]
