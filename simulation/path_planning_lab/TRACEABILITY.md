@@ -61,15 +61,22 @@ batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용
 
 > 2026-08-16 센서 경계: 아래 `DYN-OBS-*`는 ground truth에서 만든 합성 2차원
 > `ActorTrack` 계약이다. 팀에서 전달된 Arduino·초음파 방향의 원시 거리, 무응답, 배치
-> coverage와 거리→점유/track 변환은 아직 연결되지 않았다. 새 추적 항목 `DYN-US-*`는
-> [초음파 관측 전환 명세](../../docs/research/dynamic-actor-experiment/22-ultrasonic-observation-transition.md)가
-> 하드웨어 사양을 받은 뒤 구현·시험 근거를 가질 때 추가한다.
+> coverage와 거리→점유/track 변환은 아직 연결되지 않았다. `DYN-US-*`는 사용자가 지정한
+> HC-SR04 7개 임시 배치의 simulation-only 정지 하네스이며 실제 센서 증거가 아니다.
 
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
 |---|---|---|---|
 | `DYN-OBS-001` | 20 Hz ground truth에서 seed 기반 10 Hz Normal·Stress·Boundary 관측을 만들고, frame dropout·4-frame burst·fresh `EMPTY`·no-frame을 서로 구분한다. | [dynamic_observation.py](src/hospital_path_lab/dynamic_observation.py), `tests/test_dynamic_observation.py::test_twenty_hz_truth_is_sampled_at_exact_ten_hz_with_frozen_latency`, `::test_normal_and_stress_are_reproducible_and_share_latent_noise_draws`, `::test_dropout_removes_whole_frame_and_preserves_sequence_gaps`, `::test_forced_four_frame_burst_does_not_shift_following_frames`, `::test_fresh_empty_frame_and_no_frame_have_distinct_state_effects` | 연결됨, L1. 실제 센서나 실제 사람 관측이 아닌 합성 Gaussian·Bernoulli 열화다. |
 | `DYN-OBS-002` | source·episode·map·sequence·revision·hash·binding·profile σ·시간 순서를 transactional하게 검증하고 `age == 300ms`는 fresh, 초과는 stale로 둔다. prediction은 validator가 만든 fresh snapshot만 받는다. | [dynamic_observation.py](src/hospital_path_lab/dynamic_observation.py), [dynamic_prediction.py](src/hospital_path_lab/dynamic_prediction.py), [dynamic_safety.py](src/hospital_path_lab/dynamic_safety.py), `tests/test_dynamic_observation.py::test_each_source_identity_mismatch_returns_a_structured_reason`, `::test_sequence_revision_hash_duplicate_and_binding_faults_are_transactional`, `::test_ttl_exactly_300ms_is_fresh`, `::test_ttl_any_later_nanosecond_is_stale`, `tests/test_dynamic_safety.py::test_stale_and_invalid_sources_only_allow_limited_deceleration`, `::test_prediction_identity_mismatch_is_invalid_source` | 연결됨, L1. source invalid·stale에서 새 명령을 거부하고 제한 감속한다. 실제 센서 입력 증거는 아니다. |
 | `DYN-SAFE-001` | 관측 age, 50 ms 적용 지연, vector `0.50m/s` clamp, 2σ와 임의방향 가속 reachable bound로 controller 비종속 time-indexed 원형 tube를 만들고 online gate가 동일 tube를 사용한다. | [dynamic_prediction.py](src/hospital_path_lab/dynamic_prediction.py), [dynamic_safety.py](src/hospital_path_lab/dynamic_safety.py), [dynamic_evaluation.py](src/hospital_path_lab/dynamic_evaluation.py), `tests/test_dynamic_prediction.py::test_actor_tube_matches_independent_center_sigma_and_acceleration_oracle`, `tests/test_dynamic_safety.py::test_actor_tube_static_obstacle_and_forbidden_cell_are_all_rejected`, `tests/test_dynamic_evaluation.py::test_exact_actor_surface_clearance_threshold_is_a_hard_pass` | 연결됨, L1. online prediction tube와 독립 ground-truth 판정을 모두 시험하지만 실제 센서·사람 증거는 아니다. |
+
+## DYN-US — HC-SR04 7개 simulation-only 정지 하네스
+
+| ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
+|---|---|---|---|
+| `DYN-US-001` | 전방 3·후방 2·좌우 1씩의 HC-SR04 임시 배치를 가상 차체 외곽에 두고, 61ms 순차 측정의 센서별 시각과 결정론적 거리 frame을 보존한다. | [ultrasonic_observation.py](src/hospital_path_lab/ultrasonic_observation.py), `tests/test_ultrasonic_observation.py::test_provisional_hc_sr04_rig_has_seven_directional_mounts_and_scan_skew`, `::test_synthetic_cone_frame_is_deterministic_and_contains_no_obstacle_identity`, `::test_rotated_robot_rotates_sensor_detection_with_it` | 연결됨, L1 simulation. 0.366s scan skew를 포함한다. 실제 반사·간섭·온도·장착 성능 증거가 아니다. |
+| `DYN-US-002` | `VALID`, `NO_ECHO`, timeout과 장치 오류를 분리하고 source·sequence·배치 revision·센서 집합·시각·range·hash·caller 지정 TTL을 검증한다. | [ultrasonic_observation.py](src/hospital_path_lab/ultrasonic_observation.py), `tests/test_ultrasonic_observation.py::test_no_echo_timeout_and_device_error_remain_distinct_from_valid_range`, `::test_validator_rejects_no_frame_wrong_source_revision_sequence_and_hash`, `::test_ttl_boundary_is_fresh_and_value_above_boundary_is_stale`, `::test_future_delivery_and_sensor_set_tamper_are_invalid` | 연결됨, L1 simulation. TTL과 정지 거리는 제품값으로 동결하지 않고 시험자가 명시한다. |
+| `DYN-US-003` | 전진·후진·좌우 회전의 관련 센서가 임시 정지 거리 안을 관측하면 정지를 제안하고, no-frame·stale·invalid·무응답은 빈 공간이 아니라 판단 불충분 정지로 닫는다. | [ultrasonic_observation.py](src/hospital_path_lab/ultrasonic_observation.py), `tests/test_ultrasonic_observation.py::test_forward_rear_and_rotation_obstacles_stop_in_the_relevant_direction`, `::test_no_echo_and_stale_are_conservative_stop_not_clear`, `::test_all_relevant_finite_ranges_beyond_threshold_are_clear_only_for_that_intent` | 연결됨, L1 simulation. 모터 명령·재출발 권한·거리→ActorTrack·DWB 통합은 구현하지 않았다. |
 
 ### DYN-DIR-v7 — 방향 고정 합성 Actor 공개-only lane
 
