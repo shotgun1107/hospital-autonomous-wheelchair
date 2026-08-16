@@ -680,8 +680,10 @@ R5 v2 signed static reference tracking은 완료됐고, R5-B 공개 Ideal에서 
 41-pose 적분·7개 critic·선택·Manhattan 거리 지도도 C++20 수치 코어로 옮겨 Python 의미를
 보존했다. R5-C 제한 진단에서는 Normal 입력 상실 뒤 정지와 새 stop epoch session 재출발을
 확인했으나 35초 안에 임무를 완료하지 못했고, Stress는 11개 READY를 연속 확보하지 못해
-출발하지 않았다. R2-B 내부 Actor 출현 hard failure도 남아 있다. 따라서 perception-integrated
-R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
+출발하지 않았다. R2-B 원본 내부 Actor 출현 hard failure는 음성 회귀로 보존한다. 별도 추상
+감시 접근 world에서는 지연 Actor를 원래 진입 전부터 같은 track으로 관측해 대표 Ideal miss를
+`38/22 → 0/0`으로 제거했다. 그러나 실제 카메라·FOV·가림·검출 증거가 아니므로
+perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

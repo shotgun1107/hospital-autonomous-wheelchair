@@ -1144,6 +1144,61 @@ def project_public_witness_world(
     )
 
 
+def derive_witness_world_with_actors(
+    world: WitnessWorldSnapshot,
+    actors: tuple[WitnessActorTrajectory, ...],
+) -> WitnessWorldSnapshot:
+    """Derive a new immutable world with the same map and new Actor trajectories.
+
+    This helper is intentionally label-free.  It recomputes the complete source
+    projection identity instead of allowing callers to reuse stale hashes.
+    """
+
+    if not isinstance(world, WitnessWorldSnapshot):
+        raise TypeError("world must be a WitnessWorldSnapshot")
+    actor_tuple = tuple(actors)
+    if any(not isinstance(actor, WitnessActorTrajectory) for actor in actor_tuple):
+        raise TypeError("actors must contain only WitnessActorTrajectory values")
+    world_payload = _source_projection_payload(
+        source_schema_version=world.source_schema_version,
+        source_generator_version=world.source_generator_version,
+        seed=world.seed,
+        map_id=world.map_id,
+        map_revision=world.map_revision,
+        grid=world.grid,
+        reference_path=world.reference_path,
+        initial_state=world.initial_state,
+        goal_pose=world.goal_pose,
+        duration_s=world.duration_s,
+        actors=actor_tuple,
+        maneuver_constraints=world.maneuver_constraints,
+        kinematic_contract=world.kinematic_contract,
+        search_config_hash=world.search_config_hash,
+    )
+    source_projection_hash = canonical_content_hash(world_payload)
+    return WitnessWorldSnapshot(
+        schema_version=world.schema_version,
+        source_schema_version=world.source_schema_version,
+        source_generator_version=world.source_generator_version,
+        source_projection_hash=source_projection_hash,
+        world_id=f"witness-world-{source_projection_hash[:24]}",
+        seed=world.seed,
+        simulation_only=world.simulation_only,
+        map_id=world.map_id,
+        map_revision=world.map_revision,
+        grid_content_hash=world.grid_content_hash,
+        grid=world.grid,
+        reference_path=world.reference_path,
+        initial_state=world.initial_state,
+        goal_pose=world.goal_pose,
+        duration_s=world.duration_s,
+        actors=actor_tuple,
+        maneuver_constraints=world.maneuver_constraints,
+        kinematic_contract=world.kinematic_contract,
+        search_config_hash=world.search_config_hash,
+    )
+
+
 def build_automated_witness(
     world: WitnessWorldSnapshot,
     *,
@@ -1317,5 +1372,6 @@ __all__ = [
     "WitnessWorldSnapshot",
     "build_automated_witness",
     "build_pass_candidate_parameter_hash",
+    "derive_witness_world_with_actors",
     "project_public_witness_world",
 ]

@@ -58,6 +58,14 @@ fresh READY→새 stop epoch·reference·controller session 재출발을 반복 
 [`R5-C 관측 복구 제한 결과`](r5c-observation-recovery-result-2026-08-16.md)에 기록한다.
 이번 제한 복구 변경을 포함한 전체 회귀는 `926 passed`, 실패·건너뜀 `0`이다.
 
+후속으로 원본 R2-B 실패 world를 보존한 채 별도 감시 접근 world를 만들었다. 지연 출현
+Actor는 원래 진입 상태와 이후 궤적을 유지하면서 `t=0`까지 역산된 접근 track으로 관측된다.
+v6·legacy 대표 Ideal replay는 원본 miss `38/22`를 재현하고 파생 world에서 `0/0`으로
+줄었다. 이는 추상 시뮬레이션 entry coverage 결과이며 실제 카메라·FOV·가림 증거가 아니다.
+상세는 [`감시 진입 명세`](21-r2b-monitored-entry-coverage.md)와
+[`감시 진입 결과`](r2b-monitored-entry-coverage-result-2026-08-16.md)에 기록한다.
+이 변경을 포함한 전체 회귀는 `935 passed`, 실패·건너뜀 `0`이다.
+
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
 횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한

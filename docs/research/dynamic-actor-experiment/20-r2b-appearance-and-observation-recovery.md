@@ -133,3 +133,16 @@ R2-B 출현 문제를 다시 시작
 → entry·visibility·coverage 계약을 먼저 승인
 → 새 corpus/hash/output에서 공개 감사
 ```
+
+## 7. 후속 진행
+
+사용자 지시에 따라 추상 감시 접근 구간을 별도 계약으로 구현했다. 원본 실패 world는 그대로
+두고, 지연 출현 Actor를 원래 진입 상태에서 `t=0`까지 역산한 새 관측 world와 hash를 사용한다.
+두 대표 Ideal replay에서 원본 miss `38/22`를 재현한 뒤 파생 miss `0/0`을 확인했다.
+
+상세 기준과 결과:
+
+- [R2-B 감시 진입 명세](21-r2b-monitored-entry-coverage.md)
+- [R2-B 감시 진입 결과](r2b-monitored-entry-coverage-result-2026-08-16.md)
+
+이는 실제 카메라·FOV·가림 증거가 아니므로 R2-B 전체나 formal R5-C/R6를 완료 처리하지 않는다.

@@ -42,6 +42,19 @@ DWA/DWB 문제가 아니며, 현재 카메라·가시영역 계약 없이 수치
 [제한 결과](../../docs/research/dynamic-actor-experiment/r5c-observation-recovery-result-2026-08-16.md)를
 따른다. R2-B 출현 문제, formal R5-C/R6, hidden과 제품 채택은 여전히 미완료다.
 
+### R2-B 추상 감시 진입 구간 — 2026-08-16
+
+원본 v6 `second-risk`와 legacy `dynamic-change`는 음성 회귀로 보존한다. 별도 파생 world는
+지연 출현 Actor의 원래 진입 상태에서 `t=0`까지 같은 속도로 접근 궤적을 역산해 20-frame
+방향 예측이 진입 전에 준비될 수 있게 한다. 대표 Ideal replay에서 원본 containment miss
+`38/22`를 재현했고 파생 world는 `0/0`, hard failure `0/0`이었다.
+
+이 결과는 로컬 주행 지도 밖까지 보는 추상 감시 입력을 전제한다. 실제 카메라·FOV·가림·검출,
+Normal·Stress 종단, formal R5-C/R6, hidden과 제품 자격은 포함하지 않는다. 상세는
+[감시 진입 명세](../../docs/research/dynamic-actor-experiment/21-r2b-monitored-entry-coverage.md)와
+[결과](../../docs/research/dynamic-actor-experiment/r2b-monitored-entry-coverage-result-2026-08-16.md)를
+따른다.
+
 ### R5-B v2 C++ DWB 공개 Ideal 10개 기능 PASS — 2026-08-16
 
 첫 C++ DWB 공개 실행은 `4/10`만 도착했다. 열 사례 모두 추월했지만, 더 빠른 Actor가 있는
