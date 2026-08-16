@@ -12,7 +12,7 @@
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
 - 현재 단계: `R1 prediction 계약 감사 완료`,
   `R2-A 공개 ground-truth witness 감사와 좌·우 PASS 탐색 완료`,
-  `R2-B 원본 hard failure 2건 보존·추상 감시 진입 대표 miss 38/22→0/0·HC-SR04 7개 순차 감사 FAIL·실제 초음파 통합 보류`,
+  `R2-B 원본 hard failure 2건 보존·추상 감시 진입 대표 miss 38/22→0/0·실제 초음파 통합 보류`,
   `R3 public 21/21·receipt·729 전체 회귀 완료`,
   `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
   `R5-A v3 signed static public 21/21·receipt 완료`,
@@ -23,8 +23,7 @@
 현재 연구의 합성 `ActorTrack`은 실제 초음파 거리 입력이 아니다. 실제 관측 lane은
 [ADR 0015](../../decisions/0015-ultrasonic-observation-boundary.md)와
 [초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)에 따라 거리·무응답 검증,
-점유·접근 증거, 선택적 track 생성 순으로 분리한다. HC-SR04 7개는 simulation-only
-임시안이며 실제 장착·schedule·거리→track·제품 방식은 미확정이다.
+점유·접근 증거, 선택적 track 생성 순으로 분리한다. 센서 사양·수치·제품 방식은 미확정이다.
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -588,7 +587,7 @@ hidden까지 연구 조건 충족
 |---|---|---|---|---|
 | `R1` | prediction 계약이 generator와 맞는가? | 공개 motion·관측·Capsule audit | 기존 narrow claim 완료, total Actor coverage는 R2-B 후속 | hard failure 0 |
 | `R2-A` | exact ground truth에서 안전한 time-indexed witness가 있는가? | 자동 witness·음성 판정·taxonomy | 공개 19개 audit와 좌·우 PASS 탐색 완료, legacy 횡단·재정지 표적 보완 완료 | 검증된 source만 R3·R4 전달 |
-| `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | 원본 hard failure 2건 보존. HC-SR04 7개 순차 simulation 감사에서 full frame `0`개가 300ms TTL 통과, v6 지연 Actor 1개는 진입 전 원시 감지 `0회`; 거리-only track 계약 미지원으로 보류 | 센서별 전송·schedule·배치와 거리→track 또는 정지-only 계약 결정 후 재감사 |
+| `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
 | `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` clean public `21/21`, ready 8, relation failure 0, receipt 완료 | R5 v2 signed controller 전달 |
 | `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-A signed static public 완료. R5-B v2 공개 첫 LEFT에서 RPP·DWB 모두 추월·재합류·도착 PASS. 좌·우 10-case와 Normal·Stress는 미완료 | R5-B 나머지 공개 case와 R5-C는 별도 gate 필요 |
@@ -665,8 +664,8 @@ second-risk와 legacy dynamic-change에서 episode 중간에 새 Actor가 생성
 [`ADR 0011`](../../decisions/0011-separate-path-and-perception-research-gates.md)에 따라 경로
 연구와 카메라·관측 연구를 분리한다. R2-A에서 확인한 WAIT/HOLD·same-direction PASS와
 legacy 횡단·재정지 표적 보완 결과를 입력으로 R3 명세를 시작할 수 있다. R2-B의 Actor
-entry·visibility·fresh EMPTY와 역방향 coverage는 hard failure 2건을 보존한 채 실제 센서
-전송·배치·거리→track 계약 후속으로 둔다.
+entry·visibility·fresh EMPTY와 역방향 coverage는 hard failure 2건을 보존한 채 카메라 통합
+후속으로 둔다.
 
 R3의 public `21/21` 공간 자격 뒤 R4 v1은 검증된 LEFT/RIGHT source 8개를 immutable full
 reference와 same-session sliding window로 변환했다. clean commit `f43fbbf`에서 R4 public
@@ -690,10 +689,7 @@ R5 v2 signed static reference tracking은 완료됐고, R5-B 공개 Ideal에서 
 확인했으나 35초 안에 임무를 완료하지 못했고, Stress는 11개 READY를 연속 확보하지 못해
 출발하지 않았다. R2-B 원본 내부 Actor 출현 hard failure는 음성 회귀로 보존한다. 별도 추상
 감시 접근 world에서는 지연 Actor를 원래 진입 전부터 같은 track으로 관측해 대표 Ideal miss를
-`38/22 → 0/0`으로 제거했다. 후속 HC-SR04 7개 순차 simulation 감사에서는 7센서 full frame
-`0개`가 기존 300ms TTL을 통과했고 v6 두 번째 지연 Actor는 진입 전 원시 echo도 `0회`였다.
-거리-only 입력은 기존 10Hz 20-frame ActorTrack도 제공하지 못한다. 따라서 실제 초음파
-거리·배치 coverage·반사·무응답 증거가 아니므로
+`38/22 → 0/0`으로 제거했다. 그러나 실제 초음파 거리·배치 coverage·반사·무응답 증거가 아니므로
 perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일

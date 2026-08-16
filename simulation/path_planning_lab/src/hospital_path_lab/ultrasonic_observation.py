@@ -165,24 +165,6 @@ class UltrasonicObstacle:
 
 
 @dataclass(frozen=True, slots=True)
-class UltrasonicScanSampleState:
-    """한 센서를 trigger한 시점의 simulation-only world 상태."""
-
-    sensor_id: str
-    measured_at_s: float
-    robot_pose: Pose2D
-    obstacles: tuple[UltrasonicObstacle, ...]
-
-    def __post_init__(self) -> None:
-        if not self.sensor_id or not isfinite(self.measured_at_s) or self.measured_at_s < 0.0:
-            raise ValueError("scan sample identity and time are invalid")
-        values = (self.robot_pose.x, self.robot_pose.y, self.robot_pose.yaw)
-        if not all(isfinite(value) for value in values):
-            raise ValueError("scan sample robot pose must be finite")
-        object.__setattr__(self, "obstacles", tuple(self.obstacles))
-
-
-@dataclass(frozen=True, slots=True)
 class UltrasonicSample:
     sensor_id: str
     measured_at_s: float
@@ -211,10 +193,7 @@ def _normalize_angle(angle: float) -> float:
     return (angle + pi) % (2.0 * pi) - pi
 
 
-def ultrasonic_sensor_world_pose(
-    robot_pose: Pose2D,
-    mount: UltrasonicSensorMount,
-) -> Pose2D:
+def _mount_world_pose(robot_pose: Pose2D, mount: UltrasonicSensorMount) -> Pose2D:
     cos_yaw = cos(robot_pose.yaw)
     sin_yaw = sin(robot_pose.yaw)
     return Pose2D(
@@ -224,7 +203,7 @@ def ultrasonic_sensor_world_pose(
     )
 
 
-def simulated_ultrasonic_cone_range(
+def _simulated_cone_range(
     sensor_pose: Pose2D,
     obstacle: UltrasonicObstacle,
     rig: UltrasonicRigSpec,
@@ -258,58 +237,16 @@ def generate_ultrasonic_frame(
 ) -> UltrasonicFrame:
     """같은 입력에서 같은 7개 거리 frame을 만든다."""
 
-    states = tuple(
-        UltrasonicScanSampleState(
-            sensor_id=mount.sensor_id,
-            measured_at_s=scan_started_at_s + index * rig.trigger_spacing_s,
-            robot_pose=robot_pose,
-            obstacles=obstacles,
-        )
-        for index, mount in enumerate(rig.mounts)
-    )
-    return generate_dynamic_ultrasonic_frame(
-        source_id=source_id,
-        sequence=sequence,
-        scan_started_at_s=scan_started_at_s,
-        scan_states=states,
-        rig=rig,
-        fault_status_by_sensor=fault_status_by_sensor,
-    )
-
-
-def generate_dynamic_ultrasonic_frame(
-    *,
-    source_id: str,
-    sequence: int,
-    scan_started_at_s: float,
-    scan_states: tuple[UltrasonicScanSampleState, ...],
-    rig: UltrasonicRigSpec = PROVISIONAL_HC_SR04_SEVEN_SENSOR_RIG,
-    fault_status_by_sensor: dict[str, UltrasonicSampleStatus] | None = None,
-) -> UltrasonicFrame:
-    """센서별 측정 시점의 움직이는 차체·장애물을 반영한 frame을 만든다."""
-
     if not source_id or sequence < 0 or not isfinite(scan_started_at_s) or scan_started_at_s < 0:
         raise ValueError("source, sequence and scan start are invalid")
-    expected_ids = tuple(mount.sensor_id for mount in rig.mounts)
-    if tuple(state.sensor_id for state in scan_states) != expected_ids:
-        raise ValueError("scan states must match the rig sensor order")
-    expected_times = tuple(
-        scan_started_at_s + index * rig.trigger_spacing_s
-        for index in range(len(rig.mounts))
-    )
-    if any(
-        abs(state.measured_at_s - expected_time) > _TIME_TOLERANCE_S
-        for state, expected_time in zip(scan_states, expected_times, strict=True)
-    ):
-        raise ValueError("scan state times must match the sequential trigger schedule")
     faults = fault_status_by_sensor or {}
     unknown_fault_ids = set(faults) - {mount.sensor_id for mount in rig.mounts}
     if unknown_fault_ids:
         raise ValueError("fault map contains an unknown sensor id")
 
     samples: list[UltrasonicSample] = []
-    for mount, state in zip(rig.mounts, scan_states, strict=True):
-        measured_at_s = state.measured_at_s
+    for index, mount in enumerate(rig.mounts):
+        measured_at_s = scan_started_at_s + index * rig.trigger_spacing_s
         forced_status = faults.get(mount.sensor_id)
         if forced_status is UltrasonicSampleStatus.VALID:
             raise ValueError("fault injection cannot force a value without a range")
@@ -317,14 +254,11 @@ def generate_dynamic_ultrasonic_frame(
             samples.append(UltrasonicSample(mount.sensor_id, measured_at_s, forced_status, None))
             continue
 
-        sensor_pose = ultrasonic_sensor_world_pose(state.robot_pose, mount)
+        sensor_pose = _mount_world_pose(robot_pose, mount)
         ranges = tuple(
             detected
-            for obstacle in state.obstacles
-            if (
-                detected := simulated_ultrasonic_cone_range(sensor_pose, obstacle, rig)
-            )
-            is not None
+            for obstacle in obstacles
+            if (detected := _simulated_cone_range(sensor_pose, obstacle, rig)) is not None
         )
         if ranges:
             samples.append(

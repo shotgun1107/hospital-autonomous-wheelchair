@@ -77,7 +77,6 @@ batch의 hidden 2를 동결 뒤 선택한다. `--regression-input-dir`을 사용
 | `DYN-US-001` | 전방 3·후방 2·좌우 1씩의 HC-SR04 임시 배치를 가상 차체 외곽에 두고, 61ms 순차 측정의 센서별 시각과 결정론적 거리 frame을 보존한다. | [ultrasonic_observation.py](src/hospital_path_lab/ultrasonic_observation.py), `tests/test_ultrasonic_observation.py::test_provisional_hc_sr04_rig_has_seven_directional_mounts_and_scan_skew`, `::test_synthetic_cone_frame_is_deterministic_and_contains_no_obstacle_identity`, `::test_rotated_robot_rotates_sensor_detection_with_it` | 연결됨, L1 simulation. 0.366s scan skew를 포함한다. 실제 반사·간섭·온도·장착 성능 증거가 아니다. |
 | `DYN-US-002` | `VALID`, `NO_ECHO`, timeout과 장치 오류를 분리하고 source·sequence·배치 revision·센서 집합·시각·range·hash·caller 지정 TTL을 검증한다. | [ultrasonic_observation.py](src/hospital_path_lab/ultrasonic_observation.py), `tests/test_ultrasonic_observation.py::test_no_echo_timeout_and_device_error_remain_distinct_from_valid_range`, `::test_validator_rejects_no_frame_wrong_source_revision_sequence_and_hash`, `::test_ttl_boundary_is_fresh_and_value_above_boundary_is_stale`, `::test_future_delivery_and_sensor_set_tamper_are_invalid` | 연결됨, L1 simulation. TTL과 정지 거리는 제품값으로 동결하지 않고 시험자가 명시한다. |
 | `DYN-US-003` | 전진·후진·좌우 회전의 관련 센서가 임시 정지 거리 안을 관측하면 정지를 제안하고, no-frame·stale·invalid·무응답은 빈 공간이 아니라 판단 불충분 정지로 닫는다. | [ultrasonic_observation.py](src/hospital_path_lab/ultrasonic_observation.py), `tests/test_ultrasonic_observation.py::test_forward_rear_and_rotation_obstacles_stop_in_the_relevant_direction`, `::test_no_echo_and_stale_are_conservative_stop_not_clear`, `::test_all_relevant_finite_ranges_beyond_threshold_are_clear_only_for_that_intent` | 연결됨, L1 simulation. 모터 명령·재출발 권한·거리→ActorTrack·DWB 통합은 구현하지 않았다. |
-| `DYN-US-004` | R2-B 원본·감시 진입 파생 world에서 센서별 trigger 시각의 witness pose·Actor 위치로 원시 echo와 full-frame freshness를 감사하고, 감지 선행시간·사각지대·기존 10Hz 이력 가능성을 분리한다. | [r2b_ultrasonic_audit.py](src/hospital_path_lab/r2b_ultrasonic_audit.py), `tests/test_r2b_ultrasonic_audit.py`, [결과](../../docs/research/dynamic-actor-experiment/r2b-hc-sr04-seven-sensor-audit-result-2026-08-16.md) | 연결됨, L1 simulation, R2-B 보류. v6 Actor 하나는 진입 전 raw echo `0회`, 7센서 full frame은 기존 300ms TTL 통과 `0개`, 같은 센서 20회 span `8.113s`. 센서별 즉시 전송·실제 echo·거리→track은 미구현이다. |
 
 ### DYN-DIR-v7 — 방향 고정 합성 Actor 공개-only lane
 
@@ -91,9 +90,8 @@ structured search, 대표 profile replay와 공개 13+6 영구 audit/reporting r
 연결됐다. 최신 전체 실행은 완료됐지만 Ideal coverage hard failure 2건 때문에 결합 R2 자격은
 통과하지 못했다. 후속 [`ADR 0011`](../../docs/decisions/0011-separate-path-and-perception-research-gates.md)에
 따라 이를 R2-B failure로 보존하고 R2-A 공간 미해결 사례의 R3 진입은 분리했다.
-2026-08-16 감시 진입 파생 world는 대표 miss를 `38/22 → 0/0`으로 줄였다. 후속 HC-SR04
-7개 순차 simulation 감사에서는 full frame TTL 통과 `0개`, v6 Actor 하나의 진입 전 raw echo
-`0회`라 R2-B 자격은 계속 보류한다. 실제 센서 실측도 아직 없다.
+2026-08-16 감시 진입 파생 world는 대표 miss를 `38/22 → 0/0`으로 줄였지만, 실제 초음파
+거리·배치 coverage가 아니므로 센서 결합 R2-B 자격은 계속 보류한다.
 
 | ID | 연구 요구사항 | 구현·시험 근거 | 상태·증거 한계 |
 |---|---|---|---|

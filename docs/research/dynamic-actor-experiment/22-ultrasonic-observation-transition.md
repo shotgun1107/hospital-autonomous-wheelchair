@@ -111,16 +111,6 @@ Arduino/초음파 거리 표본
 구현·시험은 [ultrasonic_observation.py](../../../simulation/path_planning_lab/src/hospital_path_lab/ultrasonic_observation.py)와
 `tests/test_ultrasonic_observation.py`에 있다.
 
-### R2-B 순차 scan 감사 결과
-
-움직이는 witness 차체와 Actor를 센서별 측정 시각에 재생했다. 7센서 full frame은 `0.366s`,
-같은 센서 반복은 `0.427s`라 기존 R2-B의 `300ms` TTL과 `10Hz × 20개` 이력에 맞지 않았다.
-v6 감시 진입 Actor 중 하나는 진입 전 원시 감지도 없었다. 따라서 R2-B는 계속 보류다.
-
-상세 수치는
-[R2-B HC-SR04 7개 감사 결과](r2b-hc-sr04-seven-sensor-audit-result-2026-08-16.md)를
-따른다. 센서별 즉시 전송이나 다른 schedule을 채택하면 새 계약·hash로 다시 감사한다.
-
 ## 9. 전체 전환 완료조건
 
 - 하드웨어 사양과 장착 배치가 문서에 입력됨

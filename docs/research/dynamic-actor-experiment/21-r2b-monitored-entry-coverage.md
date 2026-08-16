@@ -9,11 +9,6 @@
 > `감시 접근 구간`은 실제 초음파 범위나 빔을 뜻하지 않는다. 실제 거리 관측 계약은
 > [초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)로 분리한다.
 
-> 후속 결과 — 2026-08-16: HC-SR04 7개 임시 순차 배치를 실제 witness pose에 적용했다.
-> v6 지연 Actor 하나는 진입 전 원시 echo가 없었고, 7센서 full frame은 `0.366s`가 걸려
-> 기존 `0.300s` TTL을 전부 초과했다. 상세는
-> [7센서 감사 결과](r2b-hc-sr04-seven-sensor-audit-result-2026-08-16.md)에 둔다.
-
 ## 1. 목적
 
 기존 v6 `second-risk`와 legacy `dynamic-change` 장면은 사람이 지도 내부에 순간 생성된 뒤
