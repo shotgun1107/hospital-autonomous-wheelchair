@@ -322,9 +322,15 @@ Actor 좌·우도 C++ DWB로 이탈→통과→재합류→도착했다. 두 방
 세 경우 모두 기존 `0.08m` 안전거리와 217개 후보·41 pose·2초 rollout·terminal stopping·
 shared gate를 유지했다. 상세는
 [`R5-B 횡단·다중 위험 결과`](../../docs/research/dynamic-actor-experiment/r5b-crossing-and-restop-controller-result-2026-08-16.md)를
-따른다. 이는 Ideal 경로 기능 결과이며 Normal·Stress, R2-B 카메라 출현 관측, 50ms, receipt,
-hidden과 제품 채택 증거가 아니다. 새 시험을 포함한 최신 전체 회귀는 `916 passed`,
-실패·건너뜀 `0`이다.
+따른다. 이는 Ideal 경로 기능 결과이며 R2-B 카메라 출현 관측, 50ms, receipt, hidden과 제품
+채택 증거가 아니다. 당시 전체 회귀는 `916 passed`, 실패·건너뜀 `0`이다.
+
+같은 공개 장면의 Normal·Stress 제한 진단에서는 Normal 세 장면이 frame 누락 뒤 모두 실제
+정지했고, Stress 두 장면은 방향 예측 `READY`가 없어 출발하지 않았다. hard failure와 최소
+여유 위반은 `0`이지만 임무 완료도 `0`이다. 입력 상실 뒤 자동 재개는 구현하지 않았으며,
+R2-B hard failure와 formal R5-C 차단은 유지한다. 상세는
+[`R5-C 제한 진단 결과`](../../docs/research/dynamic-actor-experiment/r5c-public-observation-diagnostic-result-2026-08-16.md)를
+따른다. 새 진단을 포함한 전체 회귀는 `922 passed`, 실패·건너뜀 `0`이다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를

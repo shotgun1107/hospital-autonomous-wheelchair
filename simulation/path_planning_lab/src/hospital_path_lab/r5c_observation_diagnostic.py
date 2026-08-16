@@ -1,0 +1,657 @@
+"""Limited public Normal/Stress diagnostic for the completed R5-B scenes.
+
+This module deliberately does not close R2-B or issue an R5-C qualification
+receipt.  It exercises only public scenes whose Actors exist from t=0 and
+stops the run after the first loss of a usable directional prediction.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from math import isfinite
+
+from hospital_path_lab.collision import CollisionChecker
+from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, Twist2D
+from hospital_path_lab.dynamic_contracts import (
+    DYNAMIC_CONTROL_PERIOD_S,
+    DynamicGroundTruthFrame,
+    DynamicMotionState,
+)
+from hospital_path_lab.dynamic_directional_prediction import (
+    DirectionalActorPredictor,
+    DirectionalPredictionResult,
+    DirectionalPredictionStatus,
+)
+from hospital_path_lab.dynamic_observation import (
+    NORMAL_OBSERVATION_PROFILE,
+    STRESS_OBSERVATION_PROFILE,
+    DynamicObservationProfile,
+    DynamicObservationSnapshot,
+    DynamicObservationSourceIdentity,
+    DynamicObservationValidator,
+    generate_dynamic_observation_slots,
+)
+from hospital_path_lab.dynamic_prediction import ActorPredictionSet, build_actor_prediction_set
+from hospital_path_lab.dynamic_safety import (
+    DYNAMIC_SAFE_OBSERVATION_FRAMES,
+    DynamicSafetyGate,
+    build_resume_authorization,
+    oriented_footprint_circle_surface_distance,
+)
+from hospital_path_lab.dynamic_witness_contracts import WitnessWorldSnapshot
+from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
+    PersistentSourceDerivedDwbController,
+)
+from hospital_path_lab.map_factory import canonical_content_hash
+from hospital_path_lab.persistent_controller_contracts import PersistentControllerStatus
+from hospital_path_lab.persistent_controller_pipeline import (
+    PersistentControllerPipeline,
+    PersistentPipelineStep,
+    integrate_persistent_chassis_pose,
+)
+from hospital_path_lab.r5b_restop_execution import (
+    R5B_REFERENCE_MISSION_ID,
+    R5B_RESTOP_FIRST_RELEASE_TICK,
+    _hold_step,
+    build_r5b_follow_reference,
+    build_r5b_restop_evidence,
+)
+from hospital_path_lab.r5b_temporal_authorization import R5BTemporalAuthorizationIssuer
+from hospital_path_lab.r5b_temporal_execution import (
+    R5B_AUTHORIZATION_REVISION,
+    _grid_snapshot_for_observation,
+    _pre_release_hold_step,
+)
+from hospital_path_lab.r5b_temporal_reference import build_r5b_crossing_reference_bundles
+
+R5C_OBSERVATION_DIAGNOSTIC_VERSION = "r5c-public-observation-diagnostic-v1"
+_TOLERANCE = 1e-12
+
+
+class R5CDiagnosticOutcome(StrEnum):
+    COMPLETED = "completed"
+    CONSERVATIVE_HOLD = "conservative_hold"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class R5CObservationDiagnosticResult:
+    case_id: str
+    profile_name: str
+    planned_release_tick: int
+    actual_release_tick: int | None
+    initial_stop_confirmed_tick: int | None
+    first_motion_tick: int | None
+    first_prediction_loss_tick: int | None
+    protective_stop_started_tick: int | None
+    stop_confirmed_tick: int | None
+    completion_tick: int | None
+    outcome: R5CDiagnosticOutcome
+    final_motion_state: DynamicMotionState
+    final_stop_epoch: int
+    controller_call_count: int
+    controller_session_count: int
+    observation_status_counts: tuple[tuple[str, int], ...]
+    no_frame_tick_count: int
+    minimum_actor_clearance_m: float | None
+    minimum_static_clearance_m: float
+    gate_override_count: int
+    final_pose: Pose2D
+    hard_failures: tuple[str, ...]
+    trace_content_hash: str
+
+    @property
+    def passed_safety_boundary(self) -> bool:
+        return not self.hard_failures and self.outcome is not R5CDiagnosticOutcome.FAILED
+
+
+class _ProfileObservationStream:
+    def __init__(
+        self,
+        world: WitnessWorldSnapshot,
+        *,
+        profile: DynamicObservationProfile,
+        tick_limit: int,
+        stream_id: str,
+        mission_revision: int,
+    ) -> None:
+        self._source = DynamicObservationSourceIdentity(
+            stream_id=stream_id,
+            episode_id=world.world_id,
+            episode_seed=world.seed,
+            map_id=world.map_id,
+            map_revision=world.map_revision,
+        )
+        frames = tuple(
+            DynamicGroundTruthFrame(
+                episode_id=world.world_id,
+                seed=world.seed,
+                tick_id=tick,
+                simulation_time_s=tick * DYNAMIC_CONTROL_PERIOD_S,
+                robot_state=world.initial_state,
+                actors=world.actor_states_at(tick * DYNAMIC_CONTROL_PERIOD_S),
+                map_revision=world.map_revision,
+                mission_revision=mission_revision,
+            )
+            for tick in range(tick_limit + 1)
+        )
+        self._slots = generate_dynamic_observation_slots(
+            frames,
+            source=self._source,
+            profile=profile,
+        )
+        self._validator = DynamicObservationValidator(self._source, profile)
+        self._directional = DirectionalActorPredictor()
+        self._next_slot = 0
+
+    def tick(
+        self,
+        tick_id: int,
+    ) -> tuple[
+        DynamicObservationSnapshot,
+        ActorPredictionSet | None,
+        DirectionalPredictionResult,
+    ]:
+        time_s = tick_id * DYNAMIC_CONTROL_PERIOD_S
+        while (
+            self._next_slot < len(self._slots)
+            and self._slots[self._next_slot].scheduled_delivery_at_s <= time_s + _TOLERANCE
+        ):
+            slot = self._slots[self._next_slot]
+            if slot.frame is None:
+                self._validator.record_no_frame(
+                    sequence=slot.sequence,
+                    delivery_time_s=slot.scheduled_delivery_at_s,
+                )
+            else:
+                accepted = self._validator.accept(
+                    slot.frame,
+                    received_at_s=slot.scheduled_delivery_at_s,
+                )
+                if not accepted.accepted:
+                    raise RuntimeError("generated R5-C public frame failed validation")
+            self._next_slot += 1
+        snapshot = self._validator.snapshot(control_time_s=time_s)
+        circular = build_actor_prediction_set(snapshot) if snapshot.usable else None
+        return snapshot, circular, self._directional.update(snapshot)
+
+
+@dataclass(slots=True)
+class _Runtime:
+    pipeline: PersistentControllerPipeline
+    issuer: R5BTemporalAuthorizationIssuer | None
+    resume_authorization: object | None
+
+
+def run_r5c_crossing_diagnostic(
+    *,
+    side_index: int,
+    profile: DynamicObservationProfile,
+    tick_limit: int = 780,
+) -> R5CObservationDiagnosticResult:
+    """Run one public crossing side until completion or the first safe hold."""
+
+    if side_index not in (0, 1):
+        raise ValueError("R5-C crossing side_index must be 0 or 1")
+    bundle = build_r5b_crossing_reference_bundles()[side_index]
+    world = bundle.source.world
+    gate = DynamicSafetyGate(
+        profile=bundle.build_context.vehicle_profile,
+        initial_stop_epoch=0,
+    )
+
+    def hold(
+        state: RobotState,
+        tick: int,
+        snapshot: DynamicObservationSnapshot,
+        circular: ActorPredictionSet | None,
+    ):
+        return _pre_release_hold_step(
+            bundle,
+            gate=gate,
+            robot_state=state,
+            tick_id=tick,
+            snapshot=snapshot,
+            prediction_set=circular,
+        )
+
+    def launch(state: RobotState, tick: int) -> _Runtime:
+        controller = PersistentSourceDerivedDwbController(
+            use_cpp_safety_core=True,
+            use_cpp_full_core=True,
+        )
+        pipeline = PersistentControllerPipeline(
+            controller=controller,
+            build_context=bundle.build_context,
+            full_reference=bundle.reference,
+            validation=bundle.validation,
+            initial_robot_state=state,
+            gate=gate,
+            authorization_revision=R5B_AUTHORIZATION_REVISION,
+            initial_tick=tick,
+        )
+        resume = build_resume_authorization(
+            mission_id=bundle.reference.mission_id,
+            stop_epoch=gate.stop_epoch,
+            issued_or_revalidated_at_s=tick * DYNAMIC_CONTROL_PERIOD_S,
+            authorization_revision=R5B_AUTHORIZATION_REVISION,
+        )
+        return _Runtime(pipeline, R5BTemporalAuthorizationIssuer(), resume)
+
+    def controller_step(
+        runtime: _Runtime,
+        tick: int,
+        snapshot: DynamicObservationSnapshot,
+        directional: DirectionalPredictionResult,
+    ) -> PersistentPipelineStep:
+        assert runtime.issuer is not None and directional.prediction_set is not None
+        temporal = runtime.issuer.issue(
+            reference=bundle.reference,
+            temporal_evidence=bundle.temporal_evidence,
+            temporal_geometry=bundle.temporal_geometry,
+            robot_state=runtime.pipeline.robot_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=snapshot,
+            prediction_result=directional,
+            controller_tick=tick,
+            simulation_time_s=tick * DYNAMIC_CONTROL_PERIOD_S,
+            gate_motion_state=gate.motion_state,
+            gate_stop_epoch=gate.stop_epoch,
+            resume_authorization_revision=(
+                R5B_AUTHORIZATION_REVISION
+                if runtime.resume_authorization is not None
+                else None
+            ),
+            actual_stop_confirmed=runtime.resume_authorization is not None,
+            local_safety_recheck_passed=True,
+        )
+        record = runtime.pipeline.step(
+            observation_snapshot=snapshot,
+            prediction_set=directional.prediction_set,
+            resume_authorization=runtime.resume_authorization,
+            temporal_execution_authorization=temporal,
+            grid_snapshot=_grid_snapshot_for_observation(bundle, snapshot),
+        )
+        runtime.resume_authorization = None
+        return record
+
+    return _run_profile_diagnostic(
+        case_id=f"crossing-{bundle.source.side.value}",
+        world=world,
+        profile=profile,
+        tick_limit=tick_limit,
+        planned_release_tick=bundle.reference.validity.valid_from_control_tick,
+        stream_id="r5c-crossing-public",
+        mission_revision=bundle.reference.mission_revision,
+        gate=gate,
+        checker=CollisionChecker(
+            bundle.build_context.static_grid_snapshot.grid,
+            bundle.build_context.vehicle_profile,
+            forbidden_cells=bundle.build_context.static_grid_snapshot.forbidden_cells,
+        ),
+        hold=hold,
+        launch=launch,
+        controller_step=controller_step,
+    )
+
+
+def run_r5c_restop_diagnostic(
+    *,
+    profile: DynamicObservationProfile,
+    tick_limit: int = 700,
+) -> R5CObservationDiagnosticResult:
+    """Run the public two-risk scene until completion or the first safe hold."""
+
+    evidence = build_r5b_restop_evidence()
+    world = evidence.controller_world
+    gate = DynamicSafetyGate(
+        profile=world.kinematic_contract.vehicle_profile,
+        initial_stop_epoch=0,
+    )
+
+    def hold(
+        state: RobotState,
+        tick: int,
+        snapshot: DynamicObservationSnapshot,
+        circular: ActorPredictionSet | None,
+    ):
+        return _hold_step(
+            evidence,
+            gate=gate,
+            robot_state=state,
+            tick=tick,
+            snapshot=snapshot,
+            prediction_set=circular,
+        )
+
+    def launch(state: RobotState, tick: int) -> _Runtime:
+        bundle = build_r5b_follow_reference(
+            evidence,
+            current_pose=state.pose,
+            stop_epoch=gate.stop_epoch,
+            valid_from_tick=tick,
+        )
+        controller = PersistentSourceDerivedDwbController(
+            use_cpp_safety_core=True,
+            use_cpp_full_core=True,
+        )
+        pipeline = PersistentControllerPipeline(
+            controller=controller,
+            build_context=bundle.build_context,
+            full_reference=bundle.reference,
+            validation=bundle.validation,
+            initial_robot_state=state,
+            gate=gate,
+            authorization_revision=gate.stop_epoch,
+            initial_tick=tick,
+        )
+        resume = build_resume_authorization(
+            mission_id=R5B_REFERENCE_MISSION_ID,
+            stop_epoch=gate.stop_epoch,
+            issued_or_revalidated_at_s=tick * DYNAMIC_CONTROL_PERIOD_S,
+            authorization_revision=gate.stop_epoch,
+        )
+        return _Runtime(pipeline, None, resume)
+
+    def controller_step(
+        runtime: _Runtime,
+        _tick: int,
+        snapshot: DynamicObservationSnapshot,
+        directional: DirectionalPredictionResult,
+    ) -> PersistentPipelineStep:
+        assert directional.prediction_set is not None
+        frozen_grid = runtime.pipeline.build_context.static_grid_snapshot
+        observation_revision = (
+            frozen_grid.metadata.observation_revision
+            if snapshot.frame is None
+            else snapshot.frame.observation_revision
+        )
+        current_grid = GridSnapshot(
+            metadata=replace(
+                frozen_grid.metadata,
+                observation_revision=observation_revision,
+            ),
+            grid=frozen_grid.grid,
+            forbidden_cells=frozen_grid.forbidden_cells,
+        )
+        record = runtime.pipeline.step(
+            observation_snapshot=snapshot,
+            prediction_set=directional.prediction_set,
+            resume_authorization=runtime.resume_authorization,
+            grid_snapshot=current_grid,
+        )
+        runtime.resume_authorization = None
+        return record
+
+    return _run_profile_diagnostic(
+        case_id="restop-two-risk",
+        world=world,
+        profile=profile,
+        tick_limit=tick_limit,
+        planned_release_tick=R5B_RESTOP_FIRST_RELEASE_TICK,
+        stream_id="r5c-restop-public",
+        mission_revision=0,
+        gate=gate,
+        checker=CollisionChecker(
+            world.grid.to_grid_map(),
+            world.kinematic_contract.vehicle_profile,
+            forbidden_cells=world.grid.forbidden_cells,
+        ),
+        hold=hold,
+        launch=launch,
+        controller_step=controller_step,
+    )
+
+
+def _run_profile_diagnostic(
+    *,
+    case_id: str,
+    world: WitnessWorldSnapshot,
+    profile: DynamicObservationProfile,
+    tick_limit: int,
+    planned_release_tick: int,
+    stream_id: str,
+    mission_revision: int,
+    gate: DynamicSafetyGate,
+    checker: CollisionChecker,
+    hold: Callable,
+    launch: Callable[[RobotState, int], _Runtime],
+    controller_step: Callable,
+) -> R5CObservationDiagnosticResult:
+    if profile not in (NORMAL_OBSERVATION_PROFILE, STRESS_OBSERVATION_PROFILE):
+        raise ValueError("R5-C diagnostic accepts only frozen Normal or Stress")
+    if tick_limit <= planned_release_tick:
+        raise ValueError("R5-C tick limit must extend beyond planned release")
+    stream = _ProfileObservationStream(
+        world,
+        profile=profile,
+        tick_limit=tick_limit,
+        stream_id=stream_id,
+        mission_revision=mission_revision,
+    )
+    state = RobotState(world.initial_state.pose, Twist2D())
+    runtime: _Runtime | None = None
+    status_counts: Counter[str] = Counter()
+    no_frame_tick_count = 0
+    actual_release_tick: int | None = None
+    initial_stop_confirmed_tick: int | None = None
+    first_motion_tick: int | None = None
+    first_prediction_loss_tick: int | None = None
+    protective_stop_started_tick: int | None = None
+    stop_confirmed_tick: int | None = None
+    completion_tick: int | None = None
+    minimum_actor: float | None = None
+    minimum_static = float("inf")
+    controller_calls = 0
+    hard_failures: list[str] = []
+    trace: list[object] = []
+    stopping_after_loss = False
+    confirmed_safe_frame_count = 0
+    last_confirmed_safe_sequence: int | None = None
+
+    for tick in range(tick_limit):
+        snapshot, circular, directional = stream.tick(tick)
+        status_counts[directional.status.value] += 1
+        no_frame_tick_count += int(snapshot.last_event_was_no_frame)
+
+        if runtime is None:
+            current_sequence = None if snapshot.frame is None else snapshot.frame.sequence
+            current_frame_adds_safe_evidence = int(
+                directional.status is DirectionalPredictionStatus.READY
+                and current_sequence is not None
+                and current_sequence != last_confirmed_safe_sequence
+            )
+            can_release = all(
+                (
+                    tick >= planned_release_tick,
+                    directional.status is DirectionalPredictionStatus.READY,
+                    gate.motion_state is DynamicMotionState.HOLDING,
+                    gate.stop_epoch == 1,
+                    confirmed_safe_frame_count + current_frame_adds_safe_evidence
+                    >= DYNAMIC_SAFE_OBSERVATION_FRAMES,
+                )
+            )
+            if can_release:
+                runtime = launch(state, tick)
+                actual_release_tick = tick
+            else:
+                decision = hold(state, tick, snapshot, circular)
+                confirmed_safe_frame_count = decision.consecutive_safe_frames
+                last_confirmed_safe_sequence = (
+                    current_sequence if confirmed_safe_frame_count > 0 else None
+                )
+                state = _advance_state(state, decision.command)
+                if (
+                    initial_stop_confirmed_tick is None
+                    and gate.motion_state is DynamicMotionState.HOLDING
+                ):
+                    initial_stop_confirmed_tick = tick
+                trace.append((tick, directional.status, gate.motion_state, gate.stop_epoch, state))
+                minimum_static, minimum_actor = _update_clearances(
+                    world,
+                    checker,
+                    state,
+                    tick,
+                    minimum_static,
+                    minimum_actor,
+                )
+                continue
+
+        if stopping_after_loss or directional.prediction_set is None:
+            if first_prediction_loss_tick is None:
+                first_prediction_loss_tick = tick
+                protective_stop_started_tick = tick
+                stopping_after_loss = True
+            # Directional prediction loss is the controller-facing failure.  Do
+            # not substitute the circular fallback and accidentally keep moving.
+            decision = hold(state, tick, snapshot, None)
+            state = _advance_state(state, decision.command)
+            trace.append((tick, directional.status, gate.motion_state, gate.stop_epoch, state))
+            minimum_static, minimum_actor = _update_clearances(
+                world,
+                checker,
+                state,
+                tick,
+                minimum_static,
+                minimum_actor,
+            )
+            if gate.motion_state is DynamicMotionState.HOLDING:
+                stop_confirmed_tick = tick
+                break
+            continue
+
+        try:
+            record = controller_step(runtime, tick, snapshot, directional)
+        except (RuntimeError, TypeError, ValueError) as error:
+            hard_failures.append(f"controller_exception:{tick}:{error}")
+            break
+        controller_calls += 1
+        state = record.robot_state_after
+        if first_motion_tick is None and record.safety_decision.command != Twist2D():
+            first_motion_tick = tick
+        result = record.controller_result
+        if result is not None and result.status in {
+            PersistentControllerStatus.INVALID_REFERENCE_INPUT,
+            PersistentControllerStatus.STALE_REFERENCE_INPUT,
+            PersistentControllerStatus.LATE_RESULT,
+            PersistentControllerStatus.SECTION_EXECUTION_FAILED,
+        }:
+            hard_failures.append(
+                f"controller:{tick}:{result.status.value}:{result.failure_reason}"
+            )
+            break
+        if gate.motion_state is DynamicMotionState.COMPLETED:
+            completion_tick = tick
+        elif gate.motion_state is not DynamicMotionState.MOVING:
+            protective_stop_started_tick = protective_stop_started_tick or tick
+            if gate.motion_state is DynamicMotionState.HOLDING:
+                stop_confirmed_tick = tick
+        trace.append(
+            (
+                tick,
+                directional.status,
+                gate.motion_state,
+                gate.stop_epoch,
+                state,
+                None if result is None else result.semantic_content_hash,
+                record.safety_decision,
+            )
+        )
+        minimum_static, minimum_actor = _update_clearances(
+            world,
+            checker,
+            state,
+            tick,
+            minimum_static,
+            minimum_actor,
+        )
+        if completion_tick is not None or stop_confirmed_tick is not None:
+            break
+
+    minimum_required = world.kinematic_contract.vehicle_profile.minimum_clearance_m
+    if minimum_static < minimum_required - _TOLERANCE:
+        hard_failures.append("actual_static_clearance_below_minimum")
+    if minimum_actor is not None and minimum_actor < minimum_required - _TOLERANCE:
+        hard_failures.append("actual_actor_clearance_below_minimum")
+    if runtime is not None and completion_tick is None and stop_confirmed_tick is None:
+        hard_failures.append("protective_stop_not_confirmed")
+    if hard_failures:
+        outcome = R5CDiagnosticOutcome.FAILED
+    elif completion_tick is not None:
+        outcome = R5CDiagnosticOutcome.COMPLETED
+    elif gate.motion_state is DynamicMotionState.HOLDING:
+        outcome = R5CDiagnosticOutcome.CONSERVATIVE_HOLD
+    else:
+        outcome = R5CDiagnosticOutcome.FAILED
+        hard_failures.append("final_state_not_conservative")
+    if not isfinite(minimum_static):
+        hard_failures.append("minimum_static_clearance_not_finite")
+        outcome = R5CDiagnosticOutcome.FAILED
+
+    return R5CObservationDiagnosticResult(
+        case_id=case_id,
+        profile_name=profile.name.value,
+        planned_release_tick=planned_release_tick,
+        actual_release_tick=actual_release_tick,
+        initial_stop_confirmed_tick=initial_stop_confirmed_tick,
+        first_motion_tick=first_motion_tick,
+        first_prediction_loss_tick=first_prediction_loss_tick,
+        protective_stop_started_tick=protective_stop_started_tick,
+        stop_confirmed_tick=stop_confirmed_tick,
+        completion_tick=completion_tick,
+        outcome=outcome,
+        final_motion_state=gate.motion_state,
+        final_stop_epoch=gate.stop_epoch,
+        controller_call_count=controller_calls,
+        controller_session_count=int(runtime is not None),
+        observation_status_counts=tuple(sorted(status_counts.items())),
+        no_frame_tick_count=no_frame_tick_count,
+        minimum_actor_clearance_m=minimum_actor,
+        minimum_static_clearance_m=minimum_static,
+        gate_override_count=gate.counters.gate_overrides,
+        final_pose=state.pose,
+        hard_failures=tuple(dict.fromkeys(hard_failures)),
+        trace_content_hash=canonical_content_hash(tuple(trace)),
+    )
+
+
+def _advance_state(state: RobotState, next_command: Twist2D) -> RobotState:
+    pose = integrate_persistent_chassis_pose(
+        state.pose,
+        state.twist,
+        DYNAMIC_CONTROL_PERIOD_S,
+    )
+    return RobotState(pose, next_command)
+
+
+def _update_clearances(
+    world: WitnessWorldSnapshot,
+    checker: CollisionChecker,
+    state: RobotState,
+    tick: int,
+    minimum_static: float,
+    minimum_actor: float | None,
+) -> tuple[float, float | None]:
+    minimum_static = min(minimum_static, checker.clearance(state.pose))
+    time_s = (tick + 1) * DYNAMIC_CONTROL_PERIOD_S
+    for actor in world.actor_states_at(time_s):
+        clearance = oriented_footprint_circle_surface_distance(
+            state.pose,
+            circle_center=(actor.position.x, actor.position.y),
+            circle_radius_m=actor.radius_m,
+            profile=world.kinematic_contract.vehicle_profile,
+        )
+        minimum_actor = clearance if minimum_actor is None else min(minimum_actor, clearance)
+    return minimum_static, minimum_actor
+
+
+__all__ = [
+    "R5C_OBSERVATION_DIAGNOSTIC_VERSION",
+    "R5CDiagnosticOutcome",
+    "R5CObservationDiagnosticResult",
+    "run_r5c_crossing_diagnostic",
+    "run_r5c_restop_diagnostic",
+]

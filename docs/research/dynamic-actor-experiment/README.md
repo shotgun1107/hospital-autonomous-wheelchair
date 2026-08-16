@@ -38,10 +38,20 @@
 도착했고, 두 위험 사례도 첫 재개→1.7283m 진행→`stop_epoch=2` 재정지→새 reference·허가→
 도착을 완료했다. 최신 공개 Ideal 경로 실행에서 gate override와 hard failure는 `0`이다.
 
+같은 세 장면의 제한된 Normal·Stress 진단도 수행했다. Normal 횡단 좌·우는 출발 뒤 첫
+frame 누락에서 감속해 실제 정지했고, Normal 다중 위험은 연속 안전 frame을 기다려 늦게
+출발한 뒤 다음 누락에서 정지했다. Stress는 방향 예측이 한 번도 `READY`가 되지 않아
+출발하지 않았다. hard failure는 없지만 완료도 없으므로 정식 R5-C 자격이 아니며, R2-B
+Actor 출현/fresh EMPTY 문제도 그대로 남는다. 상세 기준과 결과는
+[`R5-C 공개 관측 열화 진단`](19-r5c-public-observation-diagnostic.md),
+[`R5-C 제한 진단 결과`](r5c-public-observation-diagnostic-result-2026-08-16.md)에 기록한다.
+새 진단을 포함한 전체 회귀는 `922 passed`, 실패·건너뜀 `0`이다.
+
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
-횡단·재정지 결과도 Ideal 합성 관측의 경로 기능 증거이며 Normal·Stress, R2-B 출현 관측,
-50ms 종단 자격, receipt, hidden과 제품 알고리즘 채택은 여전히 수행하지 않았다.
+횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한
+진단은 보수적 정지만 확인했으며 임무 완료는 확인하지 못했다. R2-B 출현 관측, 50ms 종단
+자격, receipt, hidden과 제품 알고리즘 채택은 여전히 수행하지 않았다.
 새 횡단·재정지 시험을 포함한 최신 전체 실험실 회귀는 `916 passed`, 실패·건너뜀 `0`이다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
