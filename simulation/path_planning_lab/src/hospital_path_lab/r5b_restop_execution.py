@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import ceil, hypot
+from math import atan2, ceil, hypot, pi
 
 from hospital_path_lab.collision import CollisionChecker
 from hospital_path_lab.contracts import (
@@ -80,6 +80,7 @@ from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.persistent_controller_contracts import PersistentControllerStatus
 from hospital_path_lab.persistent_controller_pipeline import PersistentControllerPipeline
 from hospital_path_lab.r5b_temporal_reference import R5B_REFERENCE_MISSION_ID
+from hospital_path_lab.reference_section_executor import R5_YAW_TOLERANCE_RAD
 from hospital_path_lab.spatial_oracle_contracts import (
     SpatialAllowedRegion,
     spatial_grid_content_hash,
@@ -322,8 +323,32 @@ def build_world_follow_reference(
         control_tick=valid_from_tick,
         simulation_time_s=valid_from_tick * DYNAMIC_CONTROL_PERIOD_S,
     )
-    length = hypot(goal.x - current_pose.x, goal.y - current_pose.y)
-    knots = (
+    delta_x = goal.x - current_pose.x
+    delta_y = goal.y - current_pose.y
+    length = hypot(delta_x, delta_y)
+    travel_yaw = atan2(delta_y, delta_x) if length > 1e-12 else current_pose.yaw
+    terminal_yaw_error = abs((goal.yaw - travel_yaw + pi) % (2.0 * pi) - pi)
+    needs_terminal_rotation = (
+        length > 1e-12 and terminal_yaw_error > R5_YAW_TOLERANCE_RAD
+    )
+    translation_goal = (
+        Pose2D(goal.x, goal.y, travel_yaw) if needs_terminal_rotation else goal
+    )
+    translation_terminal_roles = (
+        (
+            ReferenceKnotRole.ANCHOR,
+            ReferenceKnotRole.TRANSLATION,
+            ReferenceKnotRole.STOP_MARKER,
+        )
+        if needs_terminal_rotation
+        else (
+            ReferenceKnotRole.ANCHOR,
+            ReferenceKnotRole.TRANSLATION,
+            ReferenceKnotRole.REJOIN,
+            ReferenceKnotRole.STOP_MARKER,
+        )
+    )
+    knots: tuple[ReferenceKnot, ...] = (
         ReferenceKnot(
             knot_index=0,
             pose=current_pose,
@@ -335,20 +360,15 @@ def build_world_follow_reference(
         ),
         ReferenceKnot(
             knot_index=1,
-            pose=goal,
-            tangent_yaw=goal.yaw,
+            pose=translation_goal,
+            tangent_yaw=translation_goal.yaw,
             cumulative_translation_arc_m=length,
             source_path_index=1,
             section_index=0,
-            knot_roles=(
-                ReferenceKnotRole.ANCHOR,
-                ReferenceKnotRole.TRANSLATION,
-                ReferenceKnotRole.REJOIN,
-                ReferenceKnotRole.STOP_MARKER,
-            ),
+            knot_roles=translation_terminal_roles,
         ),
     )
-    sections = (
+    sections: tuple[ReferenceSection, ...] = (
         ReferenceSection(
             section_index=0,
             section_kind=ReferenceSectionKind.FOLLOW_ORIGINAL,
@@ -356,10 +376,52 @@ def build_world_follow_reference(
             first_knot_index=0,
             last_knot_index=1,
             entry_requires_stopped=False,
-            exit_requires_stopped=False,
+            exit_requires_stopped=needs_terminal_rotation,
             source_primitive_indices=(),
         ),
     )
+    if needs_terminal_rotation:
+        knots += (
+            ReferenceKnot(
+                knot_index=2,
+                pose=translation_goal,
+                tangent_yaw=translation_goal.yaw,
+                cumulative_translation_arc_m=length,
+                source_path_index=2,
+                section_index=1,
+                knot_roles=(
+                    ReferenceKnotRole.ANCHOR,
+                    ReferenceKnotRole.ROTATION_ENTRY,
+                    ReferenceKnotRole.STOP_MARKER,
+                ),
+            ),
+            ReferenceKnot(
+                knot_index=3,
+                pose=goal,
+                tangent_yaw=goal.yaw,
+                cumulative_translation_arc_m=length,
+                source_path_index=3,
+                section_index=1,
+                knot_roles=(
+                    ReferenceKnotRole.ANCHOR,
+                    ReferenceKnotRole.ROTATION_EXIT,
+                    ReferenceKnotRole.REJOIN,
+                    ReferenceKnotRole.STOP_MARKER,
+                ),
+            ),
+        )
+        sections += (
+            ReferenceSection(
+                section_index=1,
+                section_kind=ReferenceSectionKind.ROTATE,
+                travel_direction=ReferenceTravelDirection.NONE,
+                first_knot_index=2,
+                last_knot_index=3,
+                entry_requires_stopped=True,
+                exit_requires_stopped=True,
+                source_primitive_indices=(),
+            ),
+        )
     reference = LocalManeuverReference(
         schema_version=LOCAL_REFERENCE_SCHEMA_VERSION,
         reference_contract_version=LOCAL_REFERENCE_CONTRACT_VERSION,
@@ -388,7 +450,7 @@ def build_world_follow_reference(
         sections=sections,
         departure_knot_index=None,
         pass_section_index=None,
-        rejoin_knot_index=1,
+        rejoin_knot_index=len(knots) - 1,
         minimum_validated_static_clearance_m=0.08,
         validity=ReferenceValidity(
             required_mission_id=context.mission_id,

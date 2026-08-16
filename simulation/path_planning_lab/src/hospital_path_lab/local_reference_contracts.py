@@ -741,8 +741,14 @@ class LocalManeuverReference:
             raise ValueError("non-bypass reference cannot declare PASS anchors")
         elif self.maneuver_kind is LocalManeuverKind.FOLLOW_ORIGINAL:
             kinds = tuple(section.section_kind for section in self.sections)
-            if kinds != (ReferenceSectionKind.FOLLOW_ORIGINAL,):
-                raise ValueError("FOLLOW reference must contain one original-path section")
+            if kinds not in (
+                (ReferenceSectionKind.FOLLOW_ORIGINAL,),
+                (ReferenceSectionKind.FOLLOW_ORIGINAL, ReferenceSectionKind.ROTATE),
+            ):
+                raise ValueError(
+                    "FOLLOW reference must contain one original-path section with an "
+                    "optional terminal rotation"
+                )
         else:
             kinds = tuple(section.section_kind for section in self.sections)
             if (

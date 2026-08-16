@@ -6,7 +6,9 @@ from hospital_path_lab.contracts import Pose2D
 from hospital_path_lab.dynamic_witness_events import ground_truth_hazard_intervals
 from hospital_path_lab.local_reference_contracts import (
     LocalManeuverKind,
+    ReferenceKnotRole,
     ReferenceSectionKind,
+    ReferenceTravelDirection,
 )
 from hospital_path_lab.r5b_restop_execution import (
     R5B_RESTOP_FIRST_RELEASE_TICK,
@@ -85,6 +87,41 @@ def test_world_follow_reference_can_keep_a_prevalidated_terminal_pose() -> None:
     assert bundle.reference.knots[-1].pose == terminal
     assert bundle.reference.stop_epoch == 3
     assert bundle.reference.validity.valid_from_control_tick == 100
+
+
+def test_world_follow_reference_separates_translation_from_terminal_rotation() -> None:
+    evidence = build_r5b_restop_evidence()
+    world = evidence.controller_world
+    terminal = Pose2D(world.initial_state.pose.x + 1.8, world.goal_pose.y + 0.20, 0.0)
+    bundle = build_world_follow_reference(
+        world,
+        mission_id="r5c-test-mission",
+        current_pose=world.initial_state.pose,
+        stop_epoch=3,
+        valid_from_tick=100,
+        identity={"test": "split-terminal-rotation"},
+        generation_reason_codes=("test_split_terminal_rotation",),
+        goal_pose=terminal,
+    )
+
+    assert bundle.validation.passed
+    assert tuple(section.section_kind for section in bundle.reference.sections) == (
+        ReferenceSectionKind.FOLLOW_ORIGINAL,
+        ReferenceSectionKind.ROTATE,
+    )
+    assert tuple(section.travel_direction for section in bundle.reference.sections) == (
+        ReferenceTravelDirection.FORWARD,
+        ReferenceTravelDirection.NONE,
+    )
+    translation_exit = bundle.reference.knots[1]
+    rotation_entry = bundle.reference.knots[2]
+    assert translation_exit.pose.x == terminal.x
+    assert translation_exit.pose.y == terminal.y
+    assert translation_exit.pose.yaw != terminal.yaw
+    assert rotation_entry.pose == translation_exit.pose
+    assert ReferenceKnotRole.ROTATION_ENTRY in rotation_entry.knot_roles
+    assert bundle.reference.knots[-1].pose == terminal
+    assert ReferenceKnotRole.ROTATION_EXIT in bundle.reference.knots[-1].knot_roles
 
 
 def test_cpp_dwb_restarts_twice_and_completes_public_restop_case() -> None:
