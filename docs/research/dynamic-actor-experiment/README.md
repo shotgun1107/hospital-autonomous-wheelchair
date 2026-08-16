@@ -27,16 +27,15 @@
 
 ### 최신 센서 경계 — 2026-08-16
 
-팀에서 Arduino 계열 MCU와 초음파 거리 센서를 사용한다는 방향이 전달됐고, 사용자는
-simulation-only 임시 입력으로 `HC-SR04` 7개(전방 3·후방 2·좌우 1씩)를 지정했다.
-실제 장착 좌표·높이·검증된 측정 주기·유효 거리는 미확정이다. 현재 합성 Actor 관측은 2차원 위치·속도를 가진
+팀에서 Arduino 계열 MCU와 초음파 거리 센서를 사용한다는 방향이 전달됐다. 정확한 모델·개수·
+배치·측정 주기·유효 거리는 미확정이다. 현재 합성 관측은 2차원 위치·속도를 가진
 `ActorTrack`이며 초음파 원시 거리와 동일하지 않다.
 
 다음 실제 관측 연구는 `초음파 거리·무응답 → source·시각·순서·유효성 검증 → 점유·접근
 증거 → 충분할 때만 Actor track → 기존 prediction·shared safety gate`로 분리한다. 상세는
 [ADR 0015](../../decisions/0015-ultrasonic-observation-boundary.md)와
-[초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)를 따른다. 별도 합성 거리
-하네스는 구현했지만 실제 펌웨어·센서 실측·제품 센서 선정은 시작하지 않았다.
+[초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)를 따른다. 실제 센서 코드와
+제품 센서 선정은 아직 시작하지 않았다.
 
 ## 구현 현황
 

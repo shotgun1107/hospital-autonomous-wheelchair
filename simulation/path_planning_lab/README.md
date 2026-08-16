@@ -35,11 +35,7 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 
 다음 센서 하네스는 `거리 또는 무응답 → source·시각·순서·상태 검증 → 점유·접근 증거 →
 정보가 충분할 때만 track`으로 분리한다. `no echo`, timeout, stale과 invalid는 빈 공간이 아니다.
-사용자 지정 연구 가정으로 `HC-SR04` 7개(전방 3·후방 2·좌우 1씩) 합성 하네스를
-별도 모듈에 추가했다. 센서별 거리·무응답·timeout·장치 오류, 순차 scan 시각,
-source·sequence·배치 revision·hash·stale 검증과 전진·후진·회전 정지 판정까지만 다룬다.
-기존 DWB·ActorTrack·shared safety gate에는 연결하지 않았다. 이는 실물 배치나 제품 센서
-채택이 아니다. 상세는
+실제 센서 모델·개수·배치는 미정이며, 현재 코드는 변경하지 않았다. 상세는
 [초음파 관측 전환 명세](../../docs/research/dynamic-actor-experiment/22-ultrasonic-observation-transition.md)를
 따른다.
 
