@@ -51,8 +51,9 @@ R2-B의 이 부분을 닫으려면 후속 단계에서 최소한 다음 중 하�
 3. 실제 센서 coverage·무응답·오검출 실패를 포함한 보수적 관측 계약
 
 후속으로 1번의 추상 감시 진입 world를 구현해 대표 Ideal miss를 `38/22 → 0/0`으로
-줄였다. 원본 hard failure는 음성 회귀로 유지하며, 실제 초음파 거리·배치 coverage 계약은
-아직 구현하지 않았다.
+줄였다. 그 뒤 HC-SR04 7개 순차 simulation 감사를 추가했으나 full frame은 기존 300ms TTL을
+`0개` 통과했고 v6 지연 Actor 하나는 진입 전 원시 감지도 `0회`였다. 원본 hard failure는
+음성 회귀로 유지하며 실제 센서 coverage 계약은 아직 닫히지 않았다.
 
 ### 2.2 이미 추적하던 Actor의 관측 상실과 회복
 
@@ -154,3 +155,7 @@ R2-B 출현 문제를 다시 시작
 
 이는 실제 초음파 거리·배치 coverage·반사·무응답 증거가 아니므로 R2-B 전체나 formal
 R5-C/R6를 완료 처리하지 않는다.
+
+HC-SR04 7개 임시 배치를 적용한 후속 결과는
+[R2-B HC-SR04 7개 감사 결과](r2b-hc-sr04-seven-sensor-audit-result-2026-08-16.md)에
+기록했다. 이 감사도 simulation-only이며 R2-B 판정은 계속 보류다.

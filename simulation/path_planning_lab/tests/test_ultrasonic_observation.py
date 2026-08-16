@@ -13,11 +13,13 @@ from hospital_path_lab.ultrasonic_observation import (
     UltrasonicObstacle,
     UltrasonicSample,
     UltrasonicSampleStatus,
+    UltrasonicScanSampleState,
     UltrasonicStopOutcome,
     UltrasonicStopPolicy,
     UltrasonicValidationPolicy,
     UltrasonicValidationReason,
     evaluate_ultrasonic_stop,
+    generate_dynamic_ultrasonic_frame,
     generate_ultrasonic_frame,
     ultrasonic_frame_content_hash,
 )
@@ -135,6 +137,35 @@ def test_rotated_robot_rotates_sensor_detection_with_it() -> None:
         obstacles=(obstacle,),
     )
     assert frame.samples[0].status is UltrasonicSampleStatus.VALID
+
+
+def test_dynamic_scan_uses_each_sensor_measurement_time_world_state() -> None:
+    states = []
+    for index, mount in enumerate(RIG.mounts):
+        measured_at_s = index * RIG.trigger_spacing_s
+        obstacles = (
+            (UltrasonicObstacle("late-side", 0.0, 0.60, 0.18),)
+            if mount.sensor_id == "side_left"
+            else ()
+        )
+        states.append(
+            UltrasonicScanSampleState(
+                sensor_id=mount.sensor_id,
+                measured_at_s=measured_at_s,
+                robot_pose=Pose2D(0.0, 0.0, 0.0),
+                obstacles=obstacles,
+            )
+        )
+    frame = generate_dynamic_ultrasonic_frame(
+        source_id=SOURCE_ID,
+        sequence=0,
+        scan_started_at_s=0.0,
+        scan_states=tuple(states),
+    )
+    by_id = {sample.sensor_id: sample for sample in frame.samples}
+    assert by_id["front_center"].status is UltrasonicSampleStatus.NO_ECHO
+    assert by_id["side_left"].status is UltrasonicSampleStatus.VALID
+    assert isclose(by_id["side_left"].range_m or 0.0, 0.26)
 
 
 def test_no_echo_timeout_and_device_error_remain_distinct_from_valid_range() -> None:

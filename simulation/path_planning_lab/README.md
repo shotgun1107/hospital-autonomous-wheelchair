@@ -43,6 +43,12 @@ source·sequence·배치 revision·hash·stale 검증과 전진·후진·회전 
 [초음파 관측 전환 명세](../../docs/research/dynamic-actor-experiment/22-ultrasonic-observation-transition.md)를
 따른다.
 
+후속 R2-B simulation 감사에서는 움직이는 witness 차체·Actor를 센서 trigger 시각별로
+재생했다. v6 지연 Actor 하나는 진입 전 원시 감지 `0회`였고, full 7센서 frame은 `0.366s`라
+기존 `300ms` TTL을 전부 넘었다. 같은 센서 20회 이력도 `8.113s`가 걸려 기존 10Hz
+ActorTrack 계약과 맞지 않는다. 따라서 R2-B는 통과가 아니라 보류이며, DWB 실패로 기록하지
+않는다. 상세는 [7센서 감사 결과](../../docs/research/dynamic-actor-experiment/r2b-hc-sr04-seven-sensor-audit-result-2026-08-16.md)에 있다.
+
 ### R5-C 공개 관측 복구 제한 진단 — 2026-08-16
 
 기존 R2-B 두 실패를 재확인한 결과, 지도 내부 Actor 순간 출현과 `100ms` 관측 지연 때문에
@@ -375,7 +381,8 @@ shared gate를 유지했다. 상세는
 정지했고, Stress 두 장면은 방향 예측 `READY`가 없어 출발하지 않았다. hard failure와 최소
 여유 위반은 `0`이지만 임무 완료도 `0`이다. 입력 상실 뒤 자동 재개는 구현하지 않았으며,
 원본 R2-B hard failure와 실제 센서 통합 전 formal R5-C 차단은 유지한다. 후속 추상 감시
-진입 파생 world의 대표 miss는 `38/22 → 0/0`이지만 초음파 실측 통과는 아니다. 상세는
+진입 파생 world의 대표 miss는 `38/22 → 0/0`이지만, HC-SR04 7개 순차 simulation 감사도
+TTL·사각지대·거리-only 계약 때문에 R2-B를 통과하지 못했다. 초음파 실측 통과도 아니다. 상세는
 [`R5-C 제한 진단 결과`](../../docs/research/dynamic-actor-experiment/r5c-public-observation-diagnostic-result-2026-08-16.md)를
 따른다. 새 진단을 포함한 전체 회귀는 `922 passed`, 실패·건너뜀 `0`이다.
 먼저 R4

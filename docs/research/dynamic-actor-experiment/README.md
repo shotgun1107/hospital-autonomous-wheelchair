@@ -38,6 +38,11 @@ simulation-only 임시 입력으로 `HC-SR04` 7개(전방 3·후방 2·좌우 1�
 [초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)를 따른다. 별도 합성 거리
 하네스는 구현했지만 실제 펌웨어·센서 실측·제품 센서 선정은 시작하지 않았다.
 
+R2-B witness에 7센서 순차 scan을 적용한 결과 full frame은 `0.366s`가 걸려 기존 `300ms`
+TTL을 전부 초과했고, v6 지연 Actor 하나는 진입 전 raw echo도 없었다. 같은 센서의 20회
+이력은 `8.113s`라 기존 10Hz ActorTrack을 만들 수 없다. 따라서 R2-B는 계속 보류다. 상세는
+[R2-B 7센서 감사 결과](r2b-hc-sr04-seven-sensor-audit-result-2026-08-16.md)를 따른다.
+
 ## 구현 현황
 
 아래 표는 2026-08-10에 시작한 동적 Actor 비교실험의 기존 구현 `1~6단계`다. 2026-08-13
