@@ -30,7 +30,7 @@ from hospital_path_lab.persistent_controller_contracts import (
     ReferenceExecutorState,
 )
 
-REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v3"
+REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v4-bypass-tolerance"
 REFERENCE_SECTION_EXECUTION_DECISION_SCHEMA_VERSION = (
     "reference-section-execution-decision-v1"
 )
@@ -243,8 +243,23 @@ class ReferenceSectionExecutionDecision:
 class ReferenceSectionExecutor:
     """R5 v1의 persistent, one-advance-per-tick common executor."""
 
-    def __init__(self, config: ReferenceSectionExecutorConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: ReferenceSectionExecutorConfig | None = None,
+        *,
+        bypass_completion_tolerance_m: float | None = None,
+    ) -> None:
         self.config = config or ReferenceSectionExecutorConfig()
+        if bypass_completion_tolerance_m is not None:
+            _require_finite_positive(
+                bypass_completion_tolerance_m,
+                "bypass_completion_tolerance_m",
+            )
+            if bypass_completion_tolerance_m > self.config.position_tolerance_m:
+                raise ValueError(
+                    "bypass completion tolerance cannot exceed the frozen position tolerance"
+                )
+        self._bypass_completion_tolerance_m = bypass_completion_tolerance_m
         self._guard = PersistentReferenceSessionGuard()
         self._reference: LocalManeuverReference | None = None
         self._active_section_index: int | None = None
@@ -451,11 +466,17 @@ class ReferenceSectionExecutor:
             target = self._section_end_pose(section)
             position_error, yaw_error = _pose_errors(tick_input.robot_state.pose, target)
             terminal = section.section_index == len(self._reference.sections) - 1
+            completion_tolerance_m = self.config.position_tolerance_m
+            if (
+                section.section_kind is ReferenceSectionKind.BYPASS
+                and self._bypass_completion_tolerance_m is not None
+            ):
+                completion_tolerance_m = self._bypass_completion_tolerance_m
             at_position = translation_completion_reached(
                 self._reference,
                 section.section_index,
                 tick_input.robot_state.pose,
-                base_tolerance_m=self.config.position_tolerance_m,
+                base_tolerance_m=completion_tolerance_m,
             )
             at_terminal_yaw = abs(yaw_error) <= self.config.yaw_tolerance_rad + _TOLERANCE
             if direction is ReferenceTravelDirection.NONE and not _actually_stopped(

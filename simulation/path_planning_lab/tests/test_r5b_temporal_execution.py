@@ -30,6 +30,13 @@ def first_left_bundle():
     )[0]
 
 
+@pytest.fixture(scope="module")
+def second_left_bundle():
+    return build_r5b_temporal_reference_bundles(
+        frozen_r2_archive_path(REPOSITORY_ROOT)
+    )[2]
+
+
 @pytest.mark.parametrize(
     "controller",
     (PersistentRppController(), PersistentSourceDerivedDwbController()),
@@ -140,15 +147,38 @@ def test_vehicle_limit_cpp_dwb_completes_ordered_pass_and_rejoin(
     )
     assert controller.native_safety_batch_used
     assert result.last_target_present_tick == 599
-    assert result.last_target_progress_gap_m == pytest.approx(0.578492559223498)
+    assert result.last_target_progress_gap_m == pytest.approx(0.6380220295034493)
     required_separation = (
         first_left_bundle.build_context.vehicle_profile.collision_length_m / 2.0
         + first_left_bundle.source.world.actors[0].radius_m
     )
     assert result.last_target_progress_gap_m > required_separation
     assert result.overtake_tick == 459
-    assert result.rejoin_tick == 779
-    assert result.completion_tick == 797
+    assert result.rejoin_tick == 757
+    assert result.completion_tick == 775
+    assert result.completed is True
+    assert result.hard_failures == ()
+    assert result.gate_override_count == 0
+    assert_finite_r5b_result(result)
+
+
+def test_cpp_full_dwb_keeps_fast_actor_behind_through_bypass_return(
+    second_left_bundle,
+) -> None:
+    controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=True,
+        use_cpp_full_core=True,
+    )
+    result = run_r5b_temporal_case(
+        second_left_bundle,
+        controller=controller,
+        tick_limit=900,
+    )
+
+    assert controller.native_full_core_used
+    assert result.overtake_tick == 474
+    assert result.rejoin_tick == 764
+    assert result.completion_tick == 782
     assert result.completed is True
     assert result.hard_failures == ()
     assert result.gate_override_count == 0

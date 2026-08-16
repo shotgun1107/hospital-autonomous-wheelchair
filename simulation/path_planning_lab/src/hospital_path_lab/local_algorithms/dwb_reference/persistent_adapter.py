@@ -67,7 +67,10 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v6-cpp-full"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v7-bypass-lookahead"
+
+R5_DWB_BYPASS_SCORING_LOOKAHEAD_M = 0.30
+R5_DWB_BYPASS_COMPLETION_TOLERANCE_M = 0.02
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -315,7 +318,11 @@ class PersistentSourceDerivedDwbController:
             raise TypeError("use_cpp_safety_core must be bool")
         if not isinstance(use_cpp_full_core, bool):
             raise TypeError("use_cpp_full_core must be bool")
-        self._executor = executor or ReferenceSectionExecutor()
+        self._executor = executor or ReferenceSectionExecutor(
+            bypass_completion_tolerance_m=(
+                R5_DWB_BYPASS_COMPLETION_TOLERANCE_M
+            )
+        )
         self._config = config
         self._use_cpp_safety_core = use_cpp_safety_core
         self._use_cpp_full_core = use_cpp_full_core
@@ -406,7 +413,7 @@ class PersistentSourceDerivedDwbController:
                 tick_input,
                 decision.active_section_index,
             )
-            scoring_path = _active_translation_dwb_path(
+            scoring_path = _active_translation_dwb_scoring_path(
                 tick_input,
                 decision.active_section_index,
             )
@@ -747,6 +754,30 @@ def _active_translation_dwb_path(
     return _freeze_dwb_path(poses, "active translation scoring path")
 
 
+def _active_translation_dwb_scoring_path(
+    tick_input: PersistentControllerTickInput,
+    active_section_index: int,
+) -> tuple[DwbPose2D, ...]:
+    """Extend only BYPASS scoring while keeping the executable reference exact."""
+
+    path = _active_translation_dwb_path(tick_input, active_section_index)
+    section = tick_input.full_reference.sections[active_section_index]
+    if section.section_kind is not ReferenceSectionKind.BYPASS:
+        return path
+    if section.travel_direction is not ReferenceTravelDirection.FORWARD:
+        raise ValueError("R5 DWB BYPASS lookahead requires a forward section")
+    end = path[-1]
+    lookahead = DwbPose2D(
+        end.x_m + R5_DWB_BYPASS_SCORING_LOOKAHEAD_M * cos(end.yaw_rad),
+        end.y_m + R5_DWB_BYPASS_SCORING_LOOKAHEAD_M * sin(end.yaw_rad),
+        end.yaw_rad,
+    )
+    return _freeze_dwb_path(
+        (*path, lookahead),
+        "active BYPASS DWB scoring lookahead path",
+    )
+
+
 def _bind_stack_travel_direction(
     stack: _PersistentDwbStack,
     direction: ReferenceTravelDirection,
@@ -926,6 +957,8 @@ def _integrate_pose(pose: Pose2D, twist: Twist2D, duration_s: float) -> Pose2D:
 __all__ = [
     "PERSISTENT_DWB_ADAPTER_VERSION",
     "PERSISTENT_DWB_CONTROLLER_NAME",
+    "R5_DWB_BYPASS_COMPLETION_TOLERANCE_M",
+    "R5_DWB_BYPASS_SCORING_LOOKAHEAD_M",
     "PersistentDwbCoreSession",
     "PersistentDwbSessionDiagnostics",
     "PersistentSourceDerivedDwbController",

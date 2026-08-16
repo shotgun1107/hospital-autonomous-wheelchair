@@ -26,6 +26,22 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
+### R5-B v2 C++ DWB 공개 Ideal 10개 기능 PASS — 2026-08-16
+
+첫 C++ DWB 공개 실행은 `4/10`만 도착했다. 열 사례 모두 추월했지만, 더 빠른 Actor가 있는
+여섯 사례에서 우회 종점 앞 조기 감속과 복귀 회전 중 재추격이 발생해 공통 실행 허가가
+정상적으로 정지시켰다.
+
+DWB의 BYPASS 점수 계산에만 종점 앞 `0.30m` 가상 앞보기 점을 추가하고, DWB 실행기의
+BYPASS 완료 오차만 `0.02m`로 제한했다. 실제 reference·안전거리·Actor 예측관·후보 `217`개·
+후보당 `41`개 자세·rollout·terminal stopping·critic 가중치·shared gate는 유지했다.
+
+정식 C++ 전체 DWB 코어로 same-direction 공개 5개 × 좌·우 2개를 다시 실행한 결과
+`10/10`이 추월→재합류→도착했고 gate override·hard failure는 모두 `0`이었다. 영향권 시험은
+`35 passed`, 전체 회귀는 `907 passed`다. 상세 결과는
+[C++ DWB 공개 10개 결과](../../docs/research/dynamic-actor-experiment/r5b-v2-cpp-dwb-public-10case-result-2026-08-16.md)를
+따른다. 이는 Ideal 공개 기능 결과이며 Normal·Stress, 50ms, hidden, 실물·제품 채택 증거가 아니다.
+
 ### R5-B v2 공개 첫 LEFT 기능 PASS — 2026-08-15
 
 1차 실패 뒤 공개 연구용 reference를 controller와 같은 `0.20m/s`, 최소 측면 offset `0.65m`,

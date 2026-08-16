@@ -286,6 +286,10 @@ def test_config_is_frozen_to_the_r5_v1_stop_and_rotation_contract() -> None:
     assert config.terminal_dwell_ticks == 10
     with pytest.raises(ValueError, match="frozen"):
         ReferenceSectionExecutorConfig(position_tolerance_m=0.06)
+    with pytest.raises(ValueError, match="cannot exceed"):
+        ReferenceSectionExecutor(bypass_completion_tolerance_m=0.06)
+    with pytest.raises(ValueError, match="positive"):
+        ReferenceSectionExecutor(bypass_completion_tolerance_m=0.0)
 
 
 def test_stopped_abstract_connector_consumes_existing_position_tolerance() -> None:

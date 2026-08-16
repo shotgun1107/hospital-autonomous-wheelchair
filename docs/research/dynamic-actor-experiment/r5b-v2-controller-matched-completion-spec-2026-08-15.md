@@ -1,6 +1,6 @@
 # R5-B v2 컨트롤러 속도 정합 및 추월 후 재합류 명세
 
-- 상태: 구현 및 공개 첫 LEFT 기능 검증 완료, 공개 10-case qualification 대기
+- 상태: 구현 및 C++ DWB 공개 Ideal 좌·우 10-case 기능 검증 완료, RPP 10-case·Normal·Stress 대기
 - 작성일: 2026-08-15
 - 범위: 공개 Ideal same-direction PASS 5개 × 좌·우 2개, RPP 및 source-derived DWB
 - 비범위: hidden, 실제 perception, 안전 임계값 변경, 후보 수·rollout 변경, 제품 알고리즘 채택
@@ -86,3 +86,18 @@ FAIL로 기록하며 Actor 활성 시간을 늘리거나 안전거리·predictio
 
 이는 공개 첫 LEFT의 기능 검증일 뿐 공개 10-case qualification, 50ms 자격, full C++ DWB,
 hidden 또는 제품 controller 채택이 아니다.
+
+## 8. C++ DWB 공개 10개 후속 결과
+
+첫 구현 그대로는 공개 `4/10`만 도착했다. 열 사례 모두 추월했지만, 더 빠른 Actor가 있는
+여섯 사례에서 DWB가 우회 종점 앞에서 너무 일찍 감속했고 복귀 회전 중 Actor가 다시 따라와
+공통 실행 허가가 정지시켰다.
+
+DWB의 BYPASS 점수 경로에만 종점 앞 `0.30m` 가상 앞보기 점을 추가하고, DWB 실행기의 BYPASS
+완료 오차만 `0.02m`로 제한했다. 실제 reference, 안전거리, Actor 예측관, 후보 `217`개,
+후보당 `41`개 자세, rollout, terminal stopping, critic 가중치와 shared gate는 변경하지 않았다.
+
+정식 소스로 공개 5개 × 좌·우 2개를 다시 실행한 결과 `10/10`이 추월→재합류→도착했고,
+gate override와 hard failure는 모두 `0`이었다. 상세 결과는
+[C++ DWB 공개 10개 결과](r5b-v2-cpp-dwb-public-10case-result-2026-08-16.md)를 따른다.
+이는 Ideal 공개 기능 결과이며 Normal·Stress, 50ms, hidden, 실물 안전과 제품 채택 증거가 아니다.

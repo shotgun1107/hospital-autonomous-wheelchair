@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,16 +43,22 @@ from hospital_path_lab.local_algorithms.dwb_reference.critics import (
 )
 from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
     PERSISTENT_DWB_CONTROLLER_NAME,
+    R5_DWB_BYPASS_SCORING_LOOKAHEAD_M,
     PersistentDwbCoreSession,
     PersistentSourceDerivedDwbController,
     SectionBoundDwbReferenceTrajectoryGenerator,
+    _active_translation_dwb_path,
+    _active_translation_dwb_scoring_path,
     _aligned_forward_section,
     _connector_tightened_forward_section,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.trajectory_generator import (
     DwbReferenceTrajectoryGenerator,
 )
-from hospital_path_lab.local_reference_contracts import ReferenceTravelDirection
+from hospital_path_lab.local_reference_contracts import (
+    ReferenceSectionKind,
+    ReferenceTravelDirection,
+)
 from hospital_path_lab.local_reference_reporting import (
     evaluate_local_reference_public_case,
     public_local_reference_cases,
@@ -65,6 +72,10 @@ from hospital_path_lab.persistent_controller_contracts import (
 )
 from hospital_path_lab.persistent_controller_pipeline import (
     persistent_result_to_dynamic_proposal,
+)
+from hospital_path_lab.r5b_temporal_evidence import frozen_r2_archive_path
+from hospital_path_lab.r5b_temporal_reference import (
+    build_r5b_temporal_reference_bundles,
 )
 from hospital_path_lab.reference_section_executor import (
     R5_CONTROL_PERIOD_S,
@@ -192,6 +203,14 @@ def _advance_to_first_signed_translation(
         result = controller.step(tick_input)
     assert result is not None
     return result
+
+
+@pytest.fixture(scope="module")
+def r5b_first_left():
+    repository_root = Path(__file__).resolve().parents[3]
+    return build_r5b_temporal_reference_bundles(
+        frozen_r2_archive_path(repository_root)
+    )[0]
 
 
 @pytest.fixture(scope="module")
@@ -367,6 +386,53 @@ def test_aligned_forward_progress_tie_order_only_reverses_linear_blocks() -> Non
 
     generator.set_prefer_forward_progress_on_exact_ties(False)
     assert generator.generate(request) == ordinary
+
+
+def test_bypass_scoring_lookahead_does_not_change_the_executable_reference(
+    r5b_first_left,
+) -> None:
+    context = r5b_first_left.build_context
+    reference = r5b_first_left.reference
+    validation = r5b_first_left.validation
+    initial = LocalReferenceWindowManager().update(context, reference, validation)
+    assert initial.window is not None
+    full_window = replace(
+        initial.window,
+        end_knot_index=reference.knots[-1].knot_index,
+        knots=reference.knots,
+        sections=reference.sections,
+        terminal_rejoin_included=True,
+        window_content_hash="",
+    )
+    bypass = next(
+        section
+        for section in reference.sections
+        if section.section_kind is ReferenceSectionKind.BYPASS
+    )
+    tick_input = SimpleNamespace(
+        full_reference=reference,
+        local_window=full_window,
+    )
+
+    executable = _active_translation_dwb_path(
+        tick_input,
+        bypass.section_index,
+    )
+    scoring = _active_translation_dwb_scoring_path(
+        tick_input,
+        bypass.section_index,
+    )
+
+    assert scoring[:-1] == executable
+    assert len(scoring) == len(executable) + 1
+    distance = (
+        (scoring[-1].x_m - executable[-1].x_m) ** 2
+        + (scoring[-1].y_m - executable[-1].y_m) ** 2
+    ) ** 0.5
+    assert distance == pytest.approx(R5_DWB_BYPASS_SCORING_LOOKAHEAD_M)
+    assert reference.knots[bypass.last_knot_index].pose.x == pytest.approx(
+        executable[-1].x_m
+    )
 
 
 def test_crossing_final_forward_section_does_not_stall_at_minimum_speed(
