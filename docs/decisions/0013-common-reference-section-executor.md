@@ -131,7 +131,7 @@ window reset 문제는 피할 수 있지만 R4 sliding subpath의 입력 크기�
 - executor command도 shared safety gate를 우회하지 않는다.
 - planned stop 완료는 보호정지 해제나 이동 권한이 아니다.
 - `HOLD` section은 현재 epoch용 재승인과 새 reference 재검증 없이 자동 해제하지 않는다.
-- R5 path-only 통과는 Actor online 안전, 실제 초음파 관측 통합, 제품 controller 채택 또는 실제 사람
+- R5 path-only 통과는 Actor online 안전, 카메라 통합, 제품 controller 채택 또는 실제 사람
   탑승 안전의 증거가 아니다.
 
 ## 연결 문서

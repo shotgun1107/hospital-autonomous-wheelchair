@@ -12,18 +12,12 @@
 - `G1~G5` 결정과 제품 경로분석 7단계: 미수행
 - 현재 단계: `R1 prediction 계약 감사 완료`,
   `R2-A 공개 ground-truth witness 감사와 좌·우 PASS 탐색 완료`,
-  `R2-B 원본 hard failure 2건 보존·추상 감시 진입 대표 miss 38/22→0/0·실제 초음파 통합 보류`,
+  `R2-B 관측·prediction hard failure 2건으로 후속 보류`,
   `R3 public 21/21·receipt·729 전체 회귀 완료`,
   `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
   `R5-A v3 signed static public 21/21·receipt 완료`,
   `R5-B 공개 Ideal same-direction 10/10·횡단 좌우·다중 위험 기능 완료`,
   `R5-C Normal·Stress 제한 진단과 다중 위험 stop-confirmed recovery 완료, 임무 완료 0`
-
-2026-08-16 팀에서 Arduino 계열 MCU와 초음파 거리 센서를 사용한다는 방향이 전달됐다.
-현재 연구의 합성 `ActorTrack`은 실제 초음파 거리 입력이 아니다. 실제 관측 lane은
-[ADR 0015](../../decisions/0015-ultrasonic-observation-boundary.md)와
-[초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)에 따라 거리·무응답 검증,
-점유·접근 증거, 선택적 track 생성 순으로 분리한다. 센서 사양·수치·제품 방식은 미확정이다.
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -327,8 +321,7 @@ R3 static 공간 oracle을 자동으로 막지 않는다.
 - `R2` 결과에 맞춰 safety, Actor radius, clearance와 prediction envelope를 낮추지 않는다.
 - R2-A ground-truth hard failure는 해당 경로 후보를 R3·R4에 전달하지 않는다.
 - R2-A의 `SEARCH_INCONCLUSIVE`는 불가능 판정이 아니라 R3 공간 oracle 입력이다.
-- R2-B 원본 hard failure와 실제 센서 통합 미완료는 센서 결합 R5~R7과 hidden을 막지만
-  R3 공간 연구를 막지 않는다. 추상 감시 진입 파생 world 통과만으로 이 gate를 닫지 않는다.
+- R2-B hard failure는 관측 통합 R5~R7과 hidden을 막지만 R3 공간 연구를 막지 않는다.
 
 ## R3 — Bounded 공간 Oracle 연구
 
@@ -689,7 +682,7 @@ R5 v2 signed static reference tracking은 완료됐고, R5-B 공개 Ideal에서 
 확인했으나 35초 안에 임무를 완료하지 못했고, Stress는 11개 READY를 연속 확보하지 못해
 출발하지 않았다. R2-B 원본 내부 Actor 출현 hard failure는 음성 회귀로 보존한다. 별도 추상
 감시 접근 world에서는 지연 Actor를 원래 진입 전부터 같은 track으로 관측해 대표 Ideal miss를
-`38/22 → 0/0`으로 제거했다. 그러나 실제 초음파 거리·배치 coverage·반사·무응답 증거가 아니므로
+`38/22 → 0/0`으로 제거했다. 그러나 실제 카메라·FOV·가림·검출 증거가 아니므로
 perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일

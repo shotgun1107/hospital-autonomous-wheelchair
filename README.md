@@ -56,30 +56,12 @@
 
 현재는 프로젝트의 큰 틀과 팀 합의 항목을 정리하는 단계다. 운영 예외, 지도 표현, 위치 추정, 경로 계산 알고리즘, 센서, 제어 보드와 안전 임계값은 아직 확정하지 않았다. 미결정 사항은 `docs/product/open-questions.md`에서 관리한다.
 
-### 최신 동적 관측 연구 상태 — 2026-08-16
-
-- R2-B 원본 내부 출현 실패 장면은 음성 회귀로 보존한다.
-- 별도 감시 진입 파생 world에서는 대표 Ideal containment miss가 `38/22 → 0/0`으로 줄었다.
-- 이는 위험 구역 진입 전에 추상 `ActorTrack`을 얻을 수 있다는 simulation 상위 계약이며 실제 센서 증거가 아니다.
-- 이미 추적하던 Actor의 관측 상실은 정지→새 stop epoch·reference·허가·controller session으로 제한 복구했지만, Normal·Stress 임무 완료는 아직 확인하지 못했다.
-- 팀에서 Arduino 계열 MCU와 초음파 거리 센서를 사용한다는 방향이 전달됐다. 정확한 부품·개수·배치·측정 특성은 미확정이다.
-- 다음 관측 작업은 카메라 구현이 아니라 `초음파 원시 거리 → 검증된 점유·접근 증거 → 필요할 때만 Actor track` 경계를 정하는 것이다.
-- 초음파 `no echo`, timeout과 stale 값은 빈 공간 또는 재출발 허가가 아니다.
-
-관련 문서:
-
-- [초음파 관측 경계 ADR](docs/decisions/0015-ultrasonic-observation-boundary.md)
-- [초음파 관측 전환 명세 초안](docs/research/dynamic-actor-experiment/22-ultrasonic-observation-transition.md)
-- [R2-B 감시 진입 보정 결과](docs/research/dynamic-actor-experiment/r2b-monitored-entry-coverage-result-2026-08-16.md)
-- [R5-C 관측 복구 제한 결과](docs/research/dynamic-actor-experiment/r5c-observation-recovery-result-2026-08-16.md)
-
 ## 경로 알고리즘 연구
 
 - [회사·집 PC 작업 인수인계](인수인계.md)
 - [Python 경로 알고리즘 실험실](simulation/path_planning_lab/README.md)
 - [움직이는 원형 Actor 회피 비교실험 v5](docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)
 - [동적 원형 Actor 비교실험 설계·단계별 명세](docs/research/dynamic-actor-experiment/README.md)
-- [초음파 관측 전환 명세 초안](docs/research/dynamic-actor-experiment/22-ultrasonic-observation-transition.md)
 
 두 문서는 `simulation_only` 연구 자료이며 제품 알고리즘 채택이나 경로 분석 7단계 팀
 결정을 수행하지 않는다. 동적 비교실험의 첫 구현 범위는 문서의 `1시간 컷 1차 작업`이다.

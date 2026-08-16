@@ -26,24 +26,11 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
-### 초음파 관측 전환 경계 — 2026-08-16
-
-팀에서 Arduino 계열 MCU와 초음파 거리 센서를 사용한다는 방향이 전달됐다. 현재 구현된
-10Hz Gaussian 관측은 ground truth에서 2차원 `ActorTrack`을 합성하는 연구 입력이며 실제
-초음파 센서 출력이 아니다. 단일 초음파 거리값에서 사람 ID·2차원 위치·속도를 직접 얻었다고
-간주하지 않는다.
-
-다음 센서 하네스는 `거리 또는 무응답 → source·시각·순서·상태 검증 → 점유·접근 증거 →
-정보가 충분할 때만 track`으로 분리한다. `no echo`, timeout, stale과 invalid는 빈 공간이 아니다.
-실제 센서 모델·개수·배치는 미정이며, 현재 코드는 변경하지 않았다. 상세는
-[초음파 관측 전환 명세](../../docs/research/dynamic-actor-experiment/22-ultrasonic-observation-transition.md)를
-따른다.
-
 ### R5-C 공개 관측 복구 제한 진단 — 2026-08-16
 
 기존 R2-B 두 실패를 재확인한 결과, 지도 내부 Actor 순간 출현과 `100ms` 관측 지연 때문에
 실제 Actor가 있지만 최신 Ideal frame은 fresh `EMPTY`인 구간이 생긴다. 이는 예측기나
-DWA/DWB 문제가 아니며, 현재 실제 센서·배치 coverage 계약 없이 수치 조정으로 해결할 수 없다.
+DWA/DWB 문제가 아니며, 현재 카메라·가시영역 계약 없이 수치 조정으로 해결할 수 없다.
 
 별도로 Actor가 `t=0`부터 존재하는 공개 다중 위험 Normal 장면에서 입력 상실 뒤 복구를
 시험했다. 방향 예측 상실 `7`회마다 실제 정지를 확인했고, 다음 출발은 새 stop epoch와 새
@@ -62,8 +49,8 @@ DWA/DWB 문제가 아니며, 현재 실제 센서·배치 coverage 계약 없이
 방향 예측이 진입 전에 준비될 수 있게 한다. 대표 Ideal replay에서 원본 containment miss
 `38/22`를 재현했고 파생 world는 `0/0`, hard failure `0/0`이었다.
 
-이 결과는 로컬 주행 지도 밖까지 보는 추상 감시 입력을 전제한다. 실제 초음파 거리·배치
-coverage·반사·무응답, Normal·Stress 종단, formal R5-C/R6, hidden과 제품 자격은 포함하지 않는다. 상세는
+이 결과는 로컬 주행 지도 밖까지 보는 추상 감시 입력을 전제한다. 실제 카메라·FOV·가림·검출,
+Normal·Stress 종단, formal R5-C/R6, hidden과 제품 자격은 포함하지 않는다. 상세는
 [감시 진입 명세](../../docs/research/dynamic-actor-experiment/21-r2b-monitored-entry-coverage.md)와
 [결과](../../docs/research/dynamic-actor-experiment/r2b-monitored-entry-coverage-result-2026-08-16.md)를
 따른다.
@@ -364,14 +351,13 @@ Actor 좌·우도 C++ DWB로 이탈→통과→재합류→도착했다. 두 방
 세 경우 모두 기존 `0.08m` 안전거리와 217개 후보·41 pose·2초 rollout·terminal stopping·
 shared gate를 유지했다. 상세는
 [`R5-B 횡단·다중 위험 결과`](../../docs/research/dynamic-actor-experiment/r5b-crossing-and-restop-controller-result-2026-08-16.md)를
-따른다. 이는 Ideal 경로 기능 결과이며 R2-B 실제 센서 출현 관측, 50ms, receipt, hidden과 제품
+따른다. 이는 Ideal 경로 기능 결과이며 R2-B 카메라 출현 관측, 50ms, receipt, hidden과 제품
 채택 증거가 아니다. 당시 전체 회귀는 `916 passed`, 실패·건너뜀 `0`이다.
 
 같은 공개 장면의 Normal·Stress 제한 진단에서는 Normal 세 장면이 frame 누락 뒤 모두 실제
 정지했고, Stress 두 장면은 방향 예측 `READY`가 없어 출발하지 않았다. hard failure와 최소
 여유 위반은 `0`이지만 임무 완료도 `0`이다. 입력 상실 뒤 자동 재개는 구현하지 않았으며,
-원본 R2-B hard failure와 실제 센서 통합 전 formal R5-C 차단은 유지한다. 후속 추상 감시
-진입 파생 world의 대표 miss는 `38/22 → 0/0`이지만 초음파 실측 통과는 아니다. 상세는
+R2-B hard failure와 formal R5-C 차단은 유지한다. 상세는
 [`R5-C 제한 진단 결과`](../../docs/research/dynamic-actor-experiment/r5c-public-observation-diagnostic-result-2026-08-16.md)를
 따른다. 새 진단을 포함한 전체 회귀는 `922 passed`, 실패·건너뜀 `0`이다.
 먼저 R4

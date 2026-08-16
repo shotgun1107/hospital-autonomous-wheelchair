@@ -8,17 +8,11 @@
 - Stress 결과: 연속 READY 부족으로 출발하지 않음
 - hard failure: `0`
 - 임무 완료: `0`
-- R2-B 원본 Actor 내부 출현 실패: 음성 회귀로 유지
-- R2-B 감시 진입 파생 world: 대표 Ideal containment miss `38/22 → 0/0`
-- 실제 초음파 관측 통합: 미구현
+- R2-B Actor 내부 출현 문제: 미해결 유지
 
 이번 결과는 이미 추적하던 Actor의 관측이 끊겼다가 회복되는 경우만 다룬다. 관측 전에 지도
-내부에 새 Actor가 생기는 기존 R2-B 실패 2건과 실제 초음파 거리·배치·반사·무응답은 다루지 않았다.
+내부에 새 Actor가 생기는 기존 R2-B 실패 2건, 실제 카메라·FOV·가림·검출은 다루지 않았다.
 따라서 formal R5-C/R6 자격이나 제품 안전 결과가 아니다.
-
-후속 감시 진입 파생 world는 대표 Ideal containment miss를 `0/0`으로 줄였지만, 이는 추상
-`ActorTrack` 계약이다. 초음파 원시 거리에서 같은 track을 생성하거나 점유 영역으로 직접
-정지시키는 경계는 [초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)의 후속이다.
 
 ## 2. Normal 복구 결과
 
@@ -97,6 +91,6 @@ t=13.0s에 도착한 최신 Ideal frame: observed_at=12.9s, EMPTY
 ## 6. 남은 일
 
 1. 횡단 PASS 중 관측 상실 뒤 사용할 새 시간·공간 reference 계약을 별도로 설계한다.
-2. R2-B를 재개할 때 초음파 배치 coverage·무응답·빈 공간 확인 증거를 먼저 정한다.
+2. R2-B를 재개할 때 Actor 진입·가시영역·빈 공간 확인 증거를 먼저 정한다.
 3. 새 entry/visibility 계약 없이 기존 hard failure를 삭제하거나 완화하지 않는다.
 4. hidden, formal receipt, 제품 알고리즘 채택은 시작하지 않는다.
