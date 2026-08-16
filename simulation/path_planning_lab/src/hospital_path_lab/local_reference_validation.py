@@ -35,6 +35,7 @@ from hospital_path_lab.local_reference_contracts import (
     SpatialReferenceSeed,
     TemporalReferenceEvidence,
     TemporalReferenceGeometryEvidence,
+    is_bypass_maneuver_kind,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.spatial_oracle_contracts import (
@@ -304,15 +305,15 @@ def _validate_integrity(
             failures.add("observation_dependency_mismatch")
         if reference.source_temporal_evidence_hash is not None:
             failures.add("spatial_reference_claims_temporal_evidence")
-        if spatial_seed is None:
+        if (
+            spatial_seed is None
+            and reference.maneuver_kind is not LocalManeuverKind.FOLLOW_ORIGINAL
+        ):
             failures.add("source_validation_missing")
         if temporal_evidence is not None or temporal_geometry is not None:
             failures.add("spatial_reference_claims_temporal_evidence")
     elif reference.evidence_level is ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL:
-        is_pass = reference.maneuver_kind in (
-            LocalManeuverKind.PASS_LEFT,
-            LocalManeuverKind.PASS_RIGHT,
-        )
+        is_pass = is_bypass_maneuver_kind(reference.maneuver_kind)
         if is_pass and spatial_seed is not None:
             failures.add("temporal_reference_claims_spatial_seed")
         if temporal_evidence is None or (is_pass and temporal_geometry is None):
@@ -492,10 +493,7 @@ def _validate_structure(
     if abs(_angle_delta(knots[-1].tangent_yaw, knots[-1].pose.yaw)) > (R4_COMPARISON_TOLERANCE):
         failures.add("tangent_heading_mismatch")
 
-    pass_kind = reference.maneuver_kind in (
-        LocalManeuverKind.PASS_LEFT,
-        LocalManeuverKind.PASS_RIGHT,
-    )
+    pass_kind = is_bypass_maneuver_kind(reference.maneuver_kind)
     if pass_kind:
         kinds = tuple(section.section_kind for section in sections)
         required = (
@@ -766,12 +764,18 @@ def _validate_side_and_rejoin(
     if not offsets or not all(isfinite(offset) for offset in offsets):
         failures.add("non_finite_reference")
         return None
-    if reference.maneuver_kind is LocalManeuverKind.PASS_LEFT:
+    if reference.maneuver_kind in (
+        LocalManeuverKind.PASS_LEFT,
+        LocalManeuverKind.CROSSING_BYPASS_LEFT,
+    ):
         excursion = max(offsets)
         if min(offsets) < -R4_COMPARISON_TOLERANCE:
             failures.add("opposite_side_excursion")
         expected_side = ManeuverSide.LEFT
-    elif reference.maneuver_kind is LocalManeuverKind.PASS_RIGHT:
+    elif reference.maneuver_kind in (
+        LocalManeuverKind.PASS_RIGHT,
+        LocalManeuverKind.CROSSING_BYPASS_RIGHT,
+    ):
         excursion = -min(offsets)
         if max(offsets) > R4_COMPARISON_TOLERANCE:
             failures.add("opposite_side_excursion")

@@ -313,6 +313,18 @@ override `0`, parity·repeat `PASS`로 receipt를 생성했다. 상세는
 최종 증거는
 [`R5-A v3 공개 qualification 결과`](../../docs/research/dynamic-actor-experiment/r5a-v3-public-persistent-controller-qualification-result-2026-08-15.md)에 기록했다.
 hidden은 사용하지 않았다.
+
+2026-08-16 R5-B 공개 Ideal 보완에서는 기존 같은 방향 Actor 좌·우 10개 완료에 이어 횡단
+Actor 좌·우도 C++ DWB로 이탈→통과→재합류→도착했다. 두 방향 모두 최소 Actor 여유
+`0.08m` 이상, gate override와 hard failure는 `0`이었다. 두 위험 사례는 tick `44` 첫
+재개, tick `232`의 새 `stop_epoch=2` 재정지, tick `264` 새 reference·허가 재개, tick `490`
+완료를 확인했다. 두 정지 사이 `1.7283m`를 실제 진행했고 최소 Actor 여유는 `0.1002m`였다.
+세 경우 모두 기존 `0.08m` 안전거리와 217개 후보·41 pose·2초 rollout·terminal stopping·
+shared gate를 유지했다. 상세는
+[`R5-B 횡단·다중 위험 결과`](../../docs/research/dynamic-actor-experiment/r5b-crossing-and-restop-controller-result-2026-08-16.md)를
+따른다. 이는 Ideal 경로 기능 결과이며 Normal·Stress, R2-B 카메라 출현 관측, 50ms, receipt,
+hidden과 제품 채택 증거가 아니다. 새 시험을 포함한 최신 전체 회귀는 `916 passed`,
+실패·건너뜀 `0`이다.
 먼저 R4
 `SPATIAL_ONLY` ready 8개로 `R5-A static tracking`을
 검증하고, R5-B temporal Actor와 R5-C observation 통합은 R2 evidence 결합과 R2-B failure를

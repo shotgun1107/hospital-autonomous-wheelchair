@@ -82,6 +82,7 @@ class ReferenceExecutorState(StrEnum):
     ROTATE_IN_PLACE = "rotate_in_place"
     CONFIRM_ROTATION_STOP = "confirm_rotation_stop"
     HOLD_REQUESTED = "hold_requested"
+    TERMINAL_ALIGN = "terminal_align"
     TERMINAL_STOP = "terminal_stop"
     TERMINAL_DWELL = "terminal_dwell"
     COMPLETED = "completed"

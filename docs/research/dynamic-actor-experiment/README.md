@@ -31,16 +31,18 @@
 이후 동적 지역 기동 원인 분리 연구는 이 번호를 재사용하지 않고
 [`R1~R7 master specification`](10-dynamic-local-maneuver-research-master-spec.md)을 따른다.
 현재 새 연구는 `R1 prediction 계약 감사 완료`, `R2 ground-truth witness·profile replay`,
-`R3 bounded 공간 oracle public 21/21·receipt·729 전체 회귀 완료`, `R4 public 21/21·ready
-reference 8개·receipt·794 전체 회귀 완료`, `R5-A v3 static public 21/21·ready 8개 RPP/DWB
-종단·receipt·864 전체 회귀 완료` 상태다. `R5-B`는 R2 archive 복원, tick 40 causal 경로
-10/10, GROUND_TRUTH_TEMPORAL reference와 tick-bound 실행 허가까지 구현했으나 공개 RPP
-좌·우 10개와 첫 LEFT DWB가 Actor active interval 안에 완전 추월하지 못해
-`FAIL·receipt 0`이다. gate override·clearance 위반은 없었다.
-순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정을 C++20 배치 코어로
-옮겨 `109.597374s`로 줄였고, 최종 pose·clearance·실패·trace hash의 exact 동등성을
-확인했다. 계산만 약 `28.05배` 빨라졌으며 R5-B 기능 실패와 receipt `0`은 그대로다.
-native 라이브러리를 실제 로드한 최종 전체 회귀는 `892 passed`, failure·skip `0`이다.
+`R3 bounded 공간 oracle public 21/21·receipt`, `R4 public 21/21·ready reference 8개·receipt`,
+`R5-A v3 static public 21/21·ready 8개 RPP/DWB 종단·receipt` 상태다. `R5-B`는 초기 실패
+자료를 보존한 뒤 controller-matched reference와 C++ 전체 DWB 코어로 같은 방향 Actor 좌·우
+10개를 모두 추월→재합류→도착시켰다. 2026-08-16에는 별도 횡단 Actor 좌·우도 통과→재합류→
+도착했고, 두 위험 사례도 첫 재개→1.7283m 진행→`stop_epoch=2` 재정지→새 reference·허가→
+도착을 완료했다. 최신 공개 Ideal 경로 실행에서 gate override와 hard failure는 `0`이다.
+
+초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
+C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
+횡단·재정지 결과도 Ideal 합성 관측의 경로 기능 증거이며 Normal·Stress, R2-B 출현 관측,
+50ms 종단 자격, receipt, hidden과 제품 알고리즘 채택은 여전히 수행하지 않았다.
+새 횡단·재정지 시험을 포함한 최신 전체 실험실 회귀는 `916 passed`, 실패·건너뜀 `0`이다.
 
 R2의 검색 범위·독립 validator·resource limit·분류·산출물 계약은
 [`11-witness-automation-and-generalization.md`](11-witness-automation-and-generalization.md)에
@@ -52,7 +54,8 @@ ground-truth feasible과 관측상 판단 가능, 실제 controller 실행을 �
 R5-B 상세 명세와 첫 실패 결과는 각각
 [`17-r5b-ideal-temporal-tracking.md`](17-r5b-ideal-temporal-tracking.md),
 [`r5b-initial-public-temporal-tracking-result-2026-08-15.md`](r5b-initial-public-temporal-tracking-result-2026-08-15.md),
-[`R5-B C++ DWB 안전 배치 가속 결과`](r5b-cpp-dwb-safety-acceleration-result-2026-08-15.md)에 기록한다.
+[`R5-B C++ DWB 안전 배치 가속 결과`](r5b-cpp-dwb-safety-acceleration-result-2026-08-15.md),
+[`R5-B 횡단·다중 위험 결과`](r5b-crossing-and-restop-controller-result-2026-08-16.md)에 기록한다.
 R3의 검증된 pose·heading path를 persistent controller용 immutable reference와 revision-bound
 sliding window로 바꾸는 계약은
 [`15-local-maneuver-reference-contract.md`](15-local-maneuver-reference-contract.md)에 정의했다.

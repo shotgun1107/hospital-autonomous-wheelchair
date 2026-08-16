@@ -82,6 +82,7 @@ class R5BTemporalExecutionResult:
     public_id: str
     corpus_ordinal: int
     side: str
+    release_tick: int
     completed: bool
     first_controller_tick: int | None
     first_motion_tick: int | None
@@ -103,11 +104,17 @@ class R5BTemporalExecutionResult:
     trace_content_hash: str
 
     @property
+    def pass_event_tick(self) -> int | None:
+        """Return the neutral path-pass event used by crossing and overtaking cases."""
+
+        return self.overtake_tick
+
+    @property
     def passed(self) -> bool:
         return all(
             (
                 self.completed,
-                self.first_controller_tick == R5B_CAUSAL_RELEASE_TICK,
+                self.first_controller_tick == self.release_tick,
                 self.first_motion_tick is not None,
                 self.departure_tick is not None,
                 self.overtake_tick is not None,
@@ -196,6 +203,12 @@ def run_r5b_temporal_case(
     if tick_limit <= R5B_CAUSAL_RELEASE_TICK:
         raise ValueError("R5-B execution tick limit must extend past causal release")
     world = bundle.source.world
+    release_tick = max(
+        R5B_CAUSAL_RELEASE_TICK,
+        bundle.reference.validity.valid_from_control_tick,
+    )
+    if tick_limit <= release_tick:
+        raise ValueError("R5-B execution tick limit must extend past reference release")
     stream = _IdealCausalStream(bundle, tick_limit=tick_limit)
     gate = DynamicSafetyGate(
         profile=bundle.build_context.vehicle_profile,
@@ -205,7 +218,7 @@ def run_r5b_temporal_case(
     pre_release_decisions = []
     release_snapshot: DynamicObservationSnapshot | None = None
     release_directional: DirectionalPredictionResult | None = None
-    for tick in range(R5B_CAUSAL_RELEASE_TICK):
+    for tick in range(release_tick):
         snapshot, circular, directional = stream.tick(tick)
         decision = _pre_release_hold_step(
             bundle,
@@ -220,7 +233,7 @@ def run_r5b_temporal_case(
             raise RuntimeError("R5-B pre-release gate emitted nonzero motion")
         state = RobotState(state.pose, decision.command)
 
-    snapshot, _, directional = stream.tick(R5B_CAUSAL_RELEASE_TICK)
+    snapshot, _, directional = stream.tick(release_tick)
     release_snapshot = snapshot
     release_directional = directional
     if directional.status is not DirectionalPredictionStatus.READY:
@@ -231,7 +244,7 @@ def run_r5b_temporal_case(
     resume = build_resume_authorization(
         mission_id=bundle.reference.mission_id,
         stop_epoch=gate.stop_epoch,
-        issued_or_revalidated_at_s=R5B_CAUSAL_RELEASE_TICK * DYNAMIC_CONTROL_PERIOD_S,
+        issued_or_revalidated_at_s=release_tick * DYNAMIC_CONTROL_PERIOD_S,
         authorization_revision=R5B_AUTHORIZATION_REVISION,
     )
     issuer = R5BTemporalAuthorizationIssuer()
@@ -243,7 +256,7 @@ def run_r5b_temporal_case(
         initial_robot_state=state,
         gate=gate,
         authorization_revision=R5B_AUTHORIZATION_REVISION,
-        initial_tick=R5B_CAUSAL_RELEASE_TICK,
+        initial_tick=release_tick,
     )
 
     records: list[PersistentPipelineStep] = []
@@ -268,8 +281,8 @@ def run_r5b_temporal_case(
         forbidden_cells=bundle.build_context.static_grid_snapshot.forbidden_cells,
     )
 
-    for tick in range(R5B_CAUSAL_RELEASE_TICK, tick_limit):
-        if tick == R5B_CAUSAL_RELEASE_TICK:
+    for tick in range(release_tick, tick_limit):
+        if tick == release_tick:
             snapshot = release_snapshot
             directional_result = release_directional
         else:
@@ -295,10 +308,10 @@ def run_r5b_temporal_case(
                 gate_stop_epoch=gate.stop_epoch,
                 resume_authorization_revision=(
                     R5B_AUTHORIZATION_REVISION
-                    if tick == R5B_CAUSAL_RELEASE_TICK
+                    if tick == release_tick
                     else None
                 ),
-                actual_stop_confirmed=(tick == R5B_CAUSAL_RELEASE_TICK),
+                actual_stop_confirmed=(tick == release_tick),
                 local_safety_recheck_passed=True,
             )
         except (TypeError, ValueError) as error:
@@ -308,7 +321,7 @@ def run_r5b_temporal_case(
             observation_snapshot=snapshot,
             prediction_set=directional_result.prediction_set,
             resume_authorization=(
-                resume if tick == R5B_CAUSAL_RELEASE_TICK else None
+                resume if tick == release_tick else None
             ),
             temporal_execution_authorization=temporal_authorization,
             grid_snapshot=_grid_snapshot_for_observation(bundle, snapshot),
@@ -431,6 +444,7 @@ def run_r5b_temporal_case(
         public_id=bundle.source.public_id,
         corpus_ordinal=bundle.source.corpus_ordinal,
         side=bundle.source.side.value,
+        release_tick=release_tick,
         completed=completed,
         first_controller_tick=(records[0].tick_id if records else None),
         first_motion_tick=first_motion_tick,

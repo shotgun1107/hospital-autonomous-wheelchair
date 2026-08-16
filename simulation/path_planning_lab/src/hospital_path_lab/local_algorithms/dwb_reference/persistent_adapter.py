@@ -26,6 +26,7 @@ from hospital_path_lab.dynamic_trajectory_constraints import (
     ProjectDynamicSafetyConstraintCritic,
 )
 from hospital_path_lab.local_reference_contracts import (
+    LocalManeuverReference,
     ReferenceSectionKind,
     ReferenceTravelDirection,
 )
@@ -816,8 +817,14 @@ def _bind_stack_travel_direction(
         completion_tolerance,
     )
     aligned_forward = _aligned_forward_section(direction, yaw_error)
+    terminal_approach = _terminal_continuation_only(
+        tick_input.full_reference,
+        active_section_index,
+    )
     stack.generator.set_prefer_forward_progress_on_exact_ties(aligned_forward)
-    stack.goal_align_critic.set_disable_near_goal(aligned_forward)
+    stack.goal_align_critic.set_disable_near_goal(
+        aligned_forward or terminal_approach
+    )
     # A connector-tightened forward remainder keeps both alignment critics only
     # until its heading is aligned.  Leaving their forward-projection scores on
     # afterwards penalizes faster progress past the scoring endpoint and can
@@ -845,6 +852,29 @@ def _connector_tightened_forward_section(
     return direction is ReferenceTravelDirection.FORWARD and (
         completion_tolerance_m < R5_POSITION_TOLERANCE_M - _TOLERANCE
     )
+
+
+def _terminal_continuation_only(
+    reference: LocalManeuverReference,
+    active_section_index: int,
+) -> bool:
+    """Whether only zero-displacement semantic sections follow this section."""
+
+    following = reference.sections[active_section_index + 1 :]
+    if not following:
+        return False
+    for section in following:
+        if (
+            section.section_kind in {ReferenceSectionKind.ROTATE, ReferenceSectionKind.HOLD}
+            or section.entry_requires_stopped
+            or section.exit_requires_stopped
+        ):
+            return False
+        start = reference.knots[section.first_knot_index].pose
+        end = reference.knots[section.last_knot_index].pose
+        if hypot(end.x - start.x, end.y - start.y) > _TOLERANCE:
+            return False
+    return True
 
 
 def _freeze_dwb_path(path: Sequence[DwbPose2D], label: str) -> tuple[DwbPose2D, ...]:

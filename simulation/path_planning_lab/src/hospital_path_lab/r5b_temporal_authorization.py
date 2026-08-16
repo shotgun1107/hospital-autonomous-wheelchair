@@ -264,7 +264,11 @@ class R5BTemporalAuthorizationIssuer:
         _require_nonnegative_int(gate_stop_epoch, "gate_stop_epoch")
         if gate_stop_epoch != reference.stop_epoch:
             raise ValueError("R5-B authorization stop epoch does not match the reference")
-        if controller_tick < R5B_CAUSAL_RELEASE_TICK:
+        release_tick = max(
+            R5B_CAUSAL_RELEASE_TICK,
+            reference.validity.valid_from_control_tick,
+        )
+        if controller_tick < release_tick:
             raise ValueError("R5-B authorization cannot be issued before causal release")
         if not isclose(
             simulation_time_s,
@@ -286,8 +290,8 @@ class R5BTemporalAuthorizationIssuer:
             ),
         )
         if self._last is None:
-            if controller_tick != R5B_CAUSAL_RELEASE_TICK:
-                raise ValueError("R5-B first authorization must occur at frozen tick 40")
+            if controller_tick != release_tick:
+                raise ValueError("R5-B first authorization must occur at its frozen release tick")
             phase = R5BTemporalAuthorizationPhase.INITIAL_RELEASE
             prior_hash = None
             initial_release_tick = controller_tick

@@ -12,8 +12,10 @@ from math import atan2, cos, hypot, sin
 from pathlib import Path
 
 from hospital_path_lab.contracts import GridSnapshot, Pose2D, SnapshotMetadata
+from hospital_path_lab.dynamic_contracts import DYNAMIC_CONTROL_PERIOD_S
 from hospital_path_lab.dynamic_witness_contracts import (
     PassSide,
+    WitnessKind,
     WitnessPhase,
     WitnessPoint,
 )
@@ -42,6 +44,10 @@ from hospital_path_lab.local_reference_validation import (
     validate_local_maneuver_reference,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
+from hospital_path_lab.r5b_crossing_evidence import (
+    CausalR5BCrossingEvidence,
+    build_causal_r5b_crossing_evidence,
+)
 from hospital_path_lab.r5b_temporal_evidence import (
     R5B_CONTROLLER_COMPLETION_BUFFER_M,
     R5B_CONTROLLER_MATCHED_LINEAR_TARGET_MPS,
@@ -66,7 +72,7 @@ _TOLERANCE = 1e-9
 @dataclass(frozen=True, slots=True)
 class R5BTemporalReferenceBundle:
     schema_version: str
-    source: CausalR5BPassEvidence
+    source: CausalR5BPassEvidence | CausalR5BCrossingEvidence
     build_context: ReferenceBuildContext
     temporal_evidence: TemporalReferenceEvidence
     temporal_geometry: TemporalReferenceGeometryEvidence
@@ -116,13 +122,35 @@ def build_r5b_temporal_reference_bundles(
     return bundles
 
 
-def _build_bundle(source: CausalR5BPassEvidence) -> R5BTemporalReferenceBundle:
+def build_r5b_crossing_reference_bundles() -> tuple[R5BTemporalReferenceBundle, ...]:
+    """Build the two public causal crossing references without archive search."""
+
+    bundles = tuple(_build_bundle(source) for source in build_causal_r5b_crossing_evidence())
+    if len(bundles) != 2 or len({item.bundle_content_hash for item in bundles}) != 2:
+        raise RuntimeError("R5-B crossing reference build did not produce two unique bundles")
+    return bundles
+
+
+def _build_bundle(
+    source: CausalR5BPassEvidence | CausalR5BCrossingEvidence,
+) -> R5BTemporalReferenceBundle:
     context = _build_context(source)
-    kind = (
-        LocalManeuverKind.PASS_LEFT
-        if source.side is PassSide.LEFT
-        else LocalManeuverKind.PASS_RIGHT
+    crossing = source.witness.kind in (
+        WitnessKind.CROSSING_BYPASS_LEFT,
+        WitnessKind.CROSSING_BYPASS_RIGHT,
     )
+    if crossing:
+        kind = (
+            LocalManeuverKind.CROSSING_BYPASS_LEFT
+            if source.side is PassSide.LEFT
+            else LocalManeuverKind.CROSSING_BYPASS_RIGHT
+        )
+    else:
+        kind = (
+            LocalManeuverKind.PASS_LEFT
+            if source.side is PassSide.LEFT
+            else LocalManeuverKind.PASS_RIGHT
+        )
     knots, sections, departure_knot, pass_section = _convert_witness_geometry(source)
     minimum_clearance = min(
         source.validation.metrics.minimum_static_clearance_m,
@@ -235,7 +263,7 @@ def _build_bundle(source: CausalR5BPassEvidence) -> R5BTemporalReferenceBundle:
             required_map_revision=context.map_revision,
             required_mission_revision=context.mission_revision,
             required_observation_revision=None,
-            valid_from_control_tick=0,
+            valid_from_control_tick=(source.release_tick if crossing else 0),
             valid_until_control_tick=None,
         ),
         generation_reason_codes=("validated_r5b_causal_temporal_witness",),
@@ -264,7 +292,9 @@ def _build_bundle(source: CausalR5BPassEvidence) -> R5BTemporalReferenceBundle:
     )
 
 
-def _build_context(source: CausalR5BPassEvidence) -> ReferenceBuildContext:
+def _build_context(
+    source: CausalR5BPassEvidence | CausalR5BCrossingEvidence,
+) -> ReferenceBuildContext:
     world = source.world
     grid = world.grid.to_grid_map()
     forbidden = tuple(sorted(world.grid.forbidden_cells))
@@ -305,13 +335,21 @@ def _build_context(source: CausalR5BPassEvidence) -> ReferenceBuildContext:
         original_reference=world.reference_path,
         original_reference_hash=canonical_content_hash(world.reference_path),
         current_robot_pose=world.initial_state.pose,
-        control_tick=0,
-        simulation_time_s=0.0,
+        control_tick=(
+            source.release_tick
+            if isinstance(source, CausalR5BCrossingEvidence)
+            else 0
+        ),
+        simulation_time_s=(
+            source.release_tick * DYNAMIC_CONTROL_PERIOD_S
+            if isinstance(source, CausalR5BCrossingEvidence)
+            else 0.0
+        ),
     )
 
 
 def _convert_witness_geometry(
-    source: CausalR5BPassEvidence,
+    source: CausalR5BPassEvidence | CausalR5BCrossingEvidence,
 ) -> tuple[tuple[ReferenceKnot, ...], tuple[ReferenceSection, ...], int, int]:
     points = tuple(source.witness.points)
     release_index = source.release_tick
@@ -320,6 +358,12 @@ def _convert_witness_geometry(
         for index in range(len(points) - 1, release_index, -1)
         if points[index].phase is not WitnessPhase.TERMINAL_DWELL
     )
+    if source.witness.kind in (
+        WitnessKind.CROSSING_BYPASS_LEFT,
+        WitnessKind.CROSSING_BYPASS_RIGHT,
+    ):
+        return _convert_crossing_witness_geometry(source, end_index=end_index)
+
     groups: list[tuple[str, int, int]] = []
     group_start = release_index
     group_id = points[release_index + 1].source_primitive_id
@@ -412,6 +456,94 @@ def _convert_witness_geometry(
     return tuple(knots), tuple(sections), 0, pass_section
 
 
+def _convert_crossing_witness_geometry(
+    source: CausalR5BCrossingEvidence,
+    *,
+    end_index: int,
+) -> tuple[tuple[ReferenceKnot, ...], tuple[ReferenceSection, ...], int, int]:
+    points = tuple(source.witness.points)
+    event_times = (
+        source.witness.departure_time_s,
+        source.witness.pass_times_by_actor[0][1],
+        source.witness.rejoin_started_at_s,
+    )
+    if any(value is None for value in event_times):
+        raise ValueError("R5-B crossing witness is missing ordered events")
+    departure_time, pass_time, rejoin_time = event_times
+    assert departure_time is not None and pass_time is not None and rejoin_time is not None
+
+    def index_at_or_after(time_s: float) -> int:
+        return next(
+            index
+            for index in range(source.release_tick, end_index + 1)
+            if points[index].time_s + _TOLERANCE >= time_s
+        )
+
+    departure_index = index_at_or_after(departure_time)
+    pass_index = index_at_or_after(pass_time)
+    rejoin_index = index_at_or_after(rejoin_time)
+    if not (
+        source.release_tick < departure_index < pass_index < rejoin_index < end_index
+    ):
+        raise ValueError("R5-B crossing event order is invalid")
+    # The crossing events are evidence anchors, not mandatory stop/target poses.
+    # These event anchors stay separate so the controller receives the same
+    # short causal scoring slices used by the validated witness.  The common
+    # section executor handles a passed, no-stop boundary without weakening the
+    # 2 cm BYPASS endpoint tolerance (see reference_section_executor.py).
+    specs = (
+        (ReferenceSectionKind.DEPART, source.release_tick, departure_index),
+        (ReferenceSectionKind.BYPASS, departure_index, pass_index),
+        (ReferenceSectionKind.RETURN, pass_index, rejoin_index),
+        (ReferenceSectionKind.REJOIN, rejoin_index, end_index),
+    )
+    knots: list[ReferenceKnot] = []
+    sections: list[ReferenceSection] = []
+    cumulative_arc = 0.0
+    previous_pose: Pose2D | None = None
+    departure_knot = 0
+    pass_section = 1
+    for section_index, (kind, first, last) in enumerate(specs):
+        first_knot = len(knots)
+        for source_index in range(first, last + 1):
+            point = points[source_index]
+            if previous_pose is not None:
+                cumulative_arc += hypot(
+                    point.pose.x - previous_pose.x,
+                    point.pose.y - previous_pose.y,
+                )
+            roles = {ReferenceKnotRole.ANCHOR, ReferenceKnotRole.TRANSLATION}
+            if source_index in (first, last):
+                roles.add(ReferenceKnotRole.STOP_MARKER)
+            if section_index == len(specs) - 1 and source_index == last:
+                roles.add(ReferenceKnotRole.REJOIN)
+            knots.append(
+                ReferenceKnot(
+                    knot_index=len(knots),
+                    pose=point.pose,
+                    tangent_yaw=point.pose.yaw,
+                    cumulative_translation_arc_m=cumulative_arc,
+                    source_path_index=source_index,
+                    section_index=section_index,
+                    knot_roles=tuple(roles),
+                )
+            )
+            previous_pose = point.pose
+        sections.append(
+            ReferenceSection(
+                section_index=section_index,
+                section_kind=kind,
+                travel_direction=ReferenceTravelDirection.FORWARD,
+                first_knot_index=first_knot,
+                last_knot_index=len(knots) - 1,
+                entry_requires_stopped=False,
+                exit_requires_stopped=False,
+                source_primitive_indices=(),
+            )
+        )
+    return tuple(knots), tuple(sections), departure_knot, pass_section
+
+
 def _group_motion(points: tuple[WitnessPoint, ...]) -> str:
     translation = False
     rotation = False
@@ -464,5 +596,6 @@ __all__ = [
     "R5B_TEMPORAL_REFERENCE_BUNDLE_SCHEMA_VERSION",
     "R5B_TEMPORAL_REFERENCE_BUILDER_VERSION",
     "R5BTemporalReferenceBundle",
+    "build_r5b_crossing_reference_bundles",
     "build_r5b_temporal_reference_bundles",
 ]

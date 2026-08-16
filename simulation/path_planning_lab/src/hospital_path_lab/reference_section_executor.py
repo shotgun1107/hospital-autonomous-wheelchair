@@ -7,7 +7,7 @@ stop/dwell·HOLD만 동일한 상태기계로 처리한다. 이 모듈은 shared
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from math import atan2, ceil, copysign, cos, hypot, isclose, isfinite, sin, sqrt
 from re import fullmatch
@@ -21,6 +21,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceSectionKind,
     ReferenceTravelDirection,
 )
+from hospital_path_lab.local_reference_window import project_reference_cursor
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.persistent_controller_contracts import (
     PersistentControllerSessionTransition,
@@ -30,7 +31,7 @@ from hospital_path_lab.persistent_controller_contracts import (
     ReferenceExecutorState,
 )
 
-REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v4-bypass-tolerance"
+REFERENCE_SECTION_EXECUTOR_VERSION = "reference-section-executor-v6-terminal-align"
 REFERENCE_SECTION_EXECUTION_DECISION_SCHEMA_VERSION = (
     "reference-section-execution-decision-v1"
 )
@@ -268,6 +269,7 @@ class ReferenceSectionExecutor:
         self._stopped_confirmation_ticks = 0
         self._terminal_dwell_ticks = 0
         self._completion_armed_tick: int | None = None
+        self._terminal_alignment_started = False
         self._session_reset_count = 0
         self._window_update_count = 0
         self._last_processed_tick: int | None = None
@@ -319,6 +321,9 @@ class ReferenceSectionExecutor:
         elif acceptance.transition is PersistentControllerSessionTransition.WINDOW_ADVANCED:
             self._window_update_count += 1
 
+        progress_catchup = False
+        if not self._active_section_is_in_window(tick_input):
+            progress_catchup = self._advance_passed_contiguous_section(tick_input)
         if not self._active_section_is_in_window(tick_input):
             decision = self._invalidate_execution(
                 tick_input,
@@ -338,6 +343,15 @@ class ReferenceSectionExecutor:
             )
         else:
             decision = self._advance(tick_input, acceptance.transition)
+        if progress_catchup:
+            decision = replace(
+                decision,
+                decision_trace=(
+                    "passed_contiguous_section_progress_catchup",
+                    *decision.decision_trace,
+                ),
+                semantic_content_hash="",
+            )
         self._last_processed_tick = tick_input.controller_tick
         self._last_input_hash = tick_input.tick_input_content_hash
         self._last_decision = decision
@@ -358,6 +372,7 @@ class ReferenceSectionExecutor:
         self._stopped_confirmation_ticks = 0
         self._terminal_dwell_ticks = 0
         self._completion_armed_tick = None
+        self._terminal_alignment_started = False
         self._window_update_count = 0
         self._session_reset_count += 1
 
@@ -397,6 +412,8 @@ class ReferenceSectionExecutor:
             return self._advance_rotation(tick_input, transition)
         if self._state is ReferenceExecutorState.CONFIRM_ROTATION_STOP:
             return self._advance_rotation_confirmation(tick_input, transition)
+        if self._state is ReferenceExecutorState.TERMINAL_ALIGN:
+            return self._advance_terminal_alignment(tick_input, transition)
         if self._state is ReferenceExecutorState.TERMINAL_STOP:
             return self._advance_terminal_stop(tick_input, transition)
         if self._state is ReferenceExecutorState.TERMINAL_DWELL:
@@ -491,7 +508,12 @@ class ReferenceSectionExecutor:
                 self._state = ReferenceExecutorState.APPROACH_PLANNED_STOP
                 self._stopped_confirmation_ticks = 0
                 return self._advance_planned_stop_approach(tick_input, transition)
-            if not at_position or (terminal and not at_terminal_yaw):
+            if terminal and at_position and not at_terminal_yaw:
+                self._state = ReferenceExecutorState.TERMINAL_ALIGN
+                self._terminal_alignment_started = False
+                self._stopped_confirmation_ticks = 0
+                return self._advance_terminal_alignment(tick_input, transition)
+            if not at_position:
                 if direction is ReferenceTravelDirection.NONE:
                     return self._invalidate_execution(
                         tick_input,
@@ -540,6 +562,76 @@ class ReferenceSectionExecutor:
             tick_input,
             transition,
             "section_advance_loop_exhausted",
+        )
+
+    def _advance_terminal_alignment(
+        self,
+        tick_input: PersistentControllerTickInput,
+        transition: PersistentControllerSessionTransition,
+    ) -> ReferenceSectionExecutionDecision:
+        target = self._terminal_pose()
+        position_error, yaw_error = _pose_errors(tick_input.robot_state.pose, target)
+        if position_error > self.config.position_tolerance_m + _TOLERANCE:
+            self._state = ReferenceExecutorState.TRACK_TRANSLATION
+            self._terminal_alignment_started = False
+            self._stopped_confirmation_ticks = 0
+            return self._advance_translation(tick_input, transition)
+
+        if not self._terminal_alignment_started:
+            if not _actually_stopped(tick_input.robot_state.twist, self.config):
+                self._stopped_confirmation_ticks = 0
+                return self._decision(
+                    tick_input,
+                    transition,
+                    action=ReferenceExecutorAction.APPLY_COMMON_COMMAND,
+                    common_command=_bounded_stop_command(
+                        tick_input.robot_state.twist,
+                        self.config,
+                    ),
+                    target_pose=target,
+                    position_error_m=position_error,
+                    yaw_error_rad=yaw_error,
+                    planned_section_stop=True,
+                    trace=("terminal_alignment_stop_approach",),
+                )
+            self._stopped_confirmation_ticks += 1
+            if self._stopped_confirmation_ticks < self.config.stopped_confirmation_ticks:
+                return self._decision(
+                    tick_input,
+                    transition,
+                    action=ReferenceExecutorAction.APPLY_COMMON_COMMAND,
+                    common_command=Twist2D(),
+                    target_pose=target,
+                    position_error_m=position_error,
+                    yaw_error_rad=yaw_error,
+                    planned_section_stop=True,
+                    trace=("terminal_alignment_stop_confirmation",),
+                )
+            self._terminal_alignment_started = True
+            self._stopped_confirmation_ticks = 0
+
+        if abs(yaw_error) <= self.config.yaw_tolerance_rad + _TOLERANCE:
+            self._state = ReferenceExecutorState.TERMINAL_STOP
+            self._terminal_alignment_started = False
+            self._stopped_confirmation_ticks = 0
+            return self._advance_terminal_stop(tick_input, transition)
+        return self._decision(
+            tick_input,
+            transition,
+            action=ReferenceExecutorAction.APPLY_COMMON_COMMAND,
+            common_command=Twist2D(
+                0.0,
+                _bounded_rotation_command(
+                    tick_input.robot_state.twist.angular,
+                    yaw_error,
+                    self.config,
+                ),
+            ),
+            target_pose=target,
+            position_error_m=position_error,
+            yaw_error_rad=yaw_error,
+            planned_section_stop=True,
+            trace=("terminal_alignment_rotation",),
         )
 
     def _advance_planned_stop_approach(
@@ -872,6 +964,62 @@ class ReferenceSectionExecutor:
             section.section_index == self._active_section_index
             for section in tick_input.local_window.sections
         )
+
+    def _advance_passed_contiguous_section(
+        self,
+        tick_input: PersistentControllerTickInput,
+    ) -> bool:
+        """Catch up one no-stop section boundary already passed on-path.
+
+        This is not a wider endpoint tolerance.  It only applies when the
+        causal R4 window has dropped exactly the active section, the robot
+        projects within the existing 5 cm tracking tolerance onto the
+        immediate same-direction successor, and the passed boundary requires
+        neither a stop nor a direction change.  Every other missing-section
+        case remains fail-closed.
+        """
+
+        if (
+            self._reference is None
+            or self._active_section_index is None
+            or tick_input.current_gate_motion_state is not DynamicMotionState.MOVING
+            or not tick_input.local_window.sections
+        ):
+            return False
+        active_index = self._active_section_index
+        next_index = tick_input.local_window.sections[0].section_index
+        if next_index != active_index + 1 or next_index >= len(self._reference.sections):
+            return False
+        active = self._reference.sections[active_index]
+        successor = self._reference.sections[next_index]
+        if (
+            active.travel_direction
+            not in {ReferenceTravelDirection.FORWARD, ReferenceTravelDirection.REVERSE}
+            or successor.travel_direction is not active.travel_direction
+            or active.exit_requires_stopped
+            or successor.entry_requires_stopped
+            or successor.section_kind
+            in {ReferenceSectionKind.ROTATE, ReferenceSectionKind.HOLD}
+        ):
+            return False
+        projection = project_reference_cursor(
+            self._reference,
+            tick_input.robot_state.pose,
+        )
+        if (
+            projection.ambiguous
+            or projection.source_section_index < next_index
+            or projection.distance_to_reference_m
+            > self.config.position_tolerance_m + _TOLERANCE
+        ):
+            return False
+        active_end_arc = self._reference.knots[
+            active.last_knot_index
+        ].cumulative_translation_arc_m
+        if projection.cursor_arc_m + _TOLERANCE < active_end_arc:
+            return False
+        self._active_section_index = next_index
+        return True
 
     def _invalidate_execution(
         self,

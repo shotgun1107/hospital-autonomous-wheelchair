@@ -43,8 +43,22 @@ class ObservationDependency(StrEnum):
 
 class LocalManeuverKind(StrEnum):
     WAIT_OR_FOLLOW = "wait_or_follow"
+    FOLLOW_ORIGINAL = "follow_original"
     PASS_LEFT = "pass_left"
     PASS_RIGHT = "pass_right"
+    CROSSING_BYPASS_LEFT = "crossing_bypass_left"
+    CROSSING_BYPASS_RIGHT = "crossing_bypass_right"
+
+
+def is_bypass_maneuver_kind(kind: LocalManeuverKind) -> bool:
+    """Whether the reference uses depart/bypass/return/rejoin anchors."""
+
+    return kind in (
+        LocalManeuverKind.PASS_LEFT,
+        LocalManeuverKind.PASS_RIGHT,
+        LocalManeuverKind.CROSSING_BYPASS_LEFT,
+        LocalManeuverKind.CROSSING_BYPASS_RIGHT,
+    )
 
 
 class ReferenceEvidenceLevel(StrEnum):
@@ -333,7 +347,7 @@ class TemporalReferenceEvidence:
         for value in progress:
             if value is not None:
                 _require_finite_nonnegative(value, "temporal progress")
-        if self.maneuver_kind in (LocalManeuverKind.PASS_LEFT, LocalManeuverKind.PASS_RIGHT):
+        if is_bypass_maneuver_kind(self.maneuver_kind):
             if len(actors) != 1 or any(value is None for value in progress):
                 raise ValueError("R4 v1 PASS evidence requires one Actor and all progress anchors")
             assert all(value is not None for value in progress)
@@ -681,10 +695,7 @@ class LocalManeuverReference:
         _bind_or_check_hash(self, "reference_content_hash", self.expected_content_hash)
 
     def _validate_kind_and_evidence(self) -> None:
-        is_pass = self.maneuver_kind in (
-            LocalManeuverKind.PASS_LEFT,
-            LocalManeuverKind.PASS_RIGHT,
-        )
+        is_pass = is_bypass_maneuver_kind(self.maneuver_kind)
         if is_pass:
             if (
                 self.evidence_level is ReferenceEvidenceLevel.SPATIAL_ONLY
@@ -727,7 +738,11 @@ class LocalManeuverReference:
             ):
                 raise ValueError("PASS reference must start with DEPART and end with REJOIN")
         elif self.departure_knot_index is not None or self.pass_section_index is not None:
-            raise ValueError("WAIT reference cannot declare PASS anchors")
+            raise ValueError("non-bypass reference cannot declare PASS anchors")
+        elif self.maneuver_kind is LocalManeuverKind.FOLLOW_ORIGINAL:
+            kinds = tuple(section.section_kind for section in self.sections)
+            if kinds != (ReferenceSectionKind.FOLLOW_ORIGINAL,):
+                raise ValueError("FOLLOW reference must contain one original-path section")
         else:
             kinds = tuple(section.section_kind for section in self.sections)
             if (
@@ -1272,8 +1287,11 @@ def _pose_distance(left: Pose2D, right: Pose2D) -> float:
 def _candidate_sort_key(reference: LocalManeuverReference) -> tuple[int, str]:
     order = {
         LocalManeuverKind.WAIT_OR_FOLLOW: 0,
-        LocalManeuverKind.PASS_LEFT: 1,
-        LocalManeuverKind.PASS_RIGHT: 2,
+        LocalManeuverKind.FOLLOW_ORIGINAL: 1,
+        LocalManeuverKind.PASS_LEFT: 2,
+        LocalManeuverKind.PASS_RIGHT: 3,
+        LocalManeuverKind.CROSSING_BYPASS_LEFT: 4,
+        LocalManeuverKind.CROSSING_BYPASS_RIGHT: 5,
     }
     return order[reference.maneuver_kind], reference.candidate_id
 

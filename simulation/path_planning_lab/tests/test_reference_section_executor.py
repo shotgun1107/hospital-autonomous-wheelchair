@@ -292,6 +292,96 @@ def test_config_is_frozen_to_the_r5_v1_stop_and_rotation_contract() -> None:
         ReferenceSectionExecutor(bypass_completion_tolerance_m=0.0)
 
 
+def test_passed_same_direction_boundary_catches_up_without_widening_tolerance() -> None:
+    context, _, template, _, _ = _fixture()
+    kinds = (
+        ReferenceSectionKind.DEPART,
+        ReferenceSectionKind.BYPASS,
+        ReferenceSectionKind.RETURN,
+        ReferenceSectionKind.REJOIN,
+    )
+    knots = []
+    sections = []
+    for section_index, kind in enumerate(kinds):
+        first_knot = len(knots)
+        for offset in (0, 1):
+            x = float(section_index + offset)
+            roles = {ReferenceKnotRole.ANCHOR, ReferenceKnotRole.TRANSLATION}
+            if section_index == len(kinds) - 1 and offset == 1:
+                roles.update((ReferenceKnotRole.REJOIN, ReferenceKnotRole.STOP_MARKER))
+            knots.append(
+                ReferenceKnot(
+                    knot_index=len(knots),
+                    pose=Pose2D(x, 0.0, 0.0),
+                    tangent_yaw=0.0,
+                    cumulative_translation_arc_m=x,
+                    source_path_index=len(knots),
+                    section_index=section_index,
+                    knot_roles=tuple(roles),
+                )
+            )
+        sections.append(
+            ReferenceSection(
+                section_index=section_index,
+                section_kind=kind,
+                travel_direction=ReferenceTravelDirection.FORWARD,
+                first_knot_index=first_knot,
+                last_knot_index=len(knots) - 1,
+                entry_requires_stopped=False,
+                exit_requires_stopped=False,
+                source_primitive_indices=(),
+            )
+        )
+    reference = replace(
+        template,
+        knots=tuple(knots),
+        sections=tuple(sections),
+        departure_knot_index=0,
+        pass_section_index=1,
+        rejoin_knot_index=len(knots) - 1,
+        reference_content_hash="",
+    )
+    full_window = _full_window_for_reference(reference, tick=40)
+    executor = ReferenceSectionExecutor(bypass_completion_tolerance_m=0.02)
+
+    executor.step(
+        _tick_input(context, reference, full_window, tick=40, pose=Pose2D(0.0, 0.0, 0.0))
+    )
+    entered_bypass = executor.step(
+        _tick_input(context, reference, full_window, tick=41, pose=Pose2D(1.0, 0.0, 0.0))
+    )
+    assert entered_bypass.active_section_index == 1
+
+    advanced_window = LocalReferenceWindow(
+        schema_version=LOCAL_REFERENCE_WINDOW_SCHEMA_VERSION,
+        reference_session_id=reference.reference_session_id,
+        maneuver_revision=reference.maneuver_revision,
+        path_revision=reference.path_revision,
+        subgoal_revision=1,
+        full_reference_hash=reference.reference_content_hash,
+        source_control_tick=42,
+        start_knot_index=sections[2].first_knot_index,
+        end_knot_index=sections[-1].last_knot_index,
+        knots=tuple(knots[sections[2].first_knot_index :]),
+        sections=tuple(sections[2:]),
+        terminal_rejoin_included=True,
+    )
+    caught_up = executor.step(
+        _tick_input(
+            context,
+            reference,
+            advanced_window,
+            tick=42,
+            pose=Pose2D(2.20, 0.0, 0.0),
+        )
+    )
+
+    assert caught_up.action is ReferenceExecutorAction.DELEGATE_TRANSLATION
+    assert caught_up.active_section_index == 2
+    assert caught_up.failure_reason is None
+    assert caught_up.decision_trace[0] == "passed_contiguous_section_progress_catchup"
+
+
 def test_stopped_abstract_connector_consumes_existing_position_tolerance() -> None:
     case = next(
         item
