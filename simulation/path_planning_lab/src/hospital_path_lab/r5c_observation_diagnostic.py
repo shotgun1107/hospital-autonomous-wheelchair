@@ -412,6 +412,11 @@ def run_r5c_crossing_diagnostic(
         recover_after_loss=recover_after_loss,
         finish_with_confirmed_stop=recover_after_loss,
         hold_terminal_actor_state=complete_after_post_pass,
+        empty_release_authorized=(
+            (lambda: post_pass_authorization_hash is not None)
+            if complete_after_post_pass
+            else None
+        ),
     )
     return replace(
         result,
@@ -687,6 +692,7 @@ def _run_profile_diagnostic(
     recover_after_loss: bool = False,
     finish_with_confirmed_stop: bool = False,
     hold_terminal_actor_state: bool = False,
+    empty_release_authorized: Callable[[], bool] | None = None,
 ) -> R5CObservationDiagnosticResult:
     if profile not in (NORMAL_OBSERVATION_PROFILE, STRESS_OBSERVATION_PROFILE):
         raise ValueError("R5-C diagnostic accepts only frozen Normal or Stress")
@@ -738,6 +744,8 @@ def _run_profile_diagnostic(
             or (
                 hold_terminal_actor_state
                 and directional.status is DirectionalPredictionStatus.EMPTY_FRAME
+                and empty_release_authorized is not None
+                and empty_release_authorized()
             )
         )
         if release_input_usable:

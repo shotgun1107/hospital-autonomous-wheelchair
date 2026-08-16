@@ -9,6 +9,7 @@ from hospital_path_lab.dynamic_observation import (
 )
 from hospital_path_lab.r5c_observation_diagnostic import (
     R5CDiagnosticOutcome,
+    run_r5c_crossing_completion_diagnostic,
     run_r5c_crossing_diagnostic,
     run_r5c_crossing_recovery_diagnostic,
     run_r5c_restop_diagnostic,
@@ -135,6 +136,26 @@ def test_stress_recovery_never_uses_empty_or_unready_frames_to_launch() -> None:
     assert result.controller_call_count == 0
     assert result.final_motion_state is DynamicMotionState.HOLDING
     assert result.maximum_consecutive_ready_frames < 11
+    assert result.hard_failures == ()
+
+
+@pytest.mark.parametrize("side_index", (0, 1), ids=("left", "right"))
+def test_stress_completion_extension_does_not_treat_empty_as_post_pass_proof(
+    side_index: int,
+) -> None:
+    result = run_r5c_crossing_completion_diagnostic(
+        side_index=side_index,
+        profile=STRESS_OBSERVATION_PROFILE,
+        tick_limit=1000,
+    )
+
+    assert result.release_ticks == ()
+    assert result.post_pass_proof_tick is None
+    assert result.follow_original_release_tick is None
+    assert result.first_motion_tick is None
+    assert result.controller_call_count == 0
+    assert result.outcome is R5CDiagnosticOutcome.CONSERVATIVE_HOLD
+    assert result.final_motion_state is DynamicMotionState.HOLDING
     assert result.hard_failures == ()
 
 

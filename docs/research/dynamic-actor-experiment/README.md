@@ -78,7 +78,8 @@ v6·legacy 대표 Ideal replay는 원본 miss `38/22`를 재현하고 파생 wor
 묶인 `FOLLOW_ORIGINAL` 경로로 기존 terminal을 향하게 했다. 확장 Normal 진단에서 왼쪽은
 tick `1328`, 오른쪽은 tick `1432`에 완료했다. 오른쪽은 마지막 위치 이동과 최종 방향 회전을
 분리해 종점 교착을 해소했다. 상세는 [`통과 후 원 경로 복귀 결과`](r5c-post-pass-return-result-2026-08-16.md)에
-기록하며, 실제 카메라 검증은 미완료다.
+기록한다. Stress 좌·우는 방향 판단 근거가 준비되지 않아 release·이동 `0`, hard failure `0`의
+보수 정지로 닫혔다. 실제 카메라 검증은 미완료다.
 
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신

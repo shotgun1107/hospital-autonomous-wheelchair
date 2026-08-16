@@ -53,7 +53,9 @@ DWA/DWB 문제가 아니며, 현재 카메라·가시영역 계약 없이 수치
 후속 종단 진단에서는 사람 통과 증거 뒤 실제 정지하고, 새 stop epoch·현재 pose에 묶인
 `FOLLOW_ORIGINAL` 경로로 원래 terminal에 복귀시켰다. 마지막 위치 이동과 최종 방향 회전을
 분리한 최신 Normal 결과는 왼쪽 tick `1328`, 오른쪽 tick `1432` 완료이며 hard failure는
-모두 `0`이다.
+모두 `0`이다. Stress 좌·우 1600틱은 post-pass 증거가 없으므로 release·controller call·이동
+모두 `0`인 `HOLDING`으로 닫혔다. 장면 종료의 fresh EMPTY는 보존된 post-pass 증거가 있을
+때만 복귀 출발 입력으로 사용한다.
 [통과 후 복귀 결과](../../docs/research/dynamic-actor-experiment/r5c-post-pass-return-result-2026-08-16.md)를
 따르며, 실제 카메라 성능이나 다른 장면으로 확대하지 않는다.
 
