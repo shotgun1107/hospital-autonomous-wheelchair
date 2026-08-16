@@ -3,7 +3,7 @@
 - 상태: 구현 기준선
 - 작성일: 2026-08-15
 - 범위: Python 공개 연구실, 합성 ground truth Actor, R2-A exact witness
-- 비범위: 카메라·FOV·가림·검출·추적, R2-B 판정 변경, hidden, 제품 알고리즘 채택
+- 비범위: 실제 초음파 거리·배치 coverage·반사·무응답·추적, R2-B 센서 판정 변경, hidden, 제품 알고리즘 채택
 
 ## 1. 목적
 

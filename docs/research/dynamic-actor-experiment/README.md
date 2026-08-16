@@ -25,6 +25,18 @@
 - 경로 분석 7단계와 G1~G5: 미수행
 - ROS 2, 실제 센서, 모터, 사람 탑승: 범위 밖
 
+### 최신 센서 경계 — 2026-08-16
+
+팀에서 Arduino 계열 MCU와 초음파 거리 센서를 사용한다는 방향이 전달됐다. 정확한 모델·개수·
+배치·측정 주기·유효 거리는 미확정이다. 현재 합성 관측은 2차원 위치·속도를 가진
+`ActorTrack`이며 초음파 원시 거리와 동일하지 않다.
+
+다음 실제 관측 연구는 `초음파 거리·무응답 → source·시각·순서·유효성 검증 → 점유·접근
+증거 → 충분할 때만 Actor track → 기존 prediction·shared safety gate`로 분리한다. 상세는
+[ADR 0015](../../decisions/0015-ultrasonic-observation-boundary.md)와
+[초음파 관측 전환 명세](22-ultrasonic-observation-transition.md)를 따른다. 실제 센서 코드와
+제품 센서 선정은 아직 시작하지 않았다.
+
 ## 구현 현황
 
 아래 표는 2026-08-10에 시작한 동적 Actor 비교실험의 기존 구현 `1~6단계`다. 2026-08-13
@@ -41,15 +53,15 @@
 같은 세 장면의 제한된 Normal·Stress 진단도 수행했다. Normal 횡단 좌·우는 출발 뒤 첫
 frame 누락에서 감속해 실제 정지했고, Normal 다중 위험은 연속 안전 frame을 기다려 늦게
 출발한 뒤 다음 누락에서 정지했다. Stress는 방향 예측이 한 번도 `READY`가 되지 않아
-출발하지 않았다. hard failure는 없지만 완료도 없으므로 정식 R5-C 자격이 아니며, R2-B
-Actor 출현/fresh EMPTY 문제도 그대로 남는다. 상세 기준과 결과는
+출발하지 않았다. hard failure는 없지만 완료도 없으므로 정식 R5-C 자격이 아니다. 원본 R2-B
+Actor 출현/fresh EMPTY 실패는 음성 회귀로 남고, 후속 감시 진입 파생 world는 별도 판정한다. 상세 기준과 결과는
 [`R5-C 공개 관측 열화 진단`](19-r5c-public-observation-diagnostic.md),
 [`R5-C 제한 진단 결과`](r5c-public-observation-diagnostic-result-2026-08-16.md)에 기록한다.
 새 진단을 포함한 전체 회귀는 `922 passed`, 실패·건너뜀 `0`이다.
 
 이후 기존 R2-B 실패를 다시 재현해 내부 순간 출현과 관측 지연의 계약 충돌임을 확인했다.
-fresh `EMPTY`는 미래 무출현 보장이 아니므로 이동 허가로 사용하지 않는다. 실제 카메라·가시
-영역이 없는 현재 하네스에서 이 실패를 예측기 수정으로 지우지 않고 R2-B 미해결로 유지한다.
+fresh `EMPTY`는 미래 무출현 보장이 아니므로 이동 허가로 사용하지 않는다. 실제 센서·배치
+coverage가 없는 당시 하네스에서 이 실패를 예측기 수정으로 지우지 않고 음성 회귀로 유지했다.
 별도로 Actor가 처음부터 존재하는 다중 위험 Normal 장면에서 관측 상실→실제 정지→11개
 fresh READY→새 stop epoch·reference·controller session 재출발을 반복 확인했다. 7번 모두
 새 session을 사용했고 hard failure는 `0`이지만 35초 장면 안에 목표까지 완료하지 못해 최종
@@ -61,7 +73,8 @@ fresh READY→새 stop epoch·reference·controller session 재출발을 반복 
 후속으로 원본 R2-B 실패 world를 보존한 채 별도 감시 접근 world를 만들었다. 지연 출현
 Actor는 원래 진입 상태와 이후 궤적을 유지하면서 `t=0`까지 역산된 접근 track으로 관측된다.
 v6·legacy 대표 Ideal replay는 원본 miss `38/22`를 재현하고 파생 world에서 `0/0`으로
-줄었다. 이는 추상 시뮬레이션 entry coverage 결과이며 실제 카메라·FOV·가림 증거가 아니다.
+줄었다. 이는 추상 시뮬레이션 entry coverage 결과이며 실제 초음파 거리·배치 coverage·반사·
+무응답 증거가 아니다.
 상세는 [`감시 진입 명세`](21-r2b-monitored-entry-coverage.md)와
 [`감시 진입 결과`](r2b-monitored-entry-coverage-result-2026-08-16.md)에 기록한다.
 이 변경을 포함한 전체 회귀는 `935 passed`, 실패·건너뜀 `0`이다.
@@ -69,7 +82,7 @@ v6·legacy 대표 Ideal replay는 원본 miss `38/22`를 재현하고 파생 wor
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
 횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한
-진단은 보수적 정지만 확인했으며 임무 완료는 확인하지 못했다. R2-B 출현 관측, 50ms 종단
+진단은 보수적 정지만 확인했으며 임무 완료는 확인하지 못했다. 실제 초음파 관측 통합, 50ms 종단
 자격, receipt, hidden과 제품 알고리즘 채택은 여전히 수행하지 않았다.
 새 횡단·재정지 시험을 포함한 최신 전체 실험실 회귀는 `916 passed`, 실패·건너뜀 `0`이다.
 

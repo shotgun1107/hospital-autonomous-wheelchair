@@ -3,7 +3,7 @@
 - 상태: **FAIL — 원인 고정 중, qualification receipt 0**
 - 작성일: 2026-08-15
 - 범위: R2-A same-direction 공개 PASS 5 episode × 좌·우, Ideal causal 관측, persistent RPP·source-derived DWB
-- 비범위: hidden, 카메라·FOV·가림, 실제 사람, 제품 controller 채택, G1~G5, 경로 분석 7단계
+- 비범위: hidden, 실제 초음파 거리·배치 coverage·반사·무응답, 실제 사람, 제품 controller 채택, G1~G5, 경로 분석 7단계
 
 ## 1. 결론
 

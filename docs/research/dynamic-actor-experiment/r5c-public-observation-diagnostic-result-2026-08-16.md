@@ -76,7 +76,7 @@ Stress는 잡음과 누락 아래 20-frame 방향 신뢰 조건을 만족하지 
 ## 6. 말할 수 없는 것
 
 - R2-B Actor 출현/fresh EMPTY hard failure 해결
-- 카메라·FOV·가림·검출·추적 성능
+- 실제 초음파 거리·배치 coverage·반사·무응답·추적 성능
 - Normal·Stress 임무 완료
 - formal R5-C/R6 receipt
 - hidden 결과
