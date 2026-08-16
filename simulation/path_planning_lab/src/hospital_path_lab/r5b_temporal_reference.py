@@ -7,7 +7,7 @@ ground truth는 reference의 시간 증거를 검증하는 데만 쓰며 control
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import atan2, cos, hypot, sin
 from pathlib import Path
 
@@ -129,6 +129,83 @@ def build_r5b_crossing_reference_bundles() -> tuple[R5BTemporalReferenceBundle, 
     if len(bundles) != 2 or len({item.bundle_content_hash for item in bundles}) != 2:
         raise RuntimeError("R5-B crossing reference build did not produce two unique bundles")
     return bundles
+
+
+def rebind_r5b_crossing_reference_bundle(
+    bundle: R5BTemporalReferenceBundle,
+    *,
+    current_pose: Pose2D,
+    stop_epoch: int,
+    valid_from_tick: int,
+) -> R5BTemporalReferenceBundle:
+    """Bind validated crossing geometry to a new confirmed-stop session."""
+
+    if bundle.source.witness.kind not in (
+        WitnessKind.CROSSING_BYPASS_LEFT,
+        WitnessKind.CROSSING_BYPASS_RIGHT,
+    ):
+        raise ValueError("only an R5-B crossing bundle can be rebound")
+    if isinstance(stop_epoch, bool) or not isinstance(stop_epoch, int) or stop_epoch < 1:
+        raise ValueError("stop_epoch must be a positive exact integer")
+    if (
+        isinstance(valid_from_tick, bool)
+        or not isinstance(valid_from_tick, int)
+        or valid_from_tick < 0
+    ):
+        raise ValueError("valid_from_tick must be a non-negative exact integer")
+
+    context = replace(
+        bundle.build_context,
+        stop_epoch=stop_epoch,
+        current_robot_pose=current_pose,
+        control_tick=valid_from_tick,
+        simulation_time_s=valid_from_tick * DYNAMIC_CONTROL_PERIOD_S,
+        context_content_hash="",
+    )
+    session_identity = {
+        "builder_version": R5B_TEMPORAL_REFERENCE_BUILDER_VERSION,
+        "source_bundle_hash": bundle.bundle_content_hash,
+        "context_hash": context.context_content_hash,
+        "stop_epoch": stop_epoch,
+        "valid_from_tick": valid_from_tick,
+    }
+    reference = replace(
+        bundle.reference,
+        candidate_id=canonical_content_hash({"r5b_rebound_candidate": session_identity}),
+        stop_epoch=stop_epoch,
+        maneuver_revision=bundle.reference.maneuver_revision + stop_epoch - 1,
+        reference_session_id=canonical_content_hash({"r5b_rebound_session": session_identity}),
+        validity=replace(
+            bundle.reference.validity,
+            required_stop_epoch=stop_epoch,
+            valid_from_control_tick=valid_from_tick,
+        ),
+        generation_reason_codes=(
+            "protective_stop_confirmed_crossing_session_rebind",
+            "validated_r5b_causal_temporal_witness",
+        ),
+        reference_content_hash="",
+    )
+    validation = validate_local_maneuver_reference(
+        context,
+        reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+    )
+    if not validation.passed:
+        raise RuntimeError(
+            "rebound R5-B crossing reference failed validation:"
+            f" {validation.failure_codes}"
+        )
+    return R5BTemporalReferenceBundle(
+        schema_version=R5B_TEMPORAL_REFERENCE_BUNDLE_SCHEMA_VERSION,
+        source=bundle.source,
+        build_context=context,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        reference=reference,
+        validation=validation,
+    )
 
 
 def _build_bundle(
@@ -598,4 +675,5 @@ __all__ = [
     "R5BTemporalReferenceBundle",
     "build_r5b_crossing_reference_bundles",
     "build_r5b_temporal_reference_bundles",
+    "rebind_r5b_crossing_reference_bundle",
 ]

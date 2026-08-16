@@ -66,6 +66,14 @@ v6·legacy 대표 Ideal replay는 원본 miss `38/22`를 재현하고 파생 wor
 [`감시 진입 결과`](r2b-monitored-entry-coverage-result-2026-08-16.md)에 기록한다.
 이 변경을 포함한 전체 회귀는 `935 passed`, 실패·건너뜀 `0`이다.
 
+사용자 결정에 따라 초음파 전환 연구는 되돌리고, 카메라 등 상위 관측 영역이 기존
+`ActorTrack` 계약을 제공한다고 둔 경로 연구로 복귀했다. 공개 Normal 횡단 좌·우에서는
+관측 상실 뒤 실제 정지하고 현재 pose·새 stop epoch에 묶인 새 reference/controller session으로
+재출발하도록 보정했다. 좌·우 제한 시험은 모두 안전 경계를 통과했으며 world 종료 전에는
+실제 정지로 닫는다. 이는 실제 카메라 구현이나 제한 시간 내 항상 도착한 결과가 아니다.
+상세는 [`횡단 복구 명세`](22-r5c-crossing-recovery.md)와
+[`횡단 복구 결과`](r5c-crossing-recovery-result-2026-08-16.md)에 기록한다.
+
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
 횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한

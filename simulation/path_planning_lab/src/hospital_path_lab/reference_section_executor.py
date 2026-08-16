@@ -317,7 +317,10 @@ class ReferenceSectionExecutor:
             return self._last_decision
 
         if acceptance.state_reset_required:
-            self._reset_for_reference(tick_input.full_reference)
+            self._reset_for_reference(
+                tick_input.full_reference,
+                initial_section_index=tick_input.local_window.sections[0].section_index,
+            )
         elif acceptance.transition is PersistentControllerSessionTransition.WINDOW_ADVANCED:
             self._window_update_count += 1
 
@@ -357,15 +360,22 @@ class ReferenceSectionExecutor:
         self._last_decision = decision
         return decision
 
-    def _reset_for_reference(self, reference: LocalManeuverReference) -> None:
+    def _reset_for_reference(
+        self,
+        reference: LocalManeuverReference,
+        *,
+        initial_section_index: int,
+    ) -> None:
+        if not 0 <= initial_section_index < len(reference.sections):
+            raise ValueError("initial section is outside the rebound reference")
         self._reference = reference
-        self._active_section_index = 0
-        first = reference.sections[0]
+        self._active_section_index = initial_section_index
+        first = reference.sections[initial_section_index]
         if first.section_kind is ReferenceSectionKind.HOLD:
             self._state = ReferenceExecutorState.HOLD_REQUESTED
         elif first.section_kind is ReferenceSectionKind.ROTATE:
             self._state = ReferenceExecutorState.APPROACH_PLANNED_STOP
-            self._pending_after_stop_index = 0
+            self._pending_after_stop_index = initial_section_index
         else:
             self._state = ReferenceExecutorState.TRACK_TRANSLATION
             self._pending_after_stop_index = None

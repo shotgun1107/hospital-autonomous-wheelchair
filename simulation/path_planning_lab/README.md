@@ -42,6 +42,14 @@ DWA/DWB 문제가 아니며, 현재 카메라·가시영역 계약 없이 수치
 [제한 결과](../../docs/research/dynamic-actor-experiment/r5c-observation-recovery-result-2026-08-16.md)를
 따른다. R2-B 출현 문제, formal R5-C/R6, hidden과 제품 채택은 여전히 미완료다.
 
+공개 Normal 횡단 좌·우에도 같은 원칙을 확장했다. 보호정지 뒤 현재 pose·새 stop epoch와
+유효 시작 tick에 묶인 새 횡단 reference를 만들고, 새 local window가 가리키는 section에서만
+새 controller session을 시작한다. 추월 완료 판정이 현재 관측에서 되돌아가면 계속 이동하지
+않고 다시 보호정지하며, world 종료 전에는 실제 정지를 확인한다. 좌·우 제한 시험은 각각
+통과했지만 실제 카메라 성능이나 formal R5-C 완료 결과는 아니다. 상세는
+[횡단 복구 명세](../../docs/research/dynamic-actor-experiment/22-r5c-crossing-recovery.md)와
+[결과](../../docs/research/dynamic-actor-experiment/r5c-crossing-recovery-result-2026-08-16.md)를 따른다.
+
 ### R2-B 추상 감시 진입 구간 — 2026-08-16
 
 원본 v6 `second-risk`와 legacy `dynamic-change`는 음성 회귀로 보존한다. 별도 파생 world는

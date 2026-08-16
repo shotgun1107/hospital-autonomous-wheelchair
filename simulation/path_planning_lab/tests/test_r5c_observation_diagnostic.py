@@ -10,6 +10,7 @@ from hospital_path_lab.dynamic_observation import (
 from hospital_path_lab.r5c_observation_diagnostic import (
     R5CDiagnosticOutcome,
     run_r5c_crossing_diagnostic,
+    run_r5c_crossing_recovery_diagnostic,
     run_r5c_restop_diagnostic,
     run_r5c_restop_recovery_diagnostic,
 )
@@ -166,3 +167,34 @@ def test_crossing_sides_share_the_same_normal_observation_status_stream(
     assert left.observation_status_counts == right.observation_status_counts
     assert left.no_frame_tick_count == right.no_frame_tick_count
     assert left.first_prediction_loss_tick == right.first_prediction_loss_tick
+
+
+@pytest.mark.parametrize("side_index", (0, 1), ids=("left", "right"))
+def test_normal_crossing_recovery_uses_new_stop_bound_sessions(side_index: int) -> None:
+    result = run_r5c_crossing_recovery_diagnostic(
+        side_index=side_index,
+        profile=NORMAL_OBSERVATION_PROFILE,
+    )
+
+    assert result.outcome in {
+        R5CDiagnosticOutcome.COMPLETED,
+        R5CDiagnosticOutcome.CONSERVATIVE_HOLD,
+    }
+    assert len(result.release_ticks) >= 2
+    assert result.session_stop_epochs == tuple(range(1, len(result.release_ticks) + 1))
+    stop_causes = tuple(
+        sorted((*result.prediction_loss_ticks, *result.authorization_loss_ticks))
+    )
+    assert all(
+        loss_tick < stop_tick < next_release_tick
+        for loss_tick, stop_tick, next_release_tick in zip(
+            stop_causes,
+            result.confirmed_stop_ticks,
+            result.release_ticks[1:],
+            strict=False,
+        )
+    )
+    assert result.minimum_actor_clearance_m is not None
+    assert result.minimum_actor_clearance_m >= 0.08
+    assert result.minimum_static_clearance_m >= 0.08
+    assert result.hard_failures == ()

@@ -14,7 +14,9 @@ from hospital_path_lab.local_reference_contracts import (
 from hospital_path_lab.local_reference_validation import validate_local_maneuver_reference
 from hospital_path_lab.r5b_temporal_evidence import frozen_r2_archive_path
 from hospital_path_lab.r5b_temporal_reference import (
+    build_r5b_crossing_reference_bundles,
     build_r5b_temporal_reference_bundles,
+    rebind_r5b_crossing_reference_bundle,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -109,3 +111,25 @@ def test_temporal_reference_build_is_deterministic(bundles) -> None:
     assert tuple(item.bundle_content_hash for item in repeated) == tuple(
         item.bundle_content_hash for item in bundles
     )
+
+
+def test_crossing_reference_rebinds_current_pose_stop_epoch_and_session() -> None:
+    source = build_r5b_crossing_reference_bundles()[0]
+    current_pose = source.reference.knots[2].pose
+
+    rebound = rebind_r5b_crossing_reference_bundle(
+        source,
+        current_pose=current_pose,
+        stop_epoch=3,
+        valid_from_tick=240,
+    )
+
+    assert rebound.validation.passed
+    assert rebound.build_context.current_robot_pose == current_pose
+    assert rebound.build_context.stop_epoch == 3
+    assert rebound.reference.stop_epoch == 3
+    assert rebound.reference.validity.required_stop_epoch == 3
+    assert rebound.reference.validity.valid_from_control_tick == 240
+    assert rebound.reference.reference_session_id != source.reference.reference_session_id
+    assert rebound.reference.knots == source.reference.knots
+    assert rebound.reference.sections == source.reference.sections
