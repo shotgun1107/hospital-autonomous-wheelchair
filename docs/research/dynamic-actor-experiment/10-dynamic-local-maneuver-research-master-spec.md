@@ -15,8 +15,9 @@
   `R2-B 관측·prediction hard failure 2건으로 후속 보류`,
   `R3 public 21/21·receipt·729 전체 회귀 완료`,
   `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
-  `R5-1~R5-6 구현·1차 clean public qualification 실패`,
-  `R4 v2 signed reference clean public 21/21·receipt 완료, R5 v2 제한 후진 구현 미시작`
+  `R5-A v3 signed static public 21/21·receipt 완료`,
+  `R5-B 공개 Ideal same-direction 10/10·횡단 좌우·다중 위험 기능 완료`,
+  `R5-C Normal·Stress 제한 진단과 다중 위험 stop-confirmed recovery 완료, 임무 완료 0`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -674,11 +675,13 @@ R5-A 첫 clean public 실행에서 ready 8개 모두 reverse edge를 포함하�
 source primitive의 signed `travel_direction`을 명시하고 R5 v2가 해당 reverse section에서만
 최대 `0.10m/s` 후진하도록 보정한다. 기존 v1 결과와 receipt는 보존한다.
 
-R5 v2 signed static reference tracking은 완료됐고, R5-B v2 공개 첫 LEFT에서 RPP와 DWB의
-추월·재합류·도착을 확인했다. source-derived DWB의 후보 생성·41-pose 적분·7개 critic·선택·
-Manhattan 거리 지도도 C++20 수치 코어로 옮겨 첫 LEFT Python 의미를 보존했다. 그러나 좌·우
-공개 10-case와 Normal·Stress는 아직 완료하지 않았고 R2-B hard failure도 남아 있다. 따라서
-perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
+R5 v2 signed static reference tracking은 완료됐고, R5-B 공개 Ideal에서 same-direction 좌·우
+10-case, 별도 횡단 좌·우와 다중 위험 재정지·복구를 완료했다. source-derived DWB의 후보 생성·
+41-pose 적분·7개 critic·선택·Manhattan 거리 지도도 C++20 수치 코어로 옮겨 Python 의미를
+보존했다. R5-C 제한 진단에서는 Normal 입력 상실 뒤 정지와 새 stop epoch session 재출발을
+확인했으나 35초 안에 임무를 완료하지 못했고, Stress는 11개 READY를 연속 확보하지 못해
+출발하지 않았다. R2-B 내부 Actor 출현 hard failure도 남아 있다. 따라서 perception-integrated
+R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

@@ -47,6 +47,17 @@ Actor 출현/fresh EMPTY 문제도 그대로 남는다. 상세 기준과 결과�
 [`R5-C 제한 진단 결과`](r5c-public-observation-diagnostic-result-2026-08-16.md)에 기록한다.
 새 진단을 포함한 전체 회귀는 `922 passed`, 실패·건너뜀 `0`이다.
 
+이후 기존 R2-B 실패를 다시 재현해 내부 순간 출현과 관측 지연의 계약 충돌임을 확인했다.
+fresh `EMPTY`는 미래 무출현 보장이 아니므로 이동 허가로 사용하지 않는다. 실제 카메라·가시
+영역이 없는 현재 하네스에서 이 실패를 예측기 수정으로 지우지 않고 R2-B 미해결로 유지한다.
+별도로 Actor가 처음부터 존재하는 다중 위험 Normal 장면에서 관측 상실→실제 정지→11개
+fresh READY→새 stop epoch·reference·controller session 재출발을 반복 확인했다. 7번 모두
+새 session을 사용했고 hard failure는 `0`이지만 35초 장면 안에 목표까지 완료하지 못해 최종
+정지를 유지했다. Stress는 READY가 최대 10개만 연속돼 출발하지 않았다. 상세는
+[`R2-B Actor 출현과 관측 복구 명세`](20-r2b-appearance-and-observation-recovery.md),
+[`R5-C 관측 복구 제한 결과`](r5c-observation-recovery-result-2026-08-16.md)에 기록한다.
+이번 제한 복구 변경을 포함한 전체 회귀는 `926 passed`, 실패·건너뜀 `0`이다.
+
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
 횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한

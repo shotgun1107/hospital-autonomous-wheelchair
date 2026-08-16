@@ -11,6 +11,7 @@ from hospital_path_lab.r5c_observation_diagnostic import (
     R5CDiagnosticOutcome,
     run_r5c_crossing_diagnostic,
     run_r5c_restop_diagnostic,
+    run_r5c_restop_recovery_diagnostic,
 )
 
 
@@ -28,6 +29,11 @@ def normal_crossing_results():
 @pytest.fixture(scope="module")
 def normal_restop_result():
     return run_r5c_restop_diagnostic(profile=NORMAL_OBSERVATION_PROFILE)
+
+
+@pytest.fixture(scope="module")
+def normal_restop_recovery_result():
+    return run_r5c_restop_recovery_diagnostic(profile=NORMAL_OBSERVATION_PROFILE)
 
 
 @pytest.fixture(scope="module")
@@ -87,6 +93,47 @@ def test_normal_restop_stops_after_first_directional_input_loss(
     assert result.minimum_actor_clearance_m is not None
     assert result.minimum_actor_clearance_m >= 0.08
     assert result.minimum_static_clearance_m >= 0.08
+    assert result.hard_failures == ()
+
+
+def test_normal_restop_recovery_uses_new_stop_epoch_and_session_after_each_loss(
+    normal_restop_recovery_result,
+) -> None:
+    result = normal_restop_recovery_result
+
+    assert result.outcome is R5CDiagnosticOutcome.CONSERVATIVE_HOLD
+    assert result.final_motion_state is DynamicMotionState.HOLDING
+    assert result.completion_tick is None
+    assert len(result.release_ticks) >= 2
+    assert len(result.prediction_loss_ticks) == len(result.confirmed_stop_ticks)
+    assert result.controller_session_count == len(result.release_ticks)
+    assert result.session_stop_epochs == tuple(range(1, len(result.release_ticks) + 1))
+    assert all(
+        loss_tick < stop_tick < next_release_tick
+        for loss_tick, stop_tick, next_release_tick in zip(
+            result.prediction_loss_ticks,
+            result.confirmed_stop_ticks,
+            result.release_ticks[1:],
+            strict=False,
+        )
+    )
+    assert result.final_stop_epoch == result.session_stop_epochs[-1] + 1
+    assert result.minimum_actor_clearance_m is not None
+    assert result.minimum_actor_clearance_m >= 0.08
+    assert result.minimum_static_clearance_m >= 0.08
+    assert result.hard_failures == ()
+    assert result.passed_safety_boundary
+
+
+def test_stress_recovery_never_uses_empty_or_unready_frames_to_launch() -> None:
+    result = run_r5c_restop_recovery_diagnostic(profile=STRESS_OBSERVATION_PROFILE)
+
+    assert result.release_ticks == ()
+    assert result.session_stop_epochs == ()
+    assert result.first_motion_tick is None
+    assert result.controller_call_count == 0
+    assert result.final_motion_state is DynamicMotionState.HOLDING
+    assert result.maximum_consecutive_ready_frames < 11
     assert result.hard_failures == ()
 
 

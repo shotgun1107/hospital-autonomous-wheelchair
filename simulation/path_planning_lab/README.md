@@ -26,6 +26,22 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
+### R5-C 공개 관측 복구 제한 진단 — 2026-08-16
+
+기존 R2-B 두 실패를 재확인한 결과, 지도 내부 Actor 순간 출현과 `100ms` 관측 지연 때문에
+실제 Actor가 있지만 최신 Ideal frame은 fresh `EMPTY`인 구간이 생긴다. 이는 예측기나
+DWA/DWB 문제가 아니며, 현재 카메라·가시영역 계약 없이 수치 조정으로 해결할 수 없다.
+
+별도로 Actor가 `t=0`부터 존재하는 공개 다중 위험 Normal 장면에서 입력 상실 뒤 복구를
+시험했다. 방향 예측 상실 `7`회마다 실제 정지를 확인했고, 다음 출발은 새 stop epoch와 새
+현재-pose reference·controller session을 사용했다. 최소 Actor 여유 `0.5290m`, 정적 여유
+`0.3800m`, hard failure `0`이다. 반복 정지 때문에 35초 안에 목표를 완료하지 못했고 마지막
+상태는 `HOLDING`이다. Stress는 fresh READY가 최대 `10`개만 연속돼 출발하지 않았다.
+
+상세는 [복구 명세](../../docs/research/dynamic-actor-experiment/20-r2b-appearance-and-observation-recovery.md)와
+[제한 결과](../../docs/research/dynamic-actor-experiment/r5c-observation-recovery-result-2026-08-16.md)를
+따른다. R2-B 출현 문제, formal R5-C/R6, hidden과 제품 채택은 여전히 미완료다.
+
 ### R5-B v2 C++ DWB 공개 Ideal 10개 기능 PASS — 2026-08-16
 
 첫 C++ DWB 공개 실행은 `4/10`만 도착했다. 열 사례 모두 추월했지만, 더 빠른 Actor가 있는
