@@ -86,6 +86,11 @@ tick `1328`, 오른쪽은 tick `1432`에 완료했다. 오른쪽은 마지막 �
 순서는 [`R2-B 카메라 입력 연결 Gate`](23-r2b-camera-input-integration-gate.md)에 기록했다.
 실제 입력을 받기 전에는 카메라 통합 완료로 표시하지 않는다.
 
+별도로 사용자는 카메라 등 상위 영역이 기존 `ActorTrack`을 제공한다고 가정하고 경로 알고리즘
+R단계를 처음부터 다시 검증하도록 지시했다. 실제 카메라 Gate는 이 경로 lane을 막지 않는다.
+R1 재감사는 공개 13개·hard failure `0`, Ideal Capsule `100%`, 표적 회귀 `52 passed`로
+완료했다. 진행 정본은 [`카메라 ActorTrack 가정 R단계 재검증`](24-camera-assumed-r-stage-rerun.md)이다.
+
 초기 순수 Python 첫 LEFT 610틱의 약 51분 병목은 후보별 safety 판정과 DWB 수치 코어를
 C++20으로 옮겨 줄였다. 이 가속은 후보·점수·안전 기준을 바꾸지 않았다. 다만 이번 최신
 횡단·재정지 완료 결과는 Ideal 합성 관측의 경로 기능 증거다. 별도 Normal·Stress 제한
