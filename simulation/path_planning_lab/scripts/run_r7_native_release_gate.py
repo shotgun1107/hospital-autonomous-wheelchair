@@ -52,6 +52,15 @@ def _main() -> int:
         subprocess.run(
             [
                 sys.executable,
+                str(lab_root / "scripts/build_cpp_dwb_safety_core.py"),
+            ],
+            cwd=repository_root,
+            env=os.environ.copy(),
+            check=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
                 str(lab_root / "scripts/build_cpp_dwb_full_core.py"),
             ],
             cwd=repository_root,
@@ -93,7 +102,7 @@ def _main() -> int:
         )
     else:
         timing = {
-            "schema": "r7-native-dwb-qualification-v1",
+            "schema": "r7-native-dwb-qualification-v2",
             "passed": False,
             "status": "not_run",
             "reason": "native_semantic_parity_failed",
@@ -139,7 +148,7 @@ def _main() -> int:
         ],
     }
     manifest = {
-        "schema": "r7-native-release-manifest-v1",
+        "schema": "r7-native-release-manifest-v2",
         "git_before": git_before,
         "git_after": git_after,
         "source_freeze_before": source_before,
@@ -171,7 +180,8 @@ def _main() -> int:
             "snapshot_set_hash": timing["snapshot_set_hash"],
             "semantic_parity_hash": parity["content_hash"],
             "timing_result_hash": canonical_content_hash(timing),
-            "native_library_sha256": build["library_sha256"],
+            "native_full_library_sha256": build["full_core"]["library_sha256"],
+            "native_safety_library_sha256": build["safety_core"]["library_sha256"],
             "deadline_ns": timing["deadline_ns"],
             "sample_count": timing["sample_count"],
             "deadline_miss_count": timing["aggregate"]["deadline_miss_count"],

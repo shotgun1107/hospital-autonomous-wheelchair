@@ -26,6 +26,7 @@ from enum import Enum
 from hashlib import sha256
 from json import dumps
 from math import atan2, cos, isclose, isfinite, sin
+from struct import pack
 from time import perf_counter_ns
 from typing import Protocol
 
@@ -175,6 +176,8 @@ class SourceDerivedDwbController:
     def prepare_snapshot(
         self,
         snapshot: ControllerSnapshot,
+        *,
+        _semantic_identity: tuple[int, str] | None = None,
     ) -> ControllerCommandResult | None:
         """Validate, install the path, and bind per-tick project extensions.
 
@@ -185,9 +188,18 @@ class SourceDerivedDwbController:
 
         if not isinstance(snapshot, ControllerSnapshot):
             raise TypeError("source-derived DWB input must be a ControllerSnapshot")
-        return self._prepare_snapshot(snapshot, perf_counter_ns())
+        return self._prepare_snapshot(
+            snapshot,
+            perf_counter_ns(),
+            _semantic_identity=_semantic_identity,
+        )
 
-    def compute_prepared(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
+    def compute_prepared(
+        self,
+        snapshot: ControllerSnapshot,
+        *,
+        _semantic_identity: tuple[int, str] | None = None,
+    ) -> ControllerCommandResult:
         """Run the core once for the exact snapshot prepared by the caller."""
 
         if not isinstance(snapshot, ControllerSnapshot):
@@ -196,7 +208,12 @@ class SourceDerivedDwbController:
         if prepared_identity is None:
             raise ValueError("snapshot must be prepared before core computation")
         started_at = perf_counter_ns()
-        if prepared_identity != _snapshot_identity(snapshot):
+        current_identity = (
+            controller_snapshot_semantic_identity(snapshot)
+            if _semantic_identity is None
+            else _require_semantic_identity(snapshot, _semantic_identity)
+        )
+        if prepared_identity != current_identity:
             # A binder has already consumed the prepared snapshot.  Never run
             # the core with different semantic input merely because the narrow
             # provenance hash (tick/revisions/content hashes) stayed unchanged.
@@ -236,6 +253,8 @@ class SourceDerivedDwbController:
         self,
         snapshot: ControllerSnapshot,
         started_at: int,
+        *,
+        _semantic_identity: tuple[int, str] | None = None,
     ) -> ControllerCommandResult | None:
         self._prepared_snapshot_identity = None
         invalid_reason = self._invalid_reason(snapshot)
@@ -290,7 +309,11 @@ class SourceDerivedDwbController:
                 controller_requested_stop=True,
             )
 
-        self._prepared_snapshot_identity = _snapshot_identity(snapshot)
+        self._prepared_snapshot_identity = (
+            controller_snapshot_semantic_identity(snapshot)
+            if _semantic_identity is None
+            else _require_semantic_identity(snapshot, _semantic_identity)
+        )
         return None
 
     def _compute_prepared(
@@ -814,8 +837,27 @@ def _float_token(value: float) -> str:
     return "0x0.0p+0" if value == 0.0 else value.hex()
 
 
-def _snapshot_identity(snapshot: ControllerSnapshot) -> tuple[int, str]:
+def controller_snapshot_semantic_identity(
+    snapshot: ControllerSnapshot,
+) -> tuple[int, str]:
+    """Return the full immutable input identity once per controller tick."""
+
     return snapshot.tick_id, _controller_snapshot_semantic_digest(snapshot)
+
+
+def _require_semantic_identity(
+    snapshot: ControllerSnapshot,
+    identity: tuple[int, str],
+) -> tuple[int, str]:
+    if (
+        not isinstance(identity, tuple)
+        or len(identity) != 2
+        or identity[0] != snapshot.tick_id
+        or not isinstance(identity[1], str)
+        or not identity[1]
+    ):
+        raise ValueError("precomputed semantic identity does not match snapshot tick")
+    return identity
 
 
 def _controller_snapshot_semantic_digest(snapshot: ControllerSnapshot) -> str:
@@ -828,69 +870,93 @@ def _controller_snapshot_semantic_digest(snapshot: ControllerSnapshot) -> str:
     an equality contract.
     """
 
-    payload = _semantic_digest_payload(snapshot)
-    serialized = dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
-    return sha256(serialized.encode("utf-8")).hexdigest()
+    digest = sha256()
+    _update_semantic_digest(digest, snapshot)
+    return digest.hexdigest()
 
 
-def _semantic_digest_payload(value: object) -> object:
-    """Return a deterministic, type-tagged JSON value for frozen contracts."""
+def _update_semantic_digest(digest, value: object) -> None:
+    """Stream an exact, type-tagged snapshot into SHA-256 without JSON objects."""
 
     if isinstance(value, Enum):
-        return {
-            "__enum__": f"{type(value).__module__}.{type(value).__qualname__}",
-            "value": _semantic_digest_payload(value.value),
-        }
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
+        _digest_bytes(digest, b"E", _qualified_type_name(value))
+        _update_semantic_digest(digest, value.value)
+        return
+    if value is None:
+        digest.update(b"N")
+        return
+    if isinstance(value, bool):
+        digest.update(b"B1" if value else b"B0")
+        return
+    if isinstance(value, int):
+        _digest_bytes(digest, b"I", str(value).encode("ascii"))
+        return
     if isinstance(value, float):
-        return {"__float__": value.hex()}
+        digest.update(b"F")
+        digest.update(pack(">d", value))
+        return
+    if isinstance(value, str):
+        _digest_bytes(digest, b"S", value.encode("utf-8"))
+        return
     if isinstance(value, np.ndarray):
         contiguous = np.ascontiguousarray(value)
-        return {
-            "__ndarray__": True,
-            "dtype": contiguous.dtype.str,
-            "shape": list(contiguous.shape),
-            "sha256": sha256(contiguous.tobytes()).hexdigest(),
-        }
+        _digest_bytes(digest, b"A", contiguous.dtype.str.encode("ascii"))
+        digest.update(pack(">I", contiguous.ndim))
+        for dimension in contiguous.shape:
+            digest.update(pack(">Q", dimension))
+        _digest_bytes(digest, b"D", contiguous.tobytes())
+        return
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "__dataclass__": f"{type(value).__module__}.{type(value).__qualname__}",
-            "fields": {
-                item.name: _semantic_digest_payload(getattr(value, item.name))
-                for item in fields(value)
-            },
-        }
+        _digest_bytes(digest, b"C", _qualified_type_name(value))
+        for item in fields(value):
+            _digest_bytes(digest, b"K", item.name.encode("ascii"))
+            _update_semantic_digest(digest, getattr(value, item.name))
+        return
     if isinstance(value, (tuple, list)):
-        return {
-            "__sequence__": type(value).__name__,
-            "items": [_semantic_digest_payload(item) for item in value],
-        }
+        digest.update(b"T" if isinstance(value, tuple) else b"L")
+        digest.update(pack(">Q", len(value)))
+        for item in value:
+            _update_semantic_digest(digest, item)
+        return
     if isinstance(value, (set, frozenset)):
-        items = [_semantic_digest_payload(item) for item in value]
-        items.sort(
-            key=lambda item: dumps(
-                item,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            )
-        )
-        return {"__set__": type(value).__name__, "items": items}
+        digest.update(b"R" if isinstance(value, frozenset) else b"U")
+        digest.update(pack(">Q", len(value)))
+        if value and all(
+            isinstance(item, tuple)
+            and len(item) == 2
+            and all(isinstance(component, int) for component in item)
+            for item in value
+        ):
+            cells = np.asarray(sorted(value), dtype=">i8")
+            _digest_bytes(digest, b"G", cells.tobytes())
+            return
+        item_hashes: list[bytes] = []
+        for item in value:
+            item_digest = sha256()
+            _update_semantic_digest(item_digest, item)
+            item_hashes.append(item_digest.digest())
+        for item_hash in sorted(item_hashes):
+            digest.update(item_hash)
+        return
     raise TypeError(f"unsupported snapshot digest value: {type(value).__qualname__}")
+
+
+def _qualified_type_name(value: object) -> bytes:
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}".encode()
+
+
+def _digest_bytes(digest, tag: bytes, payload: bytes) -> None:
+    digest.update(tag)
+    digest.update(pack(">Q", len(payload)))
+    digest.update(payload)
 
 
 __all__ = [
     "DwbCore",
     "SnapshotBinder",
     "SourceDerivedDwbController",
+    "controller_snapshot_semantic_identity",
     "reference_path_signature",
     "source_derived_dwb_semantic_digest",
 ]

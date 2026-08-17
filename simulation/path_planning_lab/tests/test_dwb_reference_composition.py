@@ -144,6 +144,7 @@ def test_cpp_full_core_preserves_python_command_trajectory_and_diagnostics() -> 
     cpp_result = cpp_controller.step(snapshot)
 
     assert cpp_controller.native_full_core_used
+    assert cpp_controller.native_materialized_trajectory_count == 1
     assert cpp_result.status is python_result.status
     assert cpp_result.requested_twist == python_result.requested_twist
     assert cpp_result.predicted_trajectory == python_result.predicted_trajectory

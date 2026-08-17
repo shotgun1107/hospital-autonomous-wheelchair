@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from math import ceil, isnan
@@ -12,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 
-from hospital_path_lab.cpp_dwa_core import prepare_static_workspace
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_COMMAND_APPLY_LATENCY_S,
     MAX_ACTOR_SPEED_MPS,
@@ -102,6 +102,16 @@ class CppDwbSafetyResult:
     failure_time_s: float | None
     minimum_static_clearance_m: float | None
     minimum_actor_clearance_m: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class CppDwbSafetyStaticWorkspace:
+    """Only the map arrays consumed by the native DWB safety ABI."""
+
+    physical: np.ndarray
+    combined: np.ndarray
+    forbidden: np.ndarray
+    chebyshev: np.ndarray
 
 
 def _library_filename() -> str:
@@ -228,11 +238,30 @@ def _pack_actor_capsules(
     return _as_i32(counts), _as_u8(valid), _as_f64(capsules)
 
 
+def prepare_dwb_safety_static_workspace(
+    checkers: DynamicTrajectorySafetyCheckers,
+) -> CppDwbSafetyStaticWorkspace:
+    """Pack no configuration/collision grids that this core never reads."""
+
+    return CppDwbSafetyStaticWorkspace(
+        physical=_as_u8(checkers.physical_checker._effective_occupancy),
+        combined=_as_u8(checkers.combined_checker._effective_occupancy),
+        forbidden=_as_u8(checkers.combined_checker._forbidden_occupancy),
+        chebyshev=_as_f64(
+            checkers.combined_checker._center_chebyshev_distance_field_m
+        ),
+    )
+
+
 def evaluate_dwb_safety_batch(
     *,
-    trajectories: tuple[DwbTrajectory, ...],
+    trajectories: Sequence[DwbTrajectory],
     snapshot: ControllerSnapshot,
     checkers: DynamicTrajectorySafetyCheckers,
+    static_workspace: CppDwbSafetyStaticWorkspace | None = None,
+    native_commands: np.ndarray | None = None,
+    native_poses: np.ndarray | None = None,
+    native_integration_step_s: float | None = None,
 ) -> tuple[CppDwbSafetyResult, ...] | None:
     """Evaluate one frozen DWB trajectory batch, or return ``None`` for fallback."""
 
@@ -240,24 +269,51 @@ def evaluate_dwb_safety_batch(
         return None
     if not trajectories:
         raise ValueError("DWB safety batch must not be empty")
-    pose_count = len(trajectories[0].poses)
-    trajectory_step_s = trajectories[0].integration_step_s
-    if pose_count < 1 or any(
-        len(trajectory.poses) != pose_count
-        or trajectory.integration_step_s != trajectory_step_s
-        for trajectory in trajectories
+    if native_commands is not None or native_poses is not None:
+        if (
+            native_commands is None
+            or native_poses is None
+            or native_integration_step_s is None
+        ):
+            raise ValueError("native DWB safety buffers require one integration step")
+        commands = native_commands
+        poses = native_poses
+        candidate_count = commands.shape[0]
+        pose_count = poses.shape[1] if poses.ndim == 3 else 0
+        trajectory_step_s = native_integration_step_s
+    else:
+        pose_count = len(trajectories[0].poses)
+        trajectory_step_s = trajectories[0].integration_step_s
+        if pose_count < 1 or any(
+            len(trajectory.poses) != pose_count
+            or trajectory.integration_step_s != trajectory_step_s
+            for trajectory in trajectories
+        ):
+            raise ValueError(
+                "DWB safety batch trajectories must share one shape and step"
+            )
+        candidate_count = len(trajectories)
+        commands = _as_f64(
+            [(item.command.linear_mps, item.command.angular_radps) for item in trajectories]
+        )
+        poses = _as_f64(
+            [
+                [(pose.x_m, pose.y_m, pose.yaw_rad) for pose in item.poses]
+                for item in trajectories
+            ]
+        )
+    if (
+        commands.dtype != np.float64
+        or not commands.flags.c_contiguous
+        or commands.shape != (candidate_count, 2)
+        or poses.dtype != np.float64
+        or not poses.flags.c_contiguous
+        or poses.shape != (candidate_count, pose_count, 3)
+        or candidate_count != len(trajectories)
+        or pose_count < 1
+        or trajectory_step_s <= 0.0
     ):
-        raise ValueError("DWB safety batch trajectories must share one shape and step")
-
-    commands = _as_f64(
-        [(item.command.linear_mps, item.command.angular_radps) for item in trajectories]
-    )
-    poses = _as_f64(
-        [
-            [(pose.x_m, pose.y_m, pose.yaw_rad) for pose in item.poses]
-            for item in trajectories
-        ]
-    )
+        raise ValueError("native DWB safety buffers do not match trajectory batch")
     profile = snapshot.vehicle_profile
     maximum_stop_s = max(
         profile.max_forward_speed_mps / profile.max_deceleration_mps2,
@@ -278,10 +334,7 @@ def evaluate_dwb_safety_batch(
         snapshot.actor_tubes,
         time_count=actor_time_count,
     )
-    workspace = prepare_static_workspace(
-        physical_checker=checkers.physical_checker,
-        combined_checker=checkers.combined_checker,
-    )
+    workspace = static_workspace or prepare_dwb_safety_static_workspace(checkers)
     grid = snapshot.static_grid_snapshot.grid
     robot = snapshot.robot_state
     core_input = _Input(
@@ -307,7 +360,7 @@ def evaluate_dwb_safety_batch(
         robot_yaw=robot.pose.yaw,
         robot_linear=robot.twist.linear,
         robot_angular=robot.twist.angular,
-        candidate_count=len(trajectories),
+        candidate_count=candidate_count,
         pose_count=pose_count,
         trajectory_step_s=trajectory_step_s,
         commands=_double_pointer(commands),
@@ -326,11 +379,11 @@ def evaluate_dwb_safety_batch(
             else ctypes.cast(None, _DOUBLE_P)
         ),
     )
-    raw_results = (_Result * len(trajectories))()
+    raw_results = (_Result * candidate_count)()
     status = _LIBRARY.dwb_safety_core_evaluate(
         ctypes.byref(core_input),
         raw_results,
-        len(trajectories),
+        candidate_count,
     )
     if status != 0:
         raise RuntimeError(f"C++ DWB safety core rejected input with status {status}")

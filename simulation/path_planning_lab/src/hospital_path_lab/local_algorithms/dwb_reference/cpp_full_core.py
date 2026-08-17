@@ -11,7 +11,8 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from math import isnan
 from pathlib import Path
 
@@ -271,8 +272,83 @@ def _generator_modes(generator) -> tuple[int, int]:
     return travel, prefer
 
 
-def generate_dwb_full_batch(generator, request: DwbGeneratorRequest) -> DwbGeneratorResult | None:
-    """Generate one exact native lattice, or return ``None`` for Python fallback."""
+@dataclass(frozen=True, slots=True)
+class _NativeDwbBatch:
+    result: DwbGeneratorResult
+    commands: np.ndarray
+    poses: np.ndarray
+    integration_step_s: float
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeEvaluationWorkspace:
+    source_ids: tuple[int, ...]
+    blocked: np.ndarray
+    fields: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+
+
+class _LazyNativeTrajectories(Sequence[DwbTrajectory]):
+    """Materialize native trajectories only when a diagnostic consumer asks.
+
+    The online native core needs the packed arrays and ultimately one selected
+    trajectory.  Building 217 x 41 Python pose objects before native scoring is
+    pure allocation overhead.  The public generator helper still requests an
+    eager tuple, while the controller path keeps this view and creates only the
+    selected trajectory.
+    """
+
+    __slots__ = ("_commands", "_poses", "_step_s", "_cache")
+
+    def __init__(
+        self,
+        commands: np.ndarray,
+        poses: np.ndarray,
+        integration_step_s: float,
+    ) -> None:
+        self._commands = commands
+        self._poses = poses
+        self._step_s = integration_step_s
+        self._cache: dict[int, DwbTrajectory] = {}
+
+    def __len__(self) -> int:
+        return self._commands.shape[0]
+
+    @property
+    def materialized_count(self) -> int:
+        return len(self._cache)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return tuple(self[item] for item in range(*index.indices(len(self))))
+        normalized = index + len(self) if index < 0 else index
+        if not 0 <= normalized < len(self):
+            raise IndexError(index)
+        cached = self._cache.get(normalized)
+        if cached is not None:
+            return cached
+        command = self._commands[normalized]
+        trajectory = DwbTrajectory(
+            command=DwbTwist2D(float(command[0]), float(command[1])),
+            poses=tuple(
+                DwbPose2D(float(x), float(y), float(yaw))
+                for x, y, yaw in self._poses[normalized]
+            ),
+            integration_step_s=self._step_s,
+        )
+        self._cache[normalized] = trajectory
+        return trajectory
+
+    def __iter__(self) -> Iterator[DwbTrajectory]:
+        return (self[index] for index in range(len(self)))
+
+
+def _generate_native_batch(
+    generator,
+    request: DwbGeneratorRequest,
+    *,
+    materialize_trajectories: bool,
+) -> _NativeDwbBatch | None:
+    """Generate one lattice while retaining its contiguous native buffers."""
 
     if _LIBRARY is None:
         return None
@@ -325,18 +401,19 @@ def generate_dwb_full_batch(generator, request: DwbGeneratorRequest) -> DwbGener
     if return_code != 0:
         raise ValueError(f"C++ DWB generator rejected request: {return_code}")
     count = native_output.candidate_count
-    native_trajectories = tuple(
-        DwbTrajectory(
-            command=DwbTwist2D(float(commands[index, 0]), float(commands[index, 1])),
-            poses=tuple(
-                DwbPose2D(float(x), float(y), float(yaw))
-                for x, y, yaw in poses[index, : native_output.pose_count]
-            ),
-            integration_step_s=config.integration_step_s,
-        )
-        for index in range(count)
+    packed_commands = commands[:count]
+    packed_poses = poses[:count, : native_output.pose_count]
+    lazy_trajectories = _LazyNativeTrajectories(
+        packed_commands,
+        packed_poses,
+        config.integration_step_s,
     )
-    return DwbGeneratorResult(
+    native_trajectories = (
+        tuple(lazy_trajectories)
+        if materialize_trajectories
+        else lazy_trajectories
+    )
+    result = DwbGeneratorResult(
         linear_window_mps=(native_output.linear_minimum, native_output.linear_maximum),
         angular_window_radps=(native_output.angular_minimum, native_output.angular_maximum),
         linear_samples_mps=tuple(float(value) for value in linear[: native_output.linear_count]),
@@ -345,6 +422,23 @@ def generate_dwb_full_batch(generator, request: DwbGeneratorRequest) -> DwbGener
         ),
         trajectories=native_trajectories,
     )
+    return _NativeDwbBatch(
+        result=result,
+        commands=packed_commands,
+        poses=packed_poses,
+        integration_step_s=config.integration_step_s,
+    )
+
+
+def generate_dwb_full_batch(generator, request: DwbGeneratorRequest) -> DwbGeneratorResult | None:
+    """Generate one exact native lattice, or return ``None`` for Python fallback."""
+
+    batch = _generate_native_batch(
+        generator,
+        request,
+        materialize_trajectories=True,
+    )
+    return None if batch is None else batch.result
 
 
 def _distance_array(critic, *, allow_disabled: bool = False) -> np.ndarray:
@@ -435,6 +529,8 @@ class CppDwbReferenceCore:
             ):
                 binding.critic._use_cpp_distance_field = True
         self.native_used = False
+        self.materialized_trajectory_count = 0
+        self._evaluation_workspace: _NativeEvaluationWorkspace | None = None
 
     @property
     def path(self):
@@ -446,13 +542,17 @@ class CppDwbReferenceCore:
 
     def set_path(self, path) -> None:
         self._fallback.set_path(path)
+        self._evaluation_workspace = None
 
     def reset(self) -> None:
         self._fallback.reset()
         self.native_used = False
+        self.materialized_trajectory_count = 0
+        self._evaluation_workspace = None
 
     def compute(self, request: DwbGeneratorRequest) -> DwbCoreResult:
         self.native_used = False
+        self.materialized_trajectory_count = 0
         if _LIBRARY is None or self.critic_names != _EXPECTED_CRITICS:
             return self._fallback.compute(request)
         if not self._supported_critics():
@@ -461,15 +561,28 @@ class CppDwbReferenceCore:
         for binding in self._critics:
             if binding.critic.prepare(request) is False:
                 raise DwbPreparationError(binding.name)
-        generated = generate_dwb_full_batch(self._generator, request)
-        if generated is None:  # pragma: no cover - checked above
+        native_batch = _generate_native_batch(
+            self._generator,
+            request,
+            materialize_trajectories=False,
+        )
+        if native_batch is None:  # pragma: no cover - checked above
             return self._fallback.compute(request)
-        safety_batch = self._critics[0].critic.score_batch(generated.trajectories)
+        generated = native_batch.result
+        safety_critic = self._critics[0].critic
+        safety_batch = safety_critic.score_batch(
+            generated.trajectories,
+            native_commands=native_batch.commands,
+            native_poses=native_batch.poses,
+            native_integration_step_s=native_batch.integration_step_s,
+        )
         if safety_batch is None:
             return self._fallback.compute(request)
         evaluations, selected_index, selected_score = self._evaluate_native(
             generated,
             safety_batch,
+            native_batch.commands,
+            native_batch.poses,
         )
         self.native_used = True
         if selected_index < 0:
@@ -477,6 +590,9 @@ class CppDwbReferenceCore:
         selected = generated.trajectories[selected_index]
         for binding in self._critics:
             binding.critic.debrief(selected.command)
+        lazy_trajectories = generated.trajectories
+        if isinstance(lazy_trajectories, _LazyNativeTrajectories):
+            self.materialized_trajectory_count = lazy_trajectories.materialized_count
         return DwbCoreResult(
             command=selected.command,
             trajectory=selected,
@@ -497,14 +613,7 @@ class CppDwbReferenceCore:
             and hasattr(self._critics[0].critic, "score_batch")
         )
 
-    def _evaluate_native(self, generated, safety_batch):
-        trajectories = generated.trajectories
-        commands = _as_f64(
-            [(item.command.linear_mps, item.command.angular_radps) for item in trajectories]
-        )
-        poses = _as_f64(
-            [[(pose.x_m, pose.y_m, pose.yaw_rad) for pose in item.poses] for item in trajectories]
-        )
+    def _evaluate_native(self, generated, safety_batch, commands, poses):
         safety_failures = _as_i32(
             [
                 0
@@ -526,20 +635,20 @@ class CppDwbReferenceCore:
         path_dist = self._critics[5].critic
         goal_dist = self._critics[6].critic
         grid = path_dist.grid
-        blocked = _blocked_array(grid)
-        fields = (
-            _distance_array(goal_align, allow_disabled=goal_align.disabled_near_goal),
-            _distance_array(path_align, allow_disabled=path_align.disabled_near_goal),
-            _distance_array(path_dist),
-            _distance_array(goal_dist),
+        workspace = self._native_evaluation_workspace(
+            grid,
+            goal_align,
+            path_align,
+            path_dist,
+            goal_dist,
         )
         rotate_state = rotate.native_scoring_state
         oscillation_state = oscillation.native_restriction_flags
         native_input = _EvaluationInput(
             _ABI_VERSION,
-            len(trajectories),
-            len(trajectories[0].poses),
-            trajectories[0].integration_step_s,
+            commands.shape[0],
+            poses.shape[1],
+            self._generator.config.integration_step_s,
             _double_pointer(commands),
             _double_pointer(poses),
             _int32_pointer(safety_failures),
@@ -550,11 +659,11 @@ class CppDwbReferenceCore:
             grid.resolution_m,
             grid.origin_x_m,
             grid.origin_y_m,
-            _uint8_pointer(blocked),
-            _int32_pointer(fields[0]),
-            _int32_pointer(fields[1]),
-            _int32_pointer(fields[2]),
-            _int32_pointer(fields[3]),
+            _uint8_pointer(workspace.blocked),
+            _int32_pointer(workspace.fields[0]),
+            _int32_pointer(workspace.fields[1]),
+            _int32_pointer(workspace.fields[2]),
+            _int32_pointer(workspace.fields[3]),
             goal_align.forward_point_distance_m,
             goal_align._projection_sign,
             path_align._projection_sign,
@@ -568,7 +677,7 @@ class CppDwbReferenceCore:
             rotate_state[5],
             *(int(value) for value in oscillation_state),
         )
-        count = len(trajectories)
+        count = commands.shape[0]
         statuses = np.empty(count, dtype=np.int32)
         accumulated = np.empty(count, dtype=np.float64)
         raw = np.empty((count, _CRITIC_COUNT), dtype=np.float64)
@@ -588,7 +697,7 @@ class CppDwbReferenceCore:
         evaluations = tuple(
             self._evaluation_from_native(
                 index,
-                trajectories[index],
+                DwbTwist2D(float(commands[index, 0]), float(commands[index, 1])),
                 int(statuses[index]),
                 float(accumulated[index]),
                 raw[index],
@@ -602,10 +711,53 @@ class CppDwbReferenceCore:
             float(native_output.selected_total_score),
         )
 
+    def _native_evaluation_workspace(
+        self,
+        grid,
+        goal_align,
+        path_align,
+        path_dist,
+        goal_dist,
+    ) -> _NativeEvaluationWorkspace:
+        distance_fields = (
+            goal_align.distance_field,
+            path_align.distance_field,
+            path_dist.distance_field,
+            goal_dist.distance_field,
+        )
+        source_ids = (
+            id(grid),
+            id(grid.blocked_cells),
+            *(id(field) for field in distance_fields),
+            int(goal_align.disabled_near_goal),
+            int(path_align.disabled_near_goal),
+        )
+        cached = self._evaluation_workspace
+        if cached is not None and cached.source_ids == source_ids:
+            return cached
+        workspace = _NativeEvaluationWorkspace(
+            source_ids=source_ids,
+            blocked=_blocked_array(grid),
+            fields=(
+                _distance_array(
+                    goal_align,
+                    allow_disabled=goal_align.disabled_near_goal,
+                ),
+                _distance_array(
+                    path_align,
+                    allow_disabled=path_align.disabled_near_goal,
+                ),
+                _distance_array(path_dist),
+                _distance_array(goal_dist),
+            ),
+        )
+        self._evaluation_workspace = workspace
+        return workspace
+
     def _evaluation_from_native(
         self,
         index,
-        trajectory,
+        command,
         status_value,
         accumulated,
         raw_row,
@@ -650,7 +802,7 @@ class CppDwbReferenceCore:
             )
         return CandidateEvaluationDiagnostic(
             candidate_index=index,
-            command=trajectory.command,
+            command=command,
             status=status,
             accumulated_score=accumulated,
             critic_scores=scores,

@@ -318,6 +318,8 @@ class PathDistCritic(_PathHoldingCritic):
         if not cells:
             self._field = None
             return False
+        if self._field is not None and self._field.source_cells == cells:
+            return True
         self._field = build_manhattan_distance_field(
             self.grid,
             cells,
@@ -359,9 +361,12 @@ class GoalDistCritic(_PathHoldingCritic):
         if not cells:
             self._field = None
             return False
+        source = (cells[-1],)
+        if self._field is not None and self._field.source_cells == source:
+            return True
         self._field = build_manhattan_distance_field(
             self.grid,
-            (cells[-1],),
+            source,
             prefer_native=bool(getattr(self, "_use_cpp_distance_field", False)),
         )
         return True
@@ -518,9 +523,12 @@ class GoalAlignCritic(GoalDistCritic):
         if not cells:
             self._field = None
             return False
+        source = (cells[-1],)
+        if self._field is not None and self._field.source_cells == source:
+            return True
         self._field = build_manhattan_distance_field(
             self.grid,
-            (cells[-1],),
+            source,
             prefer_native=bool(getattr(self, "_use_cpp_distance_field", False)),
         )
         return True

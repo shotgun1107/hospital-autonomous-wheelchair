@@ -45,6 +45,7 @@ from hospital_path_lab.grid import GridMap
 from hospital_path_lab.local_algorithms.dwb_reference.contracts import (
     DwbGeneratorRequest,
     DwbPose2D,
+    DwbTrajectory,
     DwbTwist2D,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.trajectory_generator import (
@@ -218,3 +219,52 @@ def test_cpp_dwb_batch_matches_python_shared_safety(directional: bool) -> None:
                 rel_tol=0.0,
                 abs_tol=2e-12,
             )
+
+
+def test_cpp_static_lower_bound_keeps_nearby_noncolliding_cell_in_minimum() -> None:
+    snapshot = _snapshot(actor_x=5.0)
+    occupancy = snapshot.static_grid_snapshot.grid.occupancy.copy()
+    occupancy[100, 155] = True
+    snapshot = replace(
+        snapshot,
+        static_grid_snapshot=replace(
+            snapshot.static_grid_snapshot,
+            grid=GridMap(occupancy, resolution_m=0.02),
+        ),
+    )
+    post_apply = DwbPose2D(2.01, 2.0, 0.0)
+    trajectory = DwbTrajectory(
+        command=DwbTwist2D(0.0, 0.0),
+        poses=(post_apply,) * 41,
+        integration_step_s=0.05,
+    )
+    checkers = build_dynamic_trajectory_safety_checkers(
+        grid_snapshot=snapshot.static_grid_snapshot,
+        profile=snapshot.vehicle_profile,
+    )
+
+    native = evaluate_dwb_safety_batch(
+        trajectories=(trajectory,),
+        snapshot=snapshot,
+        checkers=checkers,
+    )
+    expected = evaluate_dynamic_trajectory_safety(
+        _proposal_from_trajectory(snapshot, trajectory),
+        robot_state=snapshot.robot_state,
+        grid_snapshot=snapshot.static_grid_snapshot,
+        prediction_set=snapshot.actor_tubes,
+        profile=snapshot.vehicle_profile,
+        checkers=checkers,
+    )
+
+    assert native is not None
+    assert native[0].failure is CppDwbSafetyFailure.SAFE
+    assert native[0].minimum_static_clearance_m is not None
+    assert expected.minimum_static_clearance_m is not None
+    assert native[0].minimum_static_clearance_m < 1.0
+    assert isclose(
+        native[0].minimum_static_clearance_m,
+        expected.minimum_static_clearance_m,
+        rel_tol=0.0,
+        abs_tol=2e-12,
+    )

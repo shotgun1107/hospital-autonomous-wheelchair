@@ -12,8 +12,7 @@ nor evidence of product or human-rider safety.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass, replace
-from enum import Enum
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from json import dumps
 from math import cos, isfinite, pi, sin
@@ -34,7 +33,10 @@ from hospital_path_lab.dynamic_trajectory_constraints import (
 )
 from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1, VehicleProfile
 
-from .adapter import SourceDerivedDwbController
+from .adapter import (
+    SourceDerivedDwbController,
+    controller_snapshot_semantic_identity,
+)
 from .contracts import (
     NAV2_NAVIGATION_COMMIT,
     ROS1_NAVIGATION_COMMIT,
@@ -155,10 +157,23 @@ class SourceDerivedDynamicDwbController:
             return False
         return bool(getattr(stack.adapter.core, "native_used", False))
 
+    @property
+    def native_materialized_trajectory_count(self) -> int | None:
+        """Python trajectories allocated by the latest native control tick."""
+
+        stack = self._stack
+        if stack is None:
+            return None
+        return getattr(
+            stack.adapter.core,
+            "materialized_trajectory_count",
+            None,
+        )
+
     def step(self, snapshot: ControllerSnapshot) -> ControllerCommandResult:
         if not isinstance(snapshot, ControllerSnapshot):
             raise TypeError("source-derived DWB input must be a ControllerSnapshot")
-        identity = snapshot.tick_id, _semantic_snapshot_digest(snapshot)
+        identity = controller_snapshot_semantic_identity(snapshot)
         if identity == self._last_snapshot_identity and self._last_result is not None:
             return self._last_result
         if (
@@ -177,7 +192,10 @@ class SourceDerivedDynamicDwbController:
             return result
 
         stack = self._ensure_stack(snapshot)
-        preparation_failure = stack.adapter.prepare_snapshot(snapshot)
+        preparation_failure = stack.adapter.prepare_snapshot(
+            snapshot,
+            _semantic_identity=identity,
+        )
         if preparation_failure is not None:
             self._remember(identity, preparation_failure)
             return preparation_failure
@@ -210,7 +228,10 @@ class SourceDerivedDynamicDwbController:
             self._remember(identity, result)
             return result
         if goal.state is DwbGoalControlState.TRACK_PATH:
-            result = stack.adapter.compute_prepared(snapshot)
+            result = stack.adapter.compute_prepared(
+                snapshot,
+                _semantic_identity=identity,
+            )
         else:
             result = self._goal_override_result(snapshot, stack, goal)
         self._remember(identity, result)
@@ -427,73 +448,6 @@ def _static_geometry_signature(
     return sha256(
         dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
     ).hexdigest()
-
-
-def _semantic_snapshot_digest(snapshot: ControllerSnapshot) -> str:
-    """Hash every immutable controller input, not only provenance metadata.
-
-    ``ControllerSnapshot.input_content_hash`` intentionally covers provenance,
-    but it does not cover robot state, path geometry, goal pose, Actor tubes, or
-    the grid bytes.  Same-tick command caching must include those values too.
-    """
-
-    payload = _semantic_digest_payload(snapshot)
-    serialized = dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
-    return sha256(serialized.encode("utf-8")).hexdigest()
-
-
-def _semantic_digest_payload(value):
-    """Return a deterministic, type-tagged JSON value for snapshot contracts."""
-
-    if isinstance(value, Enum):
-        return {
-            "__enum__": f"{type(value).__module__}.{type(value).__qualname__}",
-            "value": _semantic_digest_payload(value.value),
-        }
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
-        return {"__float__": value.hex()}
-    if isinstance(value, np.ndarray):
-        contiguous = np.ascontiguousarray(value)
-        return {
-            "__ndarray__": True,
-            "dtype": contiguous.dtype.str,
-            "shape": list(contiguous.shape),
-            "sha256": sha256(contiguous.tobytes()).hexdigest(),
-        }
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "__dataclass__": f"{type(value).__module__}.{type(value).__qualname__}",
-            "fields": {
-                item.name: _semantic_digest_payload(getattr(value, item.name))
-                for item in fields(value)
-            },
-        }
-    if isinstance(value, (tuple, list)):
-        return {
-            "__sequence__": type(value).__name__,
-            "items": [_semantic_digest_payload(item) for item in value],
-        }
-    if isinstance(value, (set, frozenset)):
-        items = [_semantic_digest_payload(item) for item in value]
-        items.sort(
-            key=lambda item: dumps(
-                item,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            )
-        )
-        return {"__set__": type(value).__name__, "items": items}
-    raise TypeError(f"unsupported snapshot digest value: {type(value).__qualname__}")
 
 
 def _goal_session_key(snapshot: ControllerSnapshot) -> str:

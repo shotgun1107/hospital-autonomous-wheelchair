@@ -36,9 +36,9 @@ from hospital_path_lab.local_algorithms.dwb_reference import (
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 
-R7_NATIVE_QUALIFICATION_VERSION = "r7-native-dwb-qualification-v1"
-R7_GATE_SCHEMA = "r7-native-release-gate-v1"
-R7_RECEIPT_SCHEMA = "r7-native-qualification-receipt-v1"
+R7_NATIVE_QUALIFICATION_VERSION = "r7-native-dwb-qualification-v2"
+R7_GATE_SCHEMA = "r7-native-release-gate-v2"
+R7_RECEIPT_SCHEMA = "r7-native-qualification-receipt-v2"
 R7_DEADLINE_NS = 50_000_000
 R7_STANDARD_WARMUPS = 30
 R7_STANDARD_REPEATS = 100
@@ -57,11 +57,19 @@ _SOURCE_PATHS = (
     "docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md",
     "simulation/path_planning_lab/native/dwb_full_core.cpp",
     "simulation/path_planning_lab/native/dwb_full_core.h",
+    "simulation/path_planning_lab/native/dwb_safety_core.cpp",
+    "simulation/path_planning_lab/native/dwb_safety_core.h",
     "simulation/path_planning_lab/scripts/build_cpp_dwb_full_core.py",
+    "simulation/path_planning_lab/scripts/build_cpp_dwb_safety_core.py",
     "simulation/path_planning_lab/scripts/run_r7_native_release_gate.py",
     "simulation/path_planning_lab/src/hospital_path_lab/r7_native_qualification.py",
     "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/cpp_full_core.py",
+    "simulation/path_planning_lab/src/hospital_path_lab/cpp_dwb_safety_core.py",
+    "simulation/path_planning_lab/src/hospital_path_lab/cpp_dwa_core.py",
     "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/composition.py",
+    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/adapter.py",
+    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/contracts.py",
+    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/critics.py",
     "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py",
     "simulation/path_planning_lab/src/hospital_path_lab/dynamic_trajectory_constraints.py",
 )
@@ -349,9 +357,6 @@ def source_freeze(repository_root: Path) -> dict[str, object]:
 
 def native_build_metadata(repository_root: Path) -> dict[str, object]:
     lab = repository_root / "simulation/path_planning_lab"
-    source = lab / "native/dwb_full_core.cpp"
-    header = lab / "native/dwb_full_core.h"
-    library = lab / "src/hospital_path_lab/_native/dwb_full_core.dll"
     zig_spec = find_spec("ziglang")
     zig_path: Path | None = None
     if zig_spec is not None and zig_spec.submodule_search_locations is not None:
@@ -373,13 +378,10 @@ def native_build_metadata(repository_root: Path) -> dict[str, object]:
         package_version = version("ziglang")
     except PackageNotFoundError:
         package_version = None
-    return {
-        "compiler": None if zig_path is None else str(zig_path.resolve()),
-        "compiler_version": compiler_version,
-        "ziglang_package_version": package_version,
-        "language_standard": "c++20",
-        "build_type": "O3",
-        "flags": [
+    full_core = _native_component_metadata(
+        lab,
+        stem="dwb_full_core",
+        flags=(
             "-std=c++20",
             "-O3",
             "-ffp-contract=off",
@@ -387,7 +389,42 @@ def native_build_metadata(repository_root: Path) -> dict[str, object]:
             "-fno-builtin-cos",
             "-Wno-nullability-completeness",
             "-shared",
-        ],
+        ),
+    )
+    safety_core = _native_component_metadata(
+        lab,
+        stem="dwb_safety_core",
+        flags=(
+            "-std=c++20",
+            "-O3",
+            "-Wno-nullability-completeness",
+            "-shared",
+        ),
+    )
+    return {
+        "compiler": None if zig_path is None else str(zig_path.resolve()),
+        "compiler_version": compiler_version,
+        "ziglang_package_version": package_version,
+        "language_standard": "c++20",
+        "build_type": "O3",
+        "full_core": full_core,
+        "safety_core": safety_core,
+    }
+
+
+def _native_component_metadata(
+    lab: Path,
+    *,
+    stem: str,
+    flags: tuple[str, ...],
+) -> dict[str, object]:
+    source = lab / f"native/{stem}.cpp"
+    header = lab / f"native/{stem}.h"
+    suffix = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
+    prefix = "" if sys.platform == "win32" else "lib"
+    library = lab / f"src/hospital_path_lab/_native/{prefix}{stem}{suffix}"
+    return {
+        "flags": list(flags),
         "source_sha256": _file_sha256(source),
         "header_sha256": _file_sha256(header),
         "library_path": str(library.resolve()),

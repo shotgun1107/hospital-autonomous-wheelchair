@@ -14,6 +14,7 @@ that later adapters must cross an explicit contract boundary.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import isfinite
 
@@ -138,7 +139,7 @@ class DwbGeneratorResult:
     angular_window_radps: tuple[float, float]
     linear_samples_mps: tuple[float, ...]
     angular_samples_radps: tuple[float, ...]
-    trajectories: tuple[DwbTrajectory, ...]
+    trajectories: Sequence[DwbTrajectory]
 
     @property
     def candidate_count(self) -> int:

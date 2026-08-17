@@ -25,6 +25,15 @@ struct Pose {
   double yaw;
 };
 
+struct PoseGeometry {
+  Pose pose;
+  double cosine;
+  double sine;
+  double extent_x;
+  double extent_y;
+  std::array<Point, 4> footprint;
+};
+
 double normalize_angle(double angle) {
   double normalized = std::fmod(angle + kPi, 2.0 * kPi);
   if (normalized < 0.0) {
@@ -166,12 +175,13 @@ std::array<Point, 4> local_rectangle(const DwbSafetyInput& input) {
   }};
 }
 
-Point to_local(const Pose& pose, const Point& point) {
-  const double cosine = std::cos(pose.yaw);
-  const double sine = std::sin(pose.yaw);
-  const double dx = point.x - pose.x;
-  const double dy = point.y - pose.y;
-  return {cosine * dx + sine * dy, -sine * dx + cosine * dy};
+Point to_local(const PoseGeometry& geometry, const Point& point) {
+  const double dx = point.x - geometry.pose.x;
+  const double dy = point.y - geometry.pose.y;
+  return {
+      geometry.cosine * dx + geometry.sine * dy,
+      -geometry.sine * dx + geometry.cosine * dy,
+  };
 }
 
 bool point_inside_rectangle(
@@ -211,9 +221,11 @@ double rectangle_segment_distance(
   return best;
 }
 
-std::array<Point, 4> footprint(const DwbSafetyInput& input, const Pose& pose) {
-  const double cosine = std::cos(pose.yaw);
-  const double sine = std::sin(pose.yaw);
+std::array<Point, 4> footprint(
+    const DwbSafetyInput& input,
+    const Pose& pose,
+    const double cosine,
+    const double sine) {
   const auto local = local_rectangle(input);
   std::array<Point, 4> world{};
   for (std::size_t index = 0; index < local.size(); ++index) {
@@ -223,6 +235,21 @@ std::array<Point, 4> footprint(const DwbSafetyInput& input, const Pose& pose) {
     };
   }
   return world;
+}
+
+PoseGeometry pose_geometry(const DwbSafetyInput& input, const Pose& pose) {
+  const double cosine = std::cos(pose.yaw);
+  const double sine = std::sin(pose.yaw);
+  return {
+      pose,
+      cosine,
+      sine,
+      std::abs(cosine) * input.half_length_m +
+          std::abs(sine) * input.half_width_m,
+      std::abs(sine) * input.half_length_m +
+          std::abs(cosine) * input.half_width_m,
+      footprint(input, pose, cosine, sine),
+  };
 }
 
 template <typename Polygon>
@@ -258,10 +285,10 @@ bool polygons_overlap(const Polygon& first, const Polygon& second) {
 
 double footprint_cell_distance(
     const DwbSafetyInput& input,
-    const Pose& pose,
+    const PoseGeometry& geometry,
     double center_x,
     double center_y) {
-  const auto robot = footprint(input, pose);
+  const auto& robot = geometry.footprint;
   const double half_cell = input.resolution_m / 2.0;
   const std::array<Point, 4> cell{{
       {center_x - half_cell, center_y - half_cell},
@@ -290,32 +317,29 @@ double footprint_cell_distance(
   return best;
 }
 
-double boundary_clearance(const DwbSafetyInput& input, const Pose& pose) {
-  const double cosine = std::abs(std::cos(pose.yaw));
-  const double sine = std::abs(std::sin(pose.yaw));
-  const double extent_x = cosine * input.half_length_m + sine * input.half_width_m;
-  const double extent_y = sine * input.half_length_m + cosine * input.half_width_m;
+double boundary_clearance(
+    const DwbSafetyInput& input, const PoseGeometry& geometry) {
   const double maximum_x = input.origin_x_m + input.width * input.resolution_m;
   const double maximum_y = input.origin_y_m + input.height * input.resolution_m;
   return std::min({
-      pose.x - extent_x - input.origin_x_m,
-      maximum_x - pose.x - extent_x,
-      pose.y - extent_y - input.origin_y_m,
-      maximum_y - pose.y - extent_y,
+      geometry.pose.x - geometry.extent_x - input.origin_x_m,
+      maximum_x - geometry.pose.x - geometry.extent_x,
+      geometry.pose.y - geometry.extent_y - input.origin_y_m,
+      maximum_y - geometry.pose.y - geometry.extent_y,
   });
 }
 
 double occupancy_clearance(
     const DwbSafetyInput& input,
-    const Pose& pose,
+    const PoseGeometry& geometry,
     const std::uint8_t* occupancy,
     bool has_occupancy) {
-  double best = std::min(boundary_clearance(input, pose), kClearanceLimit);
+  double best = std::min(boundary_clearance(input, geometry), kClearanceLimit);
   if (best <= 0.0 || !has_occupancy) {
     return std::max(0.0, best);
   }
   const double half_diagonal = std::hypot(input.half_length_m, input.half_width_m);
-  const auto [cell_x, cell_y] = cell_for(input, pose);
+  const auto [cell_x, cell_y] = cell_for(input, geometry.pose);
   if (cell_x >= 0 && cell_y >= 0 && cell_x < input.width && cell_y < input.height) {
     const double certified = std::max(
         0.0,
@@ -329,15 +353,15 @@ double occupancy_clearance(
   const double cell_half_diagonal = input.resolution_m / std::sqrt(2.0);
   const double radius = half_diagonal + kClearanceLimit + cell_half_diagonal;
   const std::int32_t minimum_x = std::max(
-      0, floor_cell(pose.x - radius - input.origin_x_m, input.resolution_m));
+      0, floor_cell(geometry.pose.x - radius - input.origin_x_m, input.resolution_m));
   const std::int32_t minimum_y = std::max(
-      0, floor_cell(pose.y - radius - input.origin_y_m, input.resolution_m));
+      0, floor_cell(geometry.pose.y - radius - input.origin_y_m, input.resolution_m));
   const std::int32_t maximum_x = std::min(
       input.width - 1,
-      floor_cell(pose.x + radius - input.origin_x_m, input.resolution_m));
+      floor_cell(geometry.pose.x + radius - input.origin_x_m, input.resolution_m));
   const std::int32_t maximum_y = std::min(
       input.height - 1,
-      floor_cell(pose.y + radius - input.origin_y_m, input.resolution_m));
+      floor_cell(geometry.pose.y + radius - input.origin_y_m, input.resolution_m));
   for (std::int32_t y = minimum_y; y <= maximum_y; ++y) {
     for (std::int32_t x = minimum_x; x <= maximum_x; ++x) {
       if (occupancy[static_cast<std::size_t>(y * input.width + x)] == 0) {
@@ -346,12 +370,13 @@ double occupancy_clearance(
       const double center_x = input.origin_x_m + (x + 0.5) * input.resolution_m;
       const double center_y = input.origin_y_m + (y + 0.5) * input.resolution_m;
       const double lower_bound =
-          std::hypot(center_x - pose.x, center_y - pose.y) - half_diagonal -
-          cell_half_diagonal;
+          std::hypot(center_x - geometry.pose.x, center_y - geometry.pose.y) -
+          half_diagonal - cell_half_diagonal;
       if (lower_bound >= best) {
         continue;
       }
-      best = std::min(best, footprint_cell_distance(input, pose, center_x, center_y));
+      best = std::min(
+          best, footprint_cell_distance(input, geometry, center_x, center_y));
       if (best <= 0.0) {
         return 0.0;
       }
@@ -362,7 +387,7 @@ double occupancy_clearance(
 
 double actor_clearance(
     const DwbSafetyInput& input,
-    const Pose& pose,
+    const PoseGeometry& geometry,
     std::int32_t time_index,
     double radius_expansion_m) {
   if (time_index < 0 || time_index >= input.actor_time_count ||
@@ -375,9 +400,11 @@ double actor_clearance(
     const std::size_t offset = static_cast<std::size_t>(
         (time_index * input.actor_capacity + actor) * 5);
     const Point start = to_local(
-        pose, {input.actor_capsules[offset], input.actor_capsules[offset + 1]});
+        geometry,
+        {input.actor_capsules[offset], input.actor_capsules[offset + 1]});
     const Point end = to_local(
-        pose, {input.actor_capsules[offset + 2], input.actor_capsules[offset + 3]});
+        geometry,
+        {input.actor_capsules[offset + 2], input.actor_capsules[offset + 3]});
     const double radius = input.actor_capsules[offset + 4] + radius_expansion_m;
     best = std::min(best, rectangle_segment_distance(input, start, end) - radius);
   }
@@ -394,21 +421,24 @@ void merge_pose(
     double time_s,
     double actor_radius_expansion_m,
     DwbSafetyCandidateResult& result) {
-  const double physical = occupancy_clearance(
-      input, pose, input.physical_occupancy, input.physical_has_occupancy != 0);
+  const PoseGeometry geometry = pose_geometry(input, pose);
   const double combined = occupancy_clearance(
-      input, pose, input.combined_occupancy, input.combined_has_occupancy != 0);
-  const double static_clearance = std::min(physical, combined);
+      input, geometry, input.combined_occupancy, input.combined_has_occupancy != 0);
+  // combined_occupancy is the exact union of physical occupancy and forbidden
+  // cells.  Its clearance can never exceed the physical-only clearance, so the
+  // previous physical pass could not affect min(physical, combined).
+  const double static_clearance = combined;
   result.minimum_static_clearance_m = std::min(
       result.minimum_static_clearance_m, static_clearance);
   bool forbidden = false;
-  if (input.forbidden_has_occupancy != 0 && input.forbidden_occupancy != nullptr) {
+  if (static_clearance <= 0.0 && input.forbidden_has_occupancy != 0 &&
+      input.forbidden_occupancy != nullptr) {
     forbidden = occupancy_clearance(
-                    input, pose, input.forbidden_occupancy, true) <= 0.0;
+                    input, geometry, input.forbidden_occupancy, true) <= 0.0;
   }
   const double actor = actor_clearance(
       input,
-      pose,
+      geometry,
       actor_time_index(input, time_s),
       actor_radius_expansion_m);
   if (std::isfinite(actor)) {

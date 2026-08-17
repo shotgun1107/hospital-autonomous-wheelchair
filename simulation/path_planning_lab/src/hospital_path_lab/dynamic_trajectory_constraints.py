@@ -14,13 +14,18 @@ provenance-checked :class:`ControllerSnapshot` for each control tick.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import cos, isclose, pi, sin
+
+import numpy as np
 
 from hospital_path_lab.contracts import Pose2D, TrajectoryPoint, Twist2D
 from hospital_path_lab.cpp_dwb_safety_core import (
     CppDwbSafetyFailure,
+    CppDwbSafetyStaticWorkspace,
     evaluate_dwb_safety_batch,
+    prepare_dwb_safety_static_workspace,
 )
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_COMMAND_APPLY_LATENCY_S,
@@ -77,7 +82,13 @@ class ProjectDynamicSafetyConstraintCritic:
         self._checkers: DynamicTrajectorySafetyCheckers | None = None
         self._prepared = False
         self._records: dict[DwbTrajectory, DynamicTrajectoryConstraintRecord] = {}
-        self._batch_trajectories: tuple[DwbTrajectory, ...] = ()
+        self._batch_trajectories: Sequence[DwbTrajectory] = ()
+        self._native_batch_results = ()
+        self._native_commands: np.ndarray | None = None
+        self._native_poses: np.ndarray | None = None
+        self._native_integration_step_s: float | None = None
+        self._native_static_workspace: CppDwbSafetyStaticWorkspace | None = None
+        self._native_workspace_sources: tuple[int, int, int] | None = None
         self._selected_record: DynamicTrajectoryConstraintRecord | None = None
         self._native_batch_used = False
 
@@ -127,6 +138,10 @@ class ProjectDynamicSafetyConstraintCritic:
         self._prepared = False
         self._records.clear()
         self._batch_trajectories = ()
+        self._native_batch_results = ()
+        self._native_commands = None
+        self._native_poses = None
+        self._native_integration_step_s = None
         self._selected_record = None
         self._native_batch_used = False
 
@@ -136,6 +151,10 @@ class ProjectDynamicSafetyConstraintCritic:
         snapshot = self._require_snapshot()
         self._records.clear()
         self._batch_trajectories = ()
+        self._native_batch_results = ()
+        self._native_commands = None
+        self._native_poses = None
+        self._native_integration_step_s = None
         self._selected_record = None
         self._native_batch_used = False
         self._prepared = False
@@ -151,7 +170,11 @@ class ProjectDynamicSafetyConstraintCritic:
 
     def score_batch(
         self,
-        trajectories: tuple[DwbTrajectory, ...],
+        trajectories: Sequence[DwbTrajectory],
+        *,
+        native_commands: np.ndarray | None = None,
+        native_poses: np.ndarray | None = None,
+        native_integration_step_s: float | None = None,
     ) -> tuple[CriticBatchScore, ...] | None:
         """Use the optional C++ core for one complete candidate safety batch."""
 
@@ -163,11 +186,21 @@ class ProjectDynamicSafetyConstraintCritic:
             trajectories=trajectories,
             snapshot=snapshot,
             checkers=checkers,
+            static_workspace=self._static_workspace(snapshot, checkers),
+            native_commands=native_commands,
+            native_poses=native_poses,
+            native_integration_step_s=native_integration_step_s,
         )
         if results is None:
             return None
         self._native_batch_used = True
-        self._batch_trajectories = tuple(trajectories)
+        self._batch_trajectories = (
+            tuple(trajectories) if native_commands is None else trajectories
+        )
+        self._native_batch_results = results
+        self._native_commands = native_commands
+        self._native_poses = native_poses
+        self._native_integration_step_s = native_integration_step_s
         reason_codes = {
             CppDwbSafetyFailure.FORBIDDEN_ZONE: "forbidden_zone_entry",
             CppDwbSafetyFailure.STATIC_CLEARANCE: "static_clearance_below_minimum",
@@ -221,22 +254,69 @@ class ProjectDynamicSafetyConstraintCritic:
             for trajectory, record in self._records.items()
             if trajectory.command == selected_command
         )
-        if not matches and self._batch_trajectories:
-            trajectories = tuple(
-                trajectory
-                for trajectory in self._batch_trajectories
-                if trajectory.command == selected_command
+        if not matches and self._native_commands is not None:
+            matching_indices = tuple(
+                int(index)
+                for index in np.flatnonzero(
+                    (self._native_commands[:, 0] == selected_command.linear_mps)
+                    & (
+                        self._native_commands[:, 1]
+                        == selected_command.angular_radps
+                    )
+                )
             )
-            if len(trajectories) != 1:
+            if len(matching_indices) != 1:
                 raise RuntimeError(
                     "selected command must identify exactly one native batch trajectory"
                 )
-            self.score(trajectories[0])
-            matches = tuple(
-                record
-                for trajectory, record in self._records.items()
+            index = matching_indices[0]
+            if self._native_poses is None or self._native_integration_step_s is None:
+                raise RuntimeError("native batch trajectory storage is incomplete")
+            trajectory = self._batch_trajectories[index]
+            native = self._native_batch_results[index]
+            if native.failure is not CppDwbSafetyFailure.SAFE:
+                raise RuntimeError("an unsafe native candidate cannot be selected")
+            record = DynamicTrajectoryConstraintRecord(
+                _proposal_from_trajectory(self._require_prepared_snapshot(), trajectory),
+                DynamicTrajectorySafetyEvidence(
+                    safe=True,
+                    actor_hazard=False,
+                    forbidden_entry=False,
+                    minimum_static_clearance_m=native.minimum_static_clearance_m,
+                    minimum_actor_clearance_m=native.minimum_actor_clearance_m,
+                    failures=(),
+                ),
+            )
+            self._records[trajectory] = record
+            matches = (record,)
+        elif not matches and self._batch_trajectories:
+            matching_indices = tuple(
+                index
+                for index, trajectory in enumerate(self._batch_trajectories)
                 if trajectory.command == selected_command
             )
+            if len(matching_indices) != 1:
+                raise RuntimeError(
+                    "selected command must identify exactly one native batch trajectory"
+                )
+            index = matching_indices[0]
+            trajectory = self._batch_trajectories[index]
+            native = self._native_batch_results[index]
+            if native.failure is not CppDwbSafetyFailure.SAFE:
+                raise RuntimeError("an unsafe native candidate cannot be selected")
+            record = DynamicTrajectoryConstraintRecord(
+                _proposal_from_trajectory(self._require_prepared_snapshot(), trajectory),
+                DynamicTrajectorySafetyEvidence(
+                    safe=True,
+                    actor_hazard=False,
+                    forbidden_entry=False,
+                    minimum_static_clearance_m=native.minimum_static_clearance_m,
+                    minimum_actor_clearance_m=native.minimum_actor_clearance_m,
+                    failures=(),
+                ),
+            )
+            self._records[trajectory] = record
+            matches = (record,)
         if len(matches) != 1:
             raise RuntimeError(
                 "selected command must identify exactly one scored safety record"
@@ -253,6 +333,10 @@ class ProjectDynamicSafetyConstraintCritic:
         self._prepared = False
         self._records.clear()
         self._batch_trajectories = ()
+        self._native_batch_results = ()
+        self._native_commands = None
+        self._native_poses = None
+        self._native_integration_step_s = None
         self._selected_record = None
         self._native_batch_used = False
 
@@ -286,6 +370,23 @@ class ProjectDynamicSafetyConstraintCritic:
         if self._checkers is None:
             raise RuntimeError("bind_snapshot must build safety checkers before scoring")
         return self._checkers
+
+    def _static_workspace(
+        self,
+        snapshot: ControllerSnapshot,
+        checkers: DynamicTrajectorySafetyCheckers,
+    ) -> CppDwbSafetyStaticWorkspace:
+        sources = (
+            id(snapshot.static_grid_snapshot.grid),
+            id(snapshot.static_grid_snapshot.forbidden_cells),
+            id(snapshot.vehicle_profile),
+        )
+        if self._native_static_workspace is None or self._native_workspace_sources != sources:
+            self._native_static_workspace = prepare_dwb_safety_static_workspace(
+                checkers
+            )
+            self._native_workspace_sources = sources
+        return self._native_static_workspace
 
 
 def _proposal_from_trajectory(

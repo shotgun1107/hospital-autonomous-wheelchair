@@ -122,7 +122,7 @@ def test_r7_source_freeze_and_machine_metadata_are_explicit() -> None:
     frozen = r7.source_freeze(repository_root)
     machine = r7.machine_metadata()
 
-    assert len(frozen["records"]) == 10
+    assert len(frozen["records"]) == 18
     assert len(frozen["content_hash"]) == 64
     assert machine["logical_core_count"]
     assert machine["process_affinity"]
