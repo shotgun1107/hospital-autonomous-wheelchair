@@ -1180,7 +1180,7 @@ source recheck를 모두 통과할 때만 생성한다.
 - repeat determinism·serial/process parity 통과
 - source freeze와 clean receipt 생성
 
-### 전체 R5는 아직 완료 아님
+### 당시 전체 R5는 아직 완료 아님
 
 R5-A 통과 뒤에도 다음은 별도 미완료다. R5-B는 더 이상 미착수가 아니라 1차 공개
 실행에서 실패 원인을 보존한 상태다.
@@ -1192,6 +1192,18 @@ WAIT_AND_FOLLOW authorized release
 ```
 
 R5-B/C를 건너뛰고 R6 perception-integrated 종단이나 R7 hidden으로 진행하지 않는다.
+
+### 2026-08-16 후속 완료 상태
+
+위 문단은 R5-A 직후의 역사적 상태다. 이후 C++ DWB는 Ideal same-direction 좌·우 `10/10`,
+횡단 좌·우와 두 위험 재정지를 완료했다. 카메라 등 상위 영역이 기존 `ActorTrack` 계약을
+제공한다고 가정한 R5-C Normal 횡단 좌·우도 관측 상실 때 실제 정지·새 session을 거쳐 통과,
+원 경로 복귀와 도착을 완료했다. Stress 좌·우는 판단 근거 부족으로 release·controller call·
+실제 이동 `0`과 `HOLDING`을 유지했다.
+
+따라서 현재 다음 단계는 R5-B/C를 다시 구현하는 것이 아니라
+[`R6 연속 공개 종단 자격`](25-r6-public-end-to-end-qualification.md)이다. 실제 카메라 성능,
+Normal 다중 위험 완료, R7와 hidden은 여전히 별도다.
 
 ## 22. 중단조건
 

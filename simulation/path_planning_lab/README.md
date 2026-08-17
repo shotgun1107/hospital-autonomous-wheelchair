@@ -661,3 +661,16 @@ JSON·PNG·Markdown 결과는 `outputs/`에 저장되고 기본적으로 Git에�
 [v6 C++ DWA·충돌 코어 구현 명세](../../docs/research/dynamic-actor-experiment/v6-cpp-dwa-core.md)를
 따른다. 공식 5-case×100 timing은 `0/500` miss로 통과했지만 expanded public qualification,
 receipt, hidden 또는 제품 채택 근거가 아니다.
+## R6 최신 R5 연속 공개 종단
+
+R1~R5 결과를 다시 시작하지 않고 최신 R5-B/C 실행을 R6의 17개 공개 사례로 묶는다.
+
+```powershell
+$runId = Get-Date -Format "yyyyMMdd-HHmmss"
+$outputDir = ".\simulation\path_planning_lab\outputs\r6-public-$runId"
+.\.venv\Scripts\python .\simulation\path_planning_lab\scripts\run_r6_public_end_to_end.py --output-dir $outputDir --max-workers 4
+```
+
+부분 실행은 `--case-limit` 또는 반복 가능한 `--case-id`로 가능하지만 report-only이며 receipt를
+만들지 않는다. R6는 wall-clock을 합격조건으로 쓰지 않고 hidden을 실행하지 않는다. 실제
+카메라 대신 검증된 합성 `ActorTrack` 입력을 사용한다.

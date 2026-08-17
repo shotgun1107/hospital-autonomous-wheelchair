@@ -17,7 +17,7 @@
   `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
   `R5-A v3 signed static public 21/21·receipt 완료`,
   `R5-B 공개 Ideal same-direction 10/10·횡단 좌우·다중 위험 기능 완료`,
-  `R5-C Normal·Stress 제한 진단과 다중 위험 stop-confirmed recovery 완료, 임무 완료 0`
+  `R5-C Normal 횡단 좌·우 복구·원 경로 복귀·도착 완료, Stress 좌·우 보수 정지 완료`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -583,8 +583,8 @@ hidden까지 연구 조건 충족
 | `R2-B` | 관측·prediction으로 기동을 판단할 수 있는가? | profile replay·역방향 coverage | hard failure 2건, 카메라와 함께 후속 보류 | 관측 통합 전 필수 |
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
 | `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` clean public `21/21`, ready 8, relation failure 0, receipt 완료 | R5 v2 signed controller 전달 |
-| `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-A signed static public 완료. R5-B v2 공개 첫 LEFT에서 RPP·DWB 모두 추월·재합류·도착 PASS. 좌·우 10-case와 Normal·Stress는 미완료 | R5-B 나머지 공개 case와 R5-C는 별도 gate 필요 |
-| `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 미시작 | R5 공개 기능 통과 |
+| `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-A signed static public 완료. C++ DWB Ideal same-direction `10/10`, 횡단 좌·우와 다중 위험 완료. R5-C Normal 횡단 좌·우 도착, Stress 좌·우 출발 없는 보수 정지 완료 | 최신 R5-B/C 결과를 R6 연속 실행에 전달 |
+| `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 17개 공개 사례 명세·runner 구현 중 | 전체 공개 실행·회귀·receipt 필요 |
 | `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | C++ 전체 DWB 수치 코어와 첫 LEFT semantic parity만 구현. 고정 머신 50ms·manifest·진입 판정은 미실행 | R1~R6 기능·안전 증거 완결 |
 
 ## 8. 산출물과 보존
@@ -617,7 +617,7 @@ hidden까지 연구 조건 충족
 14-bounded-spatial-oracle.md                     # R3
 15-local-maneuver-reference-contract.md          # R4
 16-persistent-controller-comparison.md           # R5
-17-public-end-to-end-qualification.md             # R6
+25-r6-public-end-to-end-qualification.md          # R6
 18-native-and-hidden-entry-gate.md                # R7
 ```
 
@@ -678,9 +678,10 @@ source primitive의 signed `travel_direction`을 명시하고 R5 v2가 해당 re
 R5 v2 signed static reference tracking은 완료됐고, R5-B 공개 Ideal에서 same-direction 좌·우
 10-case, 별도 횡단 좌·우와 다중 위험 재정지·복구를 완료했다. source-derived DWB의 후보 생성·
 41-pose 적분·7개 critic·선택·Manhattan 거리 지도도 C++20 수치 코어로 옮겨 Python 의미를
-보존했다. R5-C 제한 진단에서는 Normal 입력 상실 뒤 정지와 새 stop epoch session 재출발을
-확인했으나 35초 안에 임무를 완료하지 못했고, Stress는 11개 READY를 연속 확보하지 못해
-출발하지 않았다. R2-B 원본 내부 Actor 출현 hard failure는 음성 회귀로 보존한다. 별도 추상
+보존했다. 이후 R5-C Normal 횡단 좌·우는 입력 상실마다 실제 정지와 새 stop epoch session을
+사용하고, 통과 증거 보존 뒤 원 경로 복귀 reference로 각각 tick `1328`, `1432`에 도착했다.
+Stress 좌·우는 11개 READY를 연속 확보하지 못해 release·controller call·실제 이동 `0`으로
+정지를 유지했다. R2-B 원본 내부 Actor 출현 hard failure는 음성 회귀로 보존한다. 별도 추상
 감시 접근 world에서는 지연 Actor를 원래 진입 전부터 같은 track으로 관측해 대표 Ideal miss를
 `38/22 → 0/0`으로 제거했다. 그러나 실제 카메라·FOV·가림·검출 증거가 아니므로
 perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
