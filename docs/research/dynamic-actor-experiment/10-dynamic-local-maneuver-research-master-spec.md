@@ -19,7 +19,7 @@
   `R5-B 공개 Ideal same-direction 10/10·횡단 좌우·다중 위험 기능 완료`,
   `R5-C Normal 횡단 좌·우 복구·원 경로 복귀·도착 완료, Stress 좌·우 보수 정지 완료`,
   `R6 공개 연속 종단 17/17·hard failure 0·receipt·945 전체 회귀 완료`,
-  `R7 Python↔C++ 동일성 5/5 통과·50ms 301/500 초과로 자격 실패·hidden 차단`
+  `R7 v2 Python↔C++ 동일성 5/5·50ms 초과 0/500·951 전체 회귀·receipt 완료, hidden 미실행`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -587,7 +587,7 @@ hidden까지 연구 조건 충족
 | `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` clean public `21/21`, ready 8, relation failure 0, receipt 완료 | R5 v2 signed controller 전달 |
 | `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-A signed static public 완료. C++ DWB Ideal same-direction `10/10`, 횡단 좌·우와 다중 위험 완료. R5-C Normal 횡단 좌·우 도착, Stress 좌·우 출발 없는 보수 정지 완료 | 최신 R5-B/C 결과를 R6 연속 실행에 전달 |
 | `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 완료. 공개 `17/17`, hard failure `0`, 전체 회귀 `945 passed`, receipt 생성 | R7은 별도 시작 지시 뒤 검토 |
-| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 측정 완료·자격 실패. 동일성 `5/5`, 50ms 초과 `301/500`, hidden 차단 | 동작 보존형 native 최적화는 별도 시작 지시 필요 |
+| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | v2 완료. 동일성 `5/5`, p50 `10.847ms`, 최대 `35.190ms`, 50ms 초과 `0/500`, receipt 생성, hidden 미실행 | 후속 연구는 별도 사용자 승인 필요 |
 
 ## 8. 산출물과 보존
 
@@ -694,11 +694,12 @@ R6 공개 연속 종단은 기준 코드 `64df95f`에서 `17/17`, hard failure `
 보존한다. 이 완료는 합성 `ActorTrack` 기능·안전 근거이며 실제 카메라 통합, R7 시간 자격,
 hidden 또는 제품 채택을 자동으로 허용하지 않는다.
 
-R7은 집 PC의 고정 공개 5개 입력을 C++ DWB로 사례당 100회 직렬 측정했다. Python↔C++
-결과 동일성은 `5/5`였지만 50ms 초과가 `301/500`, 최대 `321.12ms`여서 시간 자격은
-실패했다. qualification receipt와 hidden은 생성하지 않았다. 상세는
-[`R7 C++ DWB 시간 자격 결과`](r7-native-release-gate-result-2026-08-17.md)에 보존한다.
-다음 native 최적화는 별도 작업이며 이 실패를 후보 수·안전거리·평가 기준 완화로 숨기지 않는다.
+R7 v1은 집 PC의 고정 공개 5개 입력에서 50ms 초과 `301/500`, 최대 `321.12ms`로
+실패했다. 동작 보존형 C++ hot-path 최적화 뒤 v2는 Python↔C++ 동일성 `5/5`, p50
+`10.847ms`, p95 `25.412ms`, 최대 `35.190ms`, 50ms 초과 `0/500`으로 통과했고 receipt를
+생성했다. 후보 수·안전거리·평가 기준은 완화하지 않았다. [v1 실패](r7-native-release-gate-result-2026-08-17.md)와
+[`v2 최적화·통과`](r7-native-performance-optimization-result-2026-08-17.md)를 구분한다.
+hidden은 실행하지 않았으며 후속 연구는 별도 사용자 승인이 필요하다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

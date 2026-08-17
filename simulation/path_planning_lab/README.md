@@ -37,15 +37,17 @@ same-direction·횡단·두 위험은 도착했고, Normal 횡단 좌·우는 �
 [R6 공개 연속 종단 자격 결과](../../docs/research/dynamic-actor-experiment/r6-public-end-to-end-qualification-result-2026-08-17.md)를
 따른다. 실제 카메라·실물·hidden·R7·제품 알고리즘 채택 증거가 아니다.
 
-### R7 C++ DWB 시간 자격 실패 — 2026-08-17
+### R7 C++ DWB 동작 보존형 최적화·시간 자격 통과 — 2026-08-17
 
-Python↔C++ 결과 동일성은 공개 5개 입력 모두 통과했다. 그러나 C++ DWB를 각 100회 직렬
-측정한 결과 50ms 초과가 `301/500`, 최대 `321.12ms`여서 R7 시간 자격은 실패했다. Actor
-없음은 `0/100`이었지만 Actor 2개, 코너와 여러 경로 구간은 각각 `100/100` 초과했다.
+v1은 50ms 초과 `301/500`, 최대 `321.12ms`로 실패했다. profiler로 중복 안전 평가, 반복
+hash·거리장, C++ 배열의 Python 객체 왕복과 불필요한 격자 생성을 찾아 제거했다. 후보
+`217개`, 후보당 `41 pose`, 안전 수치·비용·tie-break는 바꾸지 않았다.
 
-따라서 qualification receipt와 hidden을 만들지 않았다. 전체 회귀는 `950 passed`다. 상세는
-[R7 C++ DWB 시간 자격 결과](../../docs/research/dynamic-actor-experiment/r7-native-release-gate-result-2026-08-17.md)를
-따른다. 다음 최적화·hidden·제품 채택은 자동으로 시작하지 않는다.
+v2 정식 직렬 `500회`는 Python↔C++ 동일성 `5/5`, p50 `10.847ms`, p95 `25.412ms`, 최대
+`35.190ms`, 50ms 초과 `0/500`으로 통과했다. 전체 회귀는 `951 passed`이고 receipt를
+생성했다. [v1 실패 결과](../../docs/research/dynamic-actor-experiment/r7-native-release-gate-result-2026-08-17.md)와
+[v2 최적화 결과](../../docs/research/dynamic-actor-experiment/r7-native-performance-optimization-result-2026-08-17.md)를
+구분한다. hidden·실물·제품 채택은 자동으로 시작하지 않는다.
 
 ### R5-C 공개 관측 복구 제한 진단 — 2026-08-16
 

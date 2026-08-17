@@ -25,7 +25,7 @@ truth·scenario label·미래 Actor 궤적을 controller에 넘긴다는 뜻이 
 | R4 local reference | 완료 | signed direction·revision 공개 자격 유지 |
 | R5 controller | 완료 | Ideal same-direction·횡단·restop, Normal 횡단 완료, Stress 정지 유지 |
 | R6 공개 종단 | 완료 | 공개 `17/17`, hard failure `0`, 전체 회귀 `945 passed`, receipt 생성 |
-| R7 native 자격 | 측정 완료·실패 | 동일성 `5/5`, 50ms 초과 `301/500`, hidden 차단 |
+| R7 native 자격 | v2 완료·통과 | 동일성 `5/5`, 50ms 초과 `0/500`, 최대 `35.190ms`, receipt 생성, hidden 미실행 |
 
 ## R1 실행 결과
 
@@ -54,8 +54,9 @@ Normal의 Capsule 누락과 Normal·Stress 2σ 밖 관측은 통계적 한계로
 
 [`R6 연속 공개 종단 자격 결과`](r6-public-end-to-end-qualification-result-2026-08-17.md)에
 따라 최신 R5-B/C 실행을 중간 checkpoint 없이 묶은 공개 `17/17`을 완료했다. 실제 카메라
-FOV·가림은 별도 lane이며 합성 ActorTrack 결과와 합치지 않는다. 다음 후보는 R7 native 시간
-자격이었다. 정식 측정 결과 Python↔C++ 의미는 같았지만 50ms 초과 `301/500`으로 실패했다.
-결과는
-[`R7 C++ DWB 시간 자격 결과`](r7-native-release-gate-result-2026-08-17.md)에 보존하며,
-동작 보존형 native 최적화는 별도 시작 지시 전에는 진행하지 않는다.
+FOV·가림은 별도 lane이며 합성 ActorTrack 결과와 합치지 않는다. R7 v1은 50ms 초과
+`301/500`으로 실패했지만, 사용자 지시로 동작 보존형 native 최적화를 수행한 v2는 동일성
+`5/5`, 50ms 초과 `0/500`, 최대 `35.190ms`로 통과했다. 결과는
+[`R7 v1 실패`](r7-native-release-gate-result-2026-08-17.md)와
+[`R7 v2 최적화·통과`](r7-native-performance-optimization-result-2026-08-17.md)에 구분해
+보존한다. hidden과 제품 채택은 자동으로 시작하지 않는다.
