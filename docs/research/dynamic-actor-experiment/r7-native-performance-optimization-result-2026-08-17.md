@@ -92,6 +92,10 @@ Windows process 수준 측정에서 500회 구간의 working-set 증가는
 - gate SHA-256: `1fc8ff96d54a454d85eb5d352a140236802b14d54b9e70bc8a35ac545d0822e6`
 - receipt SHA-256: `3901a9fbec1b9e538529dcbff36f044f24a261b974411065ba1d24ff1df7136d`
 - receipt content hash: `6c5243c7062137bf2cd05345f76a15b8ebb4401d99145d450cf34353d8744575`
+- Git 전달 증거 ZIP:
+  `simulation/path_planning_lab/outputs/r7-native-v2-public-qualification-evidence-20260817-8c3b733.zip`
+  (`7,667 bytes`, SHA-256
+  `4f784e086a60d86e99be15a5a39f9589d51593458e065a05abc636d1a8c01d8a`)
 
 ## 결론과 경계
 
