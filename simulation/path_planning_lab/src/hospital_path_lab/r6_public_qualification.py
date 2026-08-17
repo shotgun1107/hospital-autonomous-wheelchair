@@ -153,7 +153,9 @@ def public_r6_case_specs(repository_root: Path) -> tuple[R6PublicCaseSpec, ...]:
                 kind=R6CaseKind.CROSSING_IDEAL,
                 source_index=index,
                 profile_name="functional_ideal",
-                tick_limit=900,
+                tick_limit=int(
+                    round(bundle.source.world.duration_s / DYNAMIC_CONTROL_PERIOD_S)
+                ),
                 expected_outcome=R6ExpectedOutcome.COMPLETE,
             )
         )

@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from hospital_path_lab.dynamic_contracts import DYNAMIC_CONTROL_PERIOD_S
 from hospital_path_lab.dynamic_safety import DynamicMotionState
+from hospital_path_lab.r5b_temporal_evidence import frozen_r2_archive_path
+from hospital_path_lab.r5b_temporal_reference import (
+    build_r5b_crossing_reference_bundles,
+    build_r5b_temporal_reference_bundles,
+)
 from hospital_path_lab.r6_public_qualification import (
     R6CaseKind,
     R6ExpectedOutcome,
@@ -25,6 +31,23 @@ def test_r6_public_catalog_is_exact_and_ordered() -> None:
     assert sum(item.kind is R6CaseKind.RESTOP_IDEAL for item in specs) == 1
     assert sum(item.kind is R6CaseKind.CROSSING_NORMAL for item in specs) == 2
     assert sum(item.kind is R6CaseKind.CROSSING_STRESS for item in specs) == 2
+
+    temporal_worlds = tuple(
+        item.source.world
+        for item in build_r5b_temporal_reference_bundles(
+            frozen_r2_archive_path(REPOSITORY_ROOT)
+        )
+    ) + tuple(item.source.world for item in build_r5b_crossing_reference_bundles())
+    temporal_specs = tuple(
+        item
+        for item in specs
+        if item.kind
+        in {R6CaseKind.SAME_DIRECTION_IDEAL, R6CaseKind.CROSSING_IDEAL}
+    )
+    assert tuple(item.tick_limit for item in temporal_specs) == tuple(
+        int(round(world.duration_s / DYNAMIC_CONTROL_PERIOD_S))
+        for world in temporal_worlds
+    )
 
 
 def test_r6_stress_case_requires_zero_release_and_conservative_hold() -> None:
@@ -58,4 +81,3 @@ def test_r6_audit_rejects_one_failed_case() -> None:
     failed_partial = audit_r6_public_results(stress, (failed, results[1]))
     assert not failed_partial.passed
     assert f"{stress[0].case_id}:case_failed" in failed_partial.failures
-
