@@ -37,6 +37,16 @@ same-direction·횡단·두 위험은 도착했고, Normal 횡단 좌·우는 �
 [R6 공개 연속 종단 자격 결과](../../docs/research/dynamic-actor-experiment/r6-public-end-to-end-qualification-result-2026-08-17.md)를
 따른다. 실제 카메라·실물·hidden·R7·제품 알고리즘 채택 증거가 아니다.
 
+### R7 C++ DWB 시간 자격 실패 — 2026-08-17
+
+Python↔C++ 결과 동일성은 공개 5개 입력 모두 통과했다. 그러나 C++ DWB를 각 100회 직렬
+측정한 결과 50ms 초과가 `301/500`, 최대 `321.12ms`여서 R7 시간 자격은 실패했다. Actor
+없음은 `0/100`이었지만 Actor 2개, 코너와 여러 경로 구간은 각각 `100/100` 초과했다.
+
+따라서 qualification receipt와 hidden을 만들지 않았다. 전체 회귀는 `950 passed`다. 상세는
+[R7 C++ DWB 시간 자격 결과](../../docs/research/dynamic-actor-experiment/r7-native-release-gate-result-2026-08-17.md)를
+따른다. 다음 최적화·hidden·제품 채택은 자동으로 시작하지 않는다.
+
 ### R5-C 공개 관측 복구 제한 진단 — 2026-08-16
 
 기존 R2-B 두 실패를 재확인한 결과, 지도 내부 Actor 순간 출현과 `100ms` 관측 지연 때문에
