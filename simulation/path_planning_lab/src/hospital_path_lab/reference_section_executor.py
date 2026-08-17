@@ -317,9 +317,14 @@ class ReferenceSectionExecutor:
             return self._last_decision
 
         if acceptance.state_reset_required:
+            initial_section_index = tick_input.local_window.sections[0].section_index
+            if initial_section_index > 0 and not _allows_stop_bound_midroute_start(
+                tick_input
+            ):
+                initial_section_index = 0
             self._reset_for_reference(
                 tick_input.full_reference,
-                initial_section_index=tick_input.local_window.sections[0].section_index,
+                initial_section_index=initial_section_index,
             )
         elif acceptance.transition is PersistentControllerSessionTransition.WINDOW_ADVANCED:
             self._window_update_count += 1
@@ -1301,6 +1306,23 @@ def _signed_direction_changes(
             continue
         return following.travel_direction is not current
     return False
+
+
+def _allows_stop_bound_midroute_start(
+    tick_input: PersistentControllerTickInput,
+) -> bool:
+    """Allow a later first section only for a newly valid confirmed-stop session."""
+
+    reference = tick_input.full_reference
+    validity = reference.validity
+    return all(
+        (
+            reference.stop_epoch > 0,
+            validity.required_stop_epoch == reference.stop_epoch,
+            validity.valid_from_control_tick == tick_input.controller_tick,
+            tick_input.reference_binding.stop_epoch == reference.stop_epoch,
+        )
+    )
 
 
 def _approach_zero(value: float, maximum_change: float) -> float:
