@@ -17,7 +17,9 @@
   `R4 v1 public 21/21·receipt·794 전체 회귀 완료`,
   `R5-A v3 signed static public 21/21·receipt 완료`,
   `R5-B 공개 Ideal same-direction 10/10·횡단 좌우·다중 위험 기능 완료`,
-  `R5-C Normal 횡단 좌·우 복구·원 경로 복귀·도착 완료, Stress 좌·우 보수 정지 완료`
+  `R5-C Normal 횡단 좌·우 복구·원 경로 복귀·도착 완료, Stress 좌·우 보수 정지 완료`,
+  `R6 공개 연속 종단 17/17·hard failure 0·receipt·945 전체 회귀 완료`,
+  `R7 미시작`
 
 이 문서는
 [`동적 지역 기동 연구 방향 판정과 자료 출처`](../../reviews/dynamic-local-maneuver-research-direction-2026-08-13.md)의
@@ -584,8 +586,8 @@ hidden까지 연구 조건 충족
 | `R3` | 정적 공간에서 차체가 통과·재합류할 수 있는가? | bounded 공간 oracle | public `21/21`, clean-source receipt, 729 전체 회귀 완료 | 검증된 feasible 결과만 R4 전달 |
 | `R4` | WAIT/LEFT/RIGHT와 signed travel direction을 reference로 표현하는가? | revision 결박 local path·subpath | v1 public `21/21`, ready 8, clean receipt, 794 전체 회귀 완료. v2 `travel_direction` clean public `21/21`, ready 8, relation failure 0, receipt 완료 | R5 v2 signed controller 전달 |
 | `R5` | 같은 signed reference에서 controller 차이가 무엇인가? | persistent RPP·DWB paired 결과 | R5-A signed static public 완료. C++ DWB Ideal same-direction `10/10`, 횡단 좌·우와 다중 위험 완료. R5-C Normal 횡단 좌·우 도착, Stress 좌·우 출발 없는 보수 정지 완료 | 최신 R5-B/C 결과를 R6 연속 실행에 전달 |
-| `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 17개 공개 사례 명세·runner 구현 중 | 전체 공개 실행·회귀·receipt 필요 |
-| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | C++ 전체 DWB 수치 코어와 첫 LEFT semantic parity만 구현. 고정 머신 50ms·manifest·진입 판정은 미실행 | R1~R6 기능·안전 증거 완결 |
+| `R6` | 연속 공개 episode의 기능·안전 계약이 닫히는가? | public 종단 report·receipt·회귀 | 완료. 공개 `17/17`, hard failure `0`, 전체 회귀 `945 passed`, receipt 생성 | R7은 별도 시작 지시 뒤 검토 |
+| `R7` | native 연산 자격과 새 hidden 진입 자격이 있는가? | semantic parity·native timing manifest·승인 | 대기. C++ DWB 수치 코어는 있으나 R7 고정 머신 자격·manifest·진입 판정은 미실행 | R6 결과 동결과 별도 시작 지시 |
 
 ## 8. 산출물과 보존
 
@@ -685,6 +687,12 @@ Stress 좌·우는 11개 READY를 연속 확보하지 못해 release·controller
 감시 접근 world에서는 지연 Actor를 원래 진입 전부터 같은 track으로 관측해 대표 Ideal miss를
 `38/22 → 0/0`으로 제거했다. 그러나 실제 카메라·FOV·가림·검출 증거가 아니므로
 perception-integrated R6, 정식 R7 50ms 자격, hidden과 제품 안전 주장을 허용하지 않는다.
+
+R6 공개 연속 종단은 기준 코드 `64df95f`에서 `17/17`, hard failure `0`으로 완료했고 전체
+회귀 `945 passed`와 receipt를 남겼다. 세부 결과와 hash는
+[`R6 공개 연속 종단 자격 결과`](r6-public-end-to-end-qualification-result-2026-08-17.md)에
+보존한다. 이 완료는 합성 `ActorTrack` 기능·안전 근거이며 실제 카메라 통합, R7 시간 자격,
+hidden 또는 제품 채택을 자동으로 허용하지 않는다.
 
 이후 `R3~R6` Python 단계는 기능·안전 semantic만 판정한다. Python wall-clock은 병목 진단일
 뿐이며, 실제 계산 deadline·CPU·memory·cache 자격은 semantic parity를 통과한 native(C++)

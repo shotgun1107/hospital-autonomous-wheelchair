@@ -26,6 +26,17 @@ catalog와 6단계 paired runner·hidden commitment·통계·승격 판정·PNG�
 이 실험실은 `G1~G5` 확인, 7단계 팀 결정, 최종 경로 전략 또는 제품 알고리즘 채택을
 수행하지 않는다.
 
+### R6 공개 연속 종단 자격 완료 — 2026-08-17
+
+최신 R5-B/C 실행을 중간 checkpoint 없이 묶은 공개 사례 `17/17`이 통과했고 hard failure는
+`0`이다. 전체 회귀는 `945 passed`, 실패·건너뜀 `0`이며 receipt를 생성했다. Ideal
+same-direction·횡단·두 위험은 도착했고, Normal 횡단 좌·우는 정지·새 session 복구 뒤
+도착했다. Stress 좌·우는 release·controller call·이동 없이 `HOLDING`을 유지했다.
+
+상세는
+[R6 공개 연속 종단 자격 결과](../../docs/research/dynamic-actor-experiment/r6-public-end-to-end-qualification-result-2026-08-17.md)를
+따른다. 실제 카메라·실물·hidden·R7·제품 알고리즘 채택 증거가 아니다.
+
 ### R5-C 공개 관측 복구 제한 진단 — 2026-08-16
 
 기존 R2-B 두 실패를 재확인한 결과, 지도 내부 Actor 순간 출현과 `100ms` 관측 지연 때문에
@@ -674,3 +685,8 @@ $outputDir = ".\simulation\path_planning_lab\outputs\r6-public-$runId"
 부분 실행은 `--case-limit` 또는 반복 가능한 `--case-id`로 가능하지만 report-only이며 receipt를
 만들지 않는다. R6는 wall-clock을 합격조건으로 쓰지 않고 hidden을 실행하지 않는다. 실제
 카메라 대신 검증된 합성 `ActorTrack` 입력을 사용한다.
+
+최종 공개 실행은 기준 코드 `64df95f`에서 `17/17`, hard failure `0`으로 완료됐고 전체 회귀
+`945 passed`와 receipt를 남겼다. 상세 수치와 한계는
+[R6 공개 연속 종단 자격 결과](../../docs/research/dynamic-actor-experiment/r6-public-end-to-end-qualification-result-2026-08-17.md)를
+따른다. R7·hidden·제품 채택은 시작하지 않았다.

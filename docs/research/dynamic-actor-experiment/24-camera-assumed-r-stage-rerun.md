@@ -24,8 +24,8 @@ truth·scenario label·미래 Actor 궤적을 controller에 넘긴다는 뜻이 
 | R3 정적 공간 oracle | 완료 | bounded spatial oracle 공개 자격 유지 |
 | R4 local reference | 완료 | signed direction·revision 공개 자격 유지 |
 | R5 controller | 완료 | Ideal same-direction·횡단·restop, Normal 횡단 완료, Stress 정지 유지 |
-| R6 공개 종단 | 진행 | 최신 R5 실행을 17개 연속 공개 사례로 묶어 자격화 |
-| R7 native 자격 | 대기 | R1~R6 통과 뒤에만 검토 |
+| R6 공개 종단 | 완료 | 공개 `17/17`, hard failure `0`, 전체 회귀 `945 passed`, receipt 생성 |
+| R7 native 자격 | 대기 | 별도 시작 지시 뒤에만 검토 |
 
 ## R1 실행 결과
 
@@ -50,8 +50,9 @@ Normal의 Capsule 누락과 Normal·Stress 2σ 밖 관측은 통계적 한계로
 맞춰 완화하지 않았다. 공개 corpus에는 가속·감속·정지·회전 Actor 운동이 없어 해당 일반화는
 증명되지 않았다.
 
-## 다음 단계
+## 현재 결과와 다음 후보
 
-[`R6 연속 공개 종단 자격 명세`](25-r6-public-end-to-end-qualification.md)에 따라 최신 R5-B/C
-실행을 중간 checkpoint 없이 다시 실행한다. 실제 카메라 FOV·가림은 별도 lane이며, 합성
-ActorTrack 경로 연구 결과와 합치지 않는다.
+[`R6 연속 공개 종단 자격 결과`](r6-public-end-to-end-qualification-result-2026-08-17.md)에
+따라 최신 R5-B/C 실행을 중간 checkpoint 없이 묶은 공개 `17/17`을 완료했다. 실제 카메라
+FOV·가림은 별도 lane이며 합성 ActorTrack 결과와 합치지 않는다. 다음 후보는 R7 native 시간
+자격이지만 이 문서만으로 자동 시작하지 않는다.
