@@ -133,18 +133,27 @@ class _ProfileObservationStream:
         stream_id: str,
         mission_revision: int,
         hold_terminal_actor_state: bool = False,
+        observation_seed: int | None = None,
     ) -> None:
+        if observation_seed is None:
+            observation_seed = world.seed
+        if (
+            isinstance(observation_seed, bool)
+            or not isinstance(observation_seed, int)
+            or observation_seed < 0
+        ):
+            raise ValueError("observation_seed must be a non-negative exact integer")
         self._source = DynamicObservationSourceIdentity(
             stream_id=stream_id,
             episode_id=world.world_id,
-            episode_seed=world.seed,
+            episode_seed=observation_seed,
             map_id=world.map_id,
             map_revision=world.map_revision,
         )
         frames = tuple(
             DynamicGroundTruthFrame(
                 episode_id=world.world_id,
-                seed=world.seed,
+                seed=observation_seed,
                 tick_id=tick,
                 simulation_time_s=tick * DYNAMIC_CONTROL_PERIOD_S,
                 robot_state=world.initial_state,
@@ -214,6 +223,7 @@ def run_r5c_crossing_diagnostic(
     tick_limit: int = 780,
     recover_after_loss: bool = False,
     complete_after_post_pass: bool = False,
+    observation_seed: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     """Run one public crossing side until completion or the first safe hold."""
 
@@ -417,6 +427,7 @@ def run_r5c_crossing_diagnostic(
             if complete_after_post_pass
             else None
         ),
+        observation_seed=observation_seed,
     )
     return replace(
         result,
@@ -430,6 +441,7 @@ def run_r5c_crossing_recovery_diagnostic(
     side_index: int,
     profile: DynamicObservationProfile,
     tick_limit: int = 780,
+    observation_seed: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     """Resume crossing only through new stop-bound reference sessions."""
 
@@ -438,6 +450,7 @@ def run_r5c_crossing_recovery_diagnostic(
         profile=profile,
         tick_limit=tick_limit,
         recover_after_loss=True,
+        observation_seed=observation_seed,
     )
 
 
@@ -446,6 +459,7 @@ def run_r5c_crossing_completion_diagnostic(
     side_index: int,
     profile: DynamicObservationProfile,
     tick_limit: int = 1600,
+    observation_seed: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     """Run the extended public scene through post-pass return and goal completion."""
 
@@ -455,6 +469,7 @@ def run_r5c_crossing_completion_diagnostic(
         tick_limit=tick_limit,
         recover_after_loss=True,
         complete_after_post_pass=True,
+        observation_seed=observation_seed,
     )
 
 
@@ -693,6 +708,7 @@ def _run_profile_diagnostic(
     finish_with_confirmed_stop: bool = False,
     hold_terminal_actor_state: bool = False,
     empty_release_authorized: Callable[[], bool] | None = None,
+    observation_seed: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     if profile not in (NORMAL_OBSERVATION_PROFILE, STRESS_OBSERVATION_PROFILE):
         raise ValueError("R5-C diagnostic accepts only frozen Normal or Stress")
@@ -705,6 +721,7 @@ def _run_profile_diagnostic(
         stream_id=stream_id,
         mission_revision=mission_revision,
         hold_terminal_actor_state=hold_terminal_actor_state,
+        observation_seed=observation_seed,
     )
     state = RobotState(world.initial_state.pose, Twist2D())
     runtime: _Runtime | None = None
