@@ -267,6 +267,7 @@ flowchart TD
 | [R7 새 hidden-v3 실행 명세](36-r7-hidden-v3-execution-spec-2026-08-18.md) | 새 관측 seed 20개, 일회 실행, PASS·FAIL·중단 처리 규칙 |
 | [R7 hidden-v3 사전점검 결과](37-r7-hidden-v3-preflight-result-2026-08-18.md) | runner 수정, 981개 회귀와 seed 없는 clean-clone preflight 결과 |
 | [R7 hidden-v3 실패 결과](38-r7-hidden-v3-failure-result-2026-08-18.md) | Normal 9/10, Stress 기준 9/10, hard failure 0과 두 실패 원인 |
+| [R7 hidden-v3 Normal 목표 직전 정지 수정](39-r7-hidden-v3-normal-goal-gap-fix-2026-08-18.md) | 목적지 6.56cm 앞 정지 원인, 제한된 동률 수정과 공개 회귀 결과 |
 | `dynamic_prediction.py` | 관측 age와 가속 편차를 포함한 Actor tube |
 | `dynamic_safety.py` | swept clearance, 제한 감속, hold, `stop_epoch`, resume gate |
 | 기존 `followers/pure_pursuit.py` | 동결 PP 규칙에 맞춘 adapter/명령 생성 |

@@ -243,6 +243,26 @@ def test_normal_left_seed_6422064046178126625_completes_with_continued_actor() -
     assert trace.records[-1]["gate_state_after"] == "completed"
 
 
+def test_hidden_v3_normal_right_goal_gap_seed_completes() -> None:
+    result = run_r5c_crossing_completion_diagnostic(
+        side_index=1,
+        profile=NORMAL_OBSERVATION_PROFILE,
+        tick_limit=1_600,
+        observation_seed=4097001075006799098,
+    )
+
+    assert result.hard_failures == ()
+    assert result.outcome.value == "completed"
+    assert result.completion_tick is not None
+    assert result.post_pass_proof_tick is not None
+    assert result.follow_original_release_tick is not None
+    assert (
+        result.post_pass_proof_tick
+        < result.follow_original_release_tick
+        < result.completion_tick
+    )
+
+
 def test_active_runtime_treats_pre_pass_empty_status_as_input_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

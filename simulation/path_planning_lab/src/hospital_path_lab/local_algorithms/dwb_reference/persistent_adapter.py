@@ -68,10 +68,11 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v7-bypass-lookahead"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v8-terminal-goal-tie"
 
 R5_DWB_BYPASS_SCORING_LOOKAHEAD_M = 0.30
 R5_DWB_BYPASS_COMPLETION_TOLERANCE_M = 0.02
+R5_DWB_TERMINAL_FORWARD_TIE_WINDOW_M = 0.10
 
 _TOLERANCE = 1e-12
 _TRANSLATION_SECTION_KINDS = frozenset(
@@ -833,13 +834,20 @@ def _bind_stack_travel_direction(
         completion_tolerance,
     )
     aligned_forward = _aligned_forward_section(direction, yaw_error)
+    terminal_rotation_approach = _terminal_rotation_approach(
+        tick_input.full_reference,
+        active_section_index,
+        tick_input.robot_state.pose,
+    )
     terminal_approach = _terminal_continuation_only(
         tick_input.full_reference,
         active_section_index,
     )
-    stack.generator.set_prefer_forward_progress_on_exact_ties(aligned_forward)
+    stack.generator.set_prefer_forward_progress_on_exact_ties(
+        aligned_forward or terminal_rotation_approach
+    )
     stack.goal_align_critic.set_disable_near_goal(
-        aligned_forward or terminal_approach
+        aligned_forward or terminal_approach or terminal_rotation_approach
     )
     # A connector-tightened forward remainder keeps both alignment critics only
     # until its heading is aligned.  Leaving their forward-projection scores on
@@ -867,6 +875,28 @@ def _connector_tightened_forward_section(
 ) -> bool:
     return direction is ReferenceTravelDirection.FORWARD and (
         completion_tolerance_m < R5_POSITION_TOLERANCE_M - _TOLERANCE
+    )
+
+
+def _terminal_rotation_approach(
+    reference: LocalManeuverReference,
+    active_section_index: int,
+    current_pose: Pose2D,
+) -> bool:
+    """Break grid-score zero-speed ties just before a planned terminal rotation."""
+
+    section = reference.sections[active_section_index]
+    if (
+        section.section_kind is not ReferenceSectionKind.FOLLOW_ORIGINAL
+        or section.travel_direction is not ReferenceTravelDirection.FORWARD
+        or active_section_index + 1 >= len(reference.sections)
+        or reference.sections[active_section_index + 1].section_kind
+        is not ReferenceSectionKind.ROTATE
+    ):
+        return False
+    target = reference.knots[section.last_knot_index].pose
+    return hypot(target.x - current_pose.x, target.y - current_pose.y) <= (
+        R5_DWB_TERMINAL_FORWARD_TIE_WINDOW_M + _TOLERANCE
     )
 
 
