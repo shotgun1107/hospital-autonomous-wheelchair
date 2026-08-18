@@ -25,13 +25,13 @@ from hospital_path_lab.r7_hidden_qualification import (
 
 R7_EVIDENCE_RELATIVE_PATH = Path(
     "simulation/path_planning_lab/outputs/"
-    "r7-native-v2-public-qualification-evidence-20260817-8c3b733.zip"
+    "r7-native-v3-public-qualification-evidence-20260818-2642965.zip"
 )
-R7_EVIDENCE_SIZE = 7_667
+R7_EVIDENCE_SIZE = 7_771
 R7_EVIDENCE_SHA256 = (
-    "4f784e086a60d86e99be15a5a39f9589d51593458e065a05abc636d1a8c01d8a"
+    "81bed89b078c77f964cac56a9da33979fc86b9bd8b7600b06824cfe0c8297c42"
 )
-R7_IMPLEMENTATION_COMMIT = "8c3b733"
+R7_IMPLEMENTATION_COMMIT = "2642965611a27c11111cdef2829d8d46cfed367b"
 R7_RESULT_DOCUMENT = (
     "docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md"
 )
@@ -53,7 +53,7 @@ def main() -> int:
         parser.error("hidden run requires a clean Git working tree")
 
     r7_gate = _verify_r7_evidence(repository_root)
-    _verify_native_libraries(repository_root)
+    _verify_native_libraries(repository_root, r7_gate)
     output.mkdir(parents=True)
 
     root_seed = secrets.randbits(63)
@@ -213,10 +213,15 @@ def _verify_r7_evidence(repository_root: Path) -> dict[str, object]:
         "semantic_parity_case_count": len(parity_cases),
         "receipt_content_hash": receipt["receipt_content_hash"],
         "source_freeze_hash": receipt["source_freeze_hash"],
+        "native_full_library_sha256": receipt["native_full_library_sha256"],
+        "native_safety_library_sha256": receipt["native_safety_library_sha256"],
     }
 
 
-def _verify_native_libraries(repository_root: Path) -> None:
+def _verify_native_libraries(
+    repository_root: Path,
+    r7_gate: dict[str, object],
+) -> None:
     native = (
         repository_root
         / "simulation/path_planning_lab/src/hospital_path_lab/_native"
@@ -228,6 +233,13 @@ def _verify_native_libraries(repository_root: Path) -> None:
     ]
     if missing:
         raise RuntimeError(f"required native libraries are missing: {', '.join(missing)}")
+    expected = {
+        "dwb_full_core.dll": r7_gate["native_full_library_sha256"],
+        "dwb_safety_core.dll": r7_gate["native_safety_library_sha256"],
+    }
+    for name, expected_hash in expected.items():
+        if _sha256(native / name) != expected_hash:
+            raise RuntimeError(f"required native library hash mismatch: {name}")
 
 
 def _git(root: Path, *args: str) -> str:
