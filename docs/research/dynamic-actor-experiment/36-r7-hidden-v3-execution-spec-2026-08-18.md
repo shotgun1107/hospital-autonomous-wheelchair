@@ -213,7 +213,8 @@ manifest와 receipt에는 최소한 다음을 기록한다.
 6. [완료] 고정된 가짜 seed를 사용하는 단위시험만 실행했다. 실제 hidden seed는 만들지 않았다.
 7. [완료] Ruff·compileall·직접 영향시험과 전체 회귀를 통과했다.
 8. [완료] 구현을 commit `6a272ff`로 푸시하고 전용 clean 복제본에서 preflight만 실행했다.
-9. [대기] 사용자에게 실제 hidden-v3 실행 승인을 다시 받는다.
-10. [미실행] 승인 뒤 한 번 실행한다.
+9. [완료] 사용자 승인 뒤 actual hidden-v3를 한 번 실행했다.
+10. [완료·FAIL] Normal `9/10`, Stress 기준 `9/10`, hard failure `0`이었다. 이 seed는
+    [실패 결과](38-r7-hidden-v3-failure-result-2026-08-18.md)와 함께 회귀 입력으로 전환했다.
 
-이 문서 작성만으로 hidden 실행이 승인된 것은 아니다.
+같은 seed를 고친 코드의 최종 hidden으로 다시 사용하지 않는다.

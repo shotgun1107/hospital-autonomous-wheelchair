@@ -266,6 +266,7 @@ flowchart TD
 | [R7 단일 관측 누락 수정 결과](35-r7-dropout-holdover-and-return-result-2026-08-18.md) | TTL 재사용, 통과 후 계획 정지와 원 경로 복귀 결과 |
 | [R7 새 hidden-v3 실행 명세](36-r7-hidden-v3-execution-spec-2026-08-18.md) | 새 관측 seed 20개, 일회 실행, PASS·FAIL·중단 처리 규칙 |
 | [R7 hidden-v3 사전점검 결과](37-r7-hidden-v3-preflight-result-2026-08-18.md) | runner 수정, 981개 회귀와 seed 없는 clean-clone preflight 결과 |
+| [R7 hidden-v3 실패 결과](38-r7-hidden-v3-failure-result-2026-08-18.md) | Normal 9/10, Stress 기준 9/10, hard failure 0과 두 실패 원인 |
 | `dynamic_prediction.py` | 관측 age와 가속 편차를 포함한 Actor tube |
 | `dynamic_safety.py` | swept clearance, 제한 감속, hold, `stop_epoch`, resume gate |
 | 기존 `followers/pure_pursuit.py` | 동결 PP 규칙에 맞춘 adapter/명령 생성 |
