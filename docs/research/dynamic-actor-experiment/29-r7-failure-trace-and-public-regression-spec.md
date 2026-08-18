@@ -1,8 +1,9 @@
 # R7 실패 추적·공개 재현시험 명세
 
-- 상태: 명세 완료, 구현 미승인
+- 상태: 명세 완료, 공개 회귀 수정·검증 완료(개인 연구 승인)
 - 작성일: `2026-08-18`
 - 근거 결과: [28-r7-hidden-observation-result-2026-08-18.md](./28-r7-hidden-observation-result-2026-08-18.md)
+- 구현 결과: [30-r7-failure-fix-and-public-regression-result-2026-08-18.md](./30-r7-failure-fix-and-public-regression-result-2026-08-18.md)
 - 적용 범위: R7 비공개 관측 시험에서 실패한 5건의 원인 확정
 - 비적용 범위: 동작 수정, 안전 기준 변경, 새 비공개 시험, 제품 알고리즘 채택
 

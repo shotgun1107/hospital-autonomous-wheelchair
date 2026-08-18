@@ -5,6 +5,10 @@ receipt.  It exercises only public scenes whose Actors exist from t=0 and
 stops the run after the first loss of a usable directional prediction.
 """
 
+# The trace emitter is defined and consumed entirely within one loop iteration;
+# it never escapes to a later iteration.
+# ruff: noqa: B023
+
 from __future__ import annotations
 
 from collections import Counter
@@ -45,6 +49,7 @@ from hospital_path_lab.dynamic_witness_contracts import WitnessWorldSnapshot
 from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
     PersistentSourceDerivedDwbController,
 )
+from hospital_path_lab.local_reference_window import project_reference_cursor
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.persistent_controller_contracts import PersistentControllerStatus
 from hospital_path_lab.persistent_controller_pipeline import (
@@ -72,6 +77,7 @@ from hospital_path_lab.r5b_temporal_reference import (
     build_r5b_crossing_reference_bundles,
     rebind_r5b_crossing_reference_bundle,
 )
+from hospital_path_lab.r7_failure_trace import R7FailureTraceCollector
 
 R5C_OBSERVATION_DIAGNOSTIC_VERSION = "r5c-public-observation-diagnostic-v1"
 _TOLERANCE = 1e-12
@@ -224,6 +230,8 @@ def run_r5c_crossing_diagnostic(
     recover_after_loss: bool = False,
     complete_after_post_pass: bool = False,
     observation_seed: int | None = None,
+    failure_trace: R7FailureTraceCollector | None = None,
+    observation_horizon_ticks: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     """Run one public crossing side until completion or the first safe hold."""
 
@@ -338,10 +346,13 @@ def run_r5c_crossing_diagnostic(
         tick: int,
         snapshot: DynamicObservationSnapshot,
         directional: DirectionalPredictionResult,
+        trace_detail: dict[str, object],
     ) -> PersistentPipelineStep:
         nonlocal post_pass_authorization_hash, post_pass_proof_tick
         assert directional.prediction_set is not None
+        _capture_controller_before(runtime, trace_detail)
         if runtime.issuer is None:
+            trace_detail["authorization_issue_attempted"] = False
             frozen_grid = runtime.pipeline.build_context.static_grid_snapshot
             observation_revision = (
                 frozen_grid.metadata.observation_revision
@@ -363,7 +374,19 @@ def run_r5c_crossing_diagnostic(
                 grid_snapshot=current_grid,
             )
             runtime.resume_authorization = None
+            _capture_pipeline_trace(record, runtime, trace_detail)
             return record
+        trace_detail["authorization_issue_attempted"] = True
+        trace_detail["authorization_phase_requested"] = (
+            R5BTemporalAuthorizationPhase.INITIAL_RELEASE.value
+            if runtime.issuer.last_authorization is None
+            else R5BTemporalAuthorizationPhase.CONTINUATION.value
+        )
+        trace_detail["prior_authorization_hash"] = (
+            None
+            if runtime.issuer.last_authorization is None
+            else runtime.issuer.last_authorization.authorization_content_hash
+        )
         temporal = runtime.issuer.issue(
             reference=active_bundle.reference,
             temporal_evidence=active_bundle.temporal_evidence,
@@ -384,6 +407,8 @@ def run_r5c_crossing_diagnostic(
             actual_stop_confirmed=runtime.resume_authorization is not None,
             local_safety_recheck_passed=True,
         )
+        trace_detail["authorization_issue_outcome"] = "issued"
+        trace_detail["temporal_authorization_phase"] = temporal.phase.value
         if temporal.phase is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION:
             post_pass_authorization_hash = temporal.authorization_content_hash
             if post_pass_proof_tick is None:
@@ -396,6 +421,7 @@ def run_r5c_crossing_diagnostic(
             grid_snapshot=_grid_snapshot_for_observation(active_bundle, snapshot),
         )
         runtime.resume_authorization = None
+        _capture_pipeline_trace(record, runtime, trace_detail)
         return record
 
     result = _run_profile_diagnostic(
@@ -428,6 +454,8 @@ def run_r5c_crossing_diagnostic(
             else None
         ),
         observation_seed=observation_seed,
+        failure_trace=failure_trace,
+        observation_horizon_ticks=observation_horizon_ticks,
     )
     return replace(
         result,
@@ -442,6 +470,8 @@ def run_r5c_crossing_recovery_diagnostic(
     profile: DynamicObservationProfile,
     tick_limit: int = 780,
     observation_seed: int | None = None,
+    failure_trace: R7FailureTraceCollector | None = None,
+    observation_horizon_ticks: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     """Resume crossing only through new stop-bound reference sessions."""
 
@@ -451,6 +481,8 @@ def run_r5c_crossing_recovery_diagnostic(
         tick_limit=tick_limit,
         recover_after_loss=True,
         observation_seed=observation_seed,
+        failure_trace=failure_trace,
+        observation_horizon_ticks=observation_horizon_ticks,
     )
 
 
@@ -460,6 +492,8 @@ def run_r5c_crossing_completion_diagnostic(
     profile: DynamicObservationProfile,
     tick_limit: int = 1600,
     observation_seed: int | None = None,
+    failure_trace: R7FailureTraceCollector | None = None,
+    observation_horizon_ticks: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     """Run the extended public scene through post-pass return and goal completion."""
 
@@ -470,6 +504,8 @@ def run_r5c_crossing_completion_diagnostic(
         recover_after_loss=True,
         complete_after_post_pass=True,
         observation_seed=observation_seed,
+        failure_trace=failure_trace,
+        observation_horizon_ticks=observation_horizon_ticks,
     )
 
 
@@ -536,8 +572,11 @@ def run_r5c_restop_diagnostic(
         _tick: int,
         snapshot: DynamicObservationSnapshot,
         directional: DirectionalPredictionResult,
+        trace_detail: dict[str, object],
     ) -> PersistentPipelineStep:
+        trace_detail["authorization_issue_attempted"] = False
         assert directional.prediction_set is not None
+        _capture_controller_before(runtime, trace_detail)
         frozen_grid = runtime.pipeline.build_context.static_grid_snapshot
         observation_revision = (
             frozen_grid.metadata.observation_revision
@@ -559,6 +598,7 @@ def run_r5c_restop_diagnostic(
             grid_snapshot=current_grid,
         )
         runtime.resume_authorization = None
+        _capture_pipeline_trace(record, runtime, trace_detail)
         return record
 
     return _run_profile_diagnostic(
@@ -644,8 +684,11 @@ def run_r5c_restop_recovery_diagnostic(
         _tick: int,
         snapshot: DynamicObservationSnapshot,
         directional: DirectionalPredictionResult,
+        trace_detail: dict[str, object],
     ) -> PersistentPipelineStep:
+        trace_detail["authorization_issue_attempted"] = False
         assert directional.prediction_set is not None
+        _capture_controller_before(runtime, trace_detail)
         frozen_grid = runtime.pipeline.build_context.static_grid_snapshot
         observation_revision = (
             frozen_grid.metadata.observation_revision
@@ -667,6 +710,7 @@ def run_r5c_restop_recovery_diagnostic(
             grid_snapshot=current_grid,
         )
         runtime.resume_authorization = None
+        _capture_pipeline_trace(record, runtime, trace_detail)
         return record
 
     return _run_profile_diagnostic(
@@ -709,15 +753,26 @@ def _run_profile_diagnostic(
     hold_terminal_actor_state: bool = False,
     empty_release_authorized: Callable[[], bool] | None = None,
     observation_seed: int | None = None,
+    failure_trace: R7FailureTraceCollector | None = None,
+    observation_horizon_ticks: int | None = None,
 ) -> R5CObservationDiagnosticResult:
     if profile not in (NORMAL_OBSERVATION_PROFILE, STRESS_OBSERVATION_PROFILE):
         raise ValueError("R5-C diagnostic accepts only frozen Normal or Stress")
     if tick_limit <= planned_release_tick:
         raise ValueError("R5-C tick limit must extend beyond planned release")
+    if observation_horizon_ticks is None:
+        observation_horizon_ticks = tick_limit
+    if (
+        isinstance(observation_horizon_ticks, bool)
+        or not isinstance(observation_horizon_ticks, int)
+        or observation_horizon_ticks < tick_limit
+    ):
+        raise ValueError("observation_horizon_ticks must be an integer at least tick_limit")
+    prefix_only = observation_horizon_ticks > tick_limit
     stream = _ProfileObservationStream(
         world,
         profile=profile,
-        tick_limit=tick_limit,
+        tick_limit=observation_horizon_ticks,
         stream_id=stream_id,
         mission_revision=mission_revision,
         hold_terminal_actor_state=hold_terminal_actor_state,
@@ -740,6 +795,7 @@ def _run_profile_diagnostic(
     hard_failures: list[str] = []
     trace: list[object] = []
     stopping_after_loss = False
+    stopping_after_loss_reason = "prediction_loss"
     confirmed_safe_frame_count = 0
     last_confirmed_safe_sequence: int | None = None
     release_ticks: list[int] = []
@@ -750,8 +806,31 @@ def _run_profile_diagnostic(
     maximum_consecutive_ready_frames = 0
     consecutive_ready_frames = 0
     last_ready_sequence: int | None = None
+    gate_safe_frame_count = 0
 
     for tick in range(tick_limit):
+        state_before_tick = state
+        runtime_before_tick = runtime
+        gate_state_before_tick = gate.motion_state
+        stop_epoch_before_tick = gate.stop_epoch
+        gate_safe_frames_before_tick = gate_safe_frame_count
+        confirmed_safe_before_tick = confirmed_safe_frame_count
+        gate_overrides_before_tick = gate.counters.gate_overrides
+        trace_detail: dict[str, object] = {
+            "recovery_reason": "none",
+            "release_requested": False,
+            "release_permitted": False,
+            "release_denial_reasons": (),
+            "authorization_issue_attempted": False,
+            "authorization_phase_requested": None,
+            "authorization_issue_outcome": "not_attempted",
+            "authorization_issue_error": None,
+            "temporal_authorization_phase": None,
+            "prior_authorization_hash": None,
+            "controller_called": False,
+            "controller_exception_type": None,
+            "controller_exception_message": None,
+        }
         snapshot, circular, directional = stream.tick(tick)
         status_counts[directional.status.value] += 1
         no_frame_tick_count += int(snapshot.last_event_was_no_frame)
@@ -777,12 +856,44 @@ def _run_profile_diagnostic(
             consecutive_ready_frames,
         )
 
+        def emit_failure_trace(
+            decision=None,
+            record: PersistentPipelineStep | None = None,
+        ) -> None:
+            if failure_trace is None:
+                return
+            _append_failure_trace_tick(
+                failure_trace,
+                tick=tick,
+                snapshot=snapshot,
+                directional=directional,
+                release_input_usable=release_input_usable,
+                consecutive_ready_frames=consecutive_ready_frames,
+                last_ready_sequence=last_ready_sequence,
+                gate_state_before=gate_state_before_tick,
+                stop_epoch_before=stop_epoch_before_tick,
+                gate_safe_frames_before=gate_safe_frames_before_tick,
+                confirmed_safe_frames_before=confirmed_safe_before_tick,
+                confirmed_safe_frames_after=confirmed_safe_frame_count,
+                last_confirmed_safe_sequence=last_confirmed_safe_sequence,
+                gate_overrides_before=gate_overrides_before_tick,
+                state_before=state_before_tick,
+                state_after=state,
+                runtime_before=runtime_before_tick,
+                runtime_after=runtime,
+                decision=decision,
+                record=record,
+                detail=trace_detail,
+            )
+
         if finish_with_confirmed_stop and tick >= (
-            tick_limit - _END_OF_WORLD_STOP_BUFFER_TICKS
+            observation_horizon_ticks - _END_OF_WORLD_STOP_BUFFER_TICKS
         ):
             if protective_stop_started_tick is None:
                 protective_stop_started_tick = tick
             decision = hold(state, tick, snapshot, None)
+            gate_safe_frame_count = decision.consecutive_safe_frames
+            trace_detail["recovery_reason"] = "end_of_world_stop"
             state = _advance_state(state, decision.command)
             trace.append(
                 (
@@ -803,6 +914,7 @@ def _run_profile_diagnostic(
             )
             if gate.motion_state is DynamicMotionState.COMPLETED:
                 completion_tick = tick
+                emit_failure_trace(decision)
                 break
             if gate.motion_state is DynamicMotionState.HOLDING:
                 if not confirmed_stop_ticks or confirmed_stop_ticks[-1] != tick:
@@ -810,7 +922,9 @@ def _run_profile_diagnostic(
                 if stop_confirmed_tick is None:
                     stop_confirmed_tick = tick
                 runtime = None
+                emit_failure_trace(decision)
                 break
+            emit_failure_trace(decision)
             continue
 
         if runtime is None:
@@ -820,9 +934,11 @@ def _run_profile_diagnostic(
                 and current_sequence != last_confirmed_safe_sequence
             )
             projected_release_frames = (
-                consecutive_ready_frames
-                if recover_after_loss
-                else confirmed_safe_frame_count + current_frame_adds_ready_evidence
+                confirmed_safe_frame_count + current_frame_adds_ready_evidence
+            )
+            gate_confirmed_release_ready = (
+                confirmed_safe_frame_count >= DYNAMIC_SAFE_OBSERVATION_FRAMES
+                and bool(current_frame_adds_ready_evidence)
             )
             can_release = all(
                 (
@@ -834,9 +950,36 @@ def _run_profile_diagnostic(
                         if recover_after_loss
                         else gate.stop_epoch == 1
                     ),
-                    projected_release_frames >= DYNAMIC_SAFE_OBSERVATION_FRAMES,
+                    (
+                        gate_confirmed_release_ready
+                        if recover_after_loss
+                        else projected_release_frames >= DYNAMIC_SAFE_OBSERVATION_FRAMES
+                    ),
                 )
             )
+            trace_detail["release_requested"] = tick >= planned_release_tick
+            trace_detail["release_permitted"] = can_release
+            denial_reasons: list[str] = []
+            if tick < planned_release_tick:
+                denial_reasons.append("before_planned_release")
+            if not release_input_usable:
+                denial_reasons.append("observation_not_usable")
+            if gate.motion_state is not DynamicMotionState.HOLDING:
+                denial_reasons.append("actual_stop_not_confirmed")
+            if gate.stop_epoch < 1:
+                denial_reasons.append("stop_epoch_not_confirmed")
+            if recover_after_loss and confirmed_safe_frame_count < (
+                DYNAMIC_SAFE_OBSERVATION_FRAMES
+            ):
+                denial_reasons.append("insufficient_confirmed_safe_frames")
+            elif recover_after_loss and not current_frame_adds_ready_evidence:
+                denial_reasons.append("awaiting_new_safe_frame_for_release")
+            elif (
+                not recover_after_loss
+                and projected_release_frames < DYNAMIC_SAFE_OBSERVATION_FRAMES
+            ):
+                denial_reasons.append("insufficient_confirmed_safe_frames")
+            trace_detail["release_denial_reasons"] = tuple(denial_reasons)
             if can_release:
                 runtime = launch(state, tick)
                 release_ticks.append(tick)
@@ -845,15 +988,16 @@ def _run_profile_diagnostic(
                     actual_release_tick = tick
             else:
                 decision = hold(state, tick, snapshot, circular)
-                if recover_after_loss and (
-                    release_input_usable
-                    and decision.consecutive_safe_frames > 0
+                gate_safe_frame_count = decision.consecutive_safe_frames
+                if recover_after_loss and release_input_usable and (
+                    decision.consecutive_safe_frames > 0
                 ):
-                    confirmed_safe_frame_count = min(
-                        consecutive_ready_frames,
-                        decision.consecutive_safe_frames,
-                    )
-                    last_confirmed_safe_sequence = current_sequence
+                    if (
+                        current_sequence is not None
+                        and current_sequence != last_confirmed_safe_sequence
+                    ):
+                        confirmed_safe_frame_count += 1
+                        last_confirmed_safe_sequence = current_sequence
                 elif recover_after_loss:
                     confirmed_safe_frame_count = 0
                     last_confirmed_safe_sequence = None
@@ -877,6 +1021,11 @@ def _run_profile_diagnostic(
                     minimum_static,
                     minimum_actor,
                 )
+                if gate.motion_state is DynamicMotionState.COMPLETED:
+                    completion_tick = tick
+                    emit_failure_trace(decision)
+                    break
+                emit_failure_trace(decision)
                 continue
 
         if stopping_after_loss or directional.prediction_set is None:
@@ -887,9 +1036,12 @@ def _run_profile_diagnostic(
                 if protective_stop_started_tick is None:
                     protective_stop_started_tick = tick
                 stopping_after_loss = True
+                stopping_after_loss_reason = "prediction_loss"
+            trace_detail["recovery_reason"] = stopping_after_loss_reason
             # Directional prediction loss is the controller-facing failure.  Do
             # not substitute the circular fallback and accidentally keep moving.
             decision = hold(state, tick, snapshot, None)
+            gate_safe_frame_count = decision.consecutive_safe_frames
             state = _advance_state(state, decision.command)
             trace.append((tick, directional.status, gate.motion_state, gate.stop_epoch, state))
             minimum_static, minimum_actor = _update_clearances(
@@ -900,6 +1052,10 @@ def _run_profile_diagnostic(
                 minimum_static,
                 minimum_actor,
             )
+            if gate.motion_state is DynamicMotionState.COMPLETED:
+                completion_tick = tick
+                emit_failure_trace(decision)
+                break
             if gate.motion_state is DynamicMotionState.HOLDING:
                 confirmed_stop_ticks.append(tick)
                 if stop_confirmed_tick is None:
@@ -907,17 +1063,27 @@ def _run_profile_diagnostic(
                 if recover_after_loss:
                     runtime = None
                     stopping_after_loss = False
+                    stopping_after_loss_reason = "prediction_loss"
                     confirmed_safe_frame_count = 0
                     last_confirmed_safe_sequence = current_sequence
                     consecutive_ready_frames = 0
                     last_ready_sequence = current_sequence
+                    emit_failure_trace(decision)
                     continue
+                emit_failure_trace(decision)
                 break
+            emit_failure_trace(decision)
             continue
 
         try:
-            record = controller_step(runtime, tick, snapshot, directional)
+            trace_detail["controller_called"] = True
+            record = controller_step(runtime, tick, snapshot, directional, trace_detail)
         except (RuntimeError, TypeError, ValueError) as error:
+            trace_detail["controller_exception_type"] = type(error).__name__
+            trace_detail["controller_exception_message"] = str(error)
+            if trace_detail["authorization_issue_attempted"]:
+                trace_detail["authorization_issue_outcome"] = "rejected"
+                trace_detail["authorization_issue_error"] = str(error)
             if recover_after_loss and str(error) == (
                 "R5-B target is no longer conservatively behind the robot"
             ):
@@ -925,7 +1091,10 @@ def _run_profile_diagnostic(
                 if protective_stop_started_tick is None:
                     protective_stop_started_tick = tick
                 stopping_after_loss = True
+                stopping_after_loss_reason = "authorization_loss"
+                trace_detail["recovery_reason"] = "authorization_loss"
                 decision = hold(state, tick, snapshot, None)
+                gate_safe_frame_count = decision.consecutive_safe_frames
                 state = _advance_state(state, decision.command)
                 trace.append(
                     (
@@ -944,20 +1113,28 @@ def _run_profile_diagnostic(
                     minimum_static,
                     minimum_actor,
                 )
+                if gate.motion_state is DynamicMotionState.COMPLETED:
+                    completion_tick = tick
+                    emit_failure_trace(decision)
+                    break
                 if gate.motion_state is DynamicMotionState.HOLDING:
                     confirmed_stop_ticks.append(tick)
                     if stop_confirmed_tick is None:
                         stop_confirmed_tick = tick
                     runtime = None
                     stopping_after_loss = False
+                    stopping_after_loss_reason = "prediction_loss"
                     confirmed_safe_frame_count = 0
                     last_confirmed_safe_sequence = current_sequence
                     consecutive_ready_frames = 0
                     last_ready_sequence = current_sequence
+                emit_failure_trace(decision)
                 continue
             hard_failures.append(f"controller_exception:{tick}:{error}")
+            emit_failure_trace()
             break
         controller_calls += 1
+        gate_safe_frame_count = record.safety_decision.consecutive_safe_frames
         state = record.robot_state_after
         if first_motion_tick is None and record.safety_decision.command != Twist2D():
             first_motion_tick = tick
@@ -971,11 +1148,19 @@ def _run_profile_diagnostic(
             hard_failures.append(
                 f"controller:{tick}:{result.status.value}:{result.failure_reason}"
             )
+            emit_failure_trace(record.safety_decision, record)
             break
         if gate.motion_state is DynamicMotionState.COMPLETED:
             completion_tick = tick
         elif gate.motion_state is not DynamicMotionState.MOVING:
             protective_stop_started_tick = protective_stop_started_tick or tick
+            stopping_after_loss = True
+            stopping_after_loss_reason = (
+                "controller_protective_stop"
+                if result is not None and result.controller_requested_protective_stop
+                else "gate_protective_stop"
+            )
+            trace_detail["recovery_reason"] = stopping_after_loss_reason
             if gate.motion_state is DynamicMotionState.HOLDING:
                 if not confirmed_stop_ticks or confirmed_stop_ticks[-1] != tick:
                     confirmed_stop_ticks.append(tick)
@@ -1001,16 +1186,34 @@ def _run_profile_diagnostic(
             minimum_actor,
         )
         if completion_tick is not None:
+            emit_failure_trace(record.safety_decision, record)
             break
         if gate.motion_state is DynamicMotionState.HOLDING:
+            if recover_after_loss:
+                runtime = None
+                stopping_after_loss = False
+                stopping_after_loss_reason = "prediction_loss"
+                confirmed_safe_frame_count = 0
+                last_confirmed_safe_sequence = current_sequence
+                consecutive_ready_frames = 0
+                last_ready_sequence = current_sequence
+                emit_failure_trace(record.safety_decision, record)
+                continue
+            emit_failure_trace(record.safety_decision, record)
             break
+        emit_failure_trace(record.safety_decision, record)
 
     minimum_required = world.kinematic_contract.vehicle_profile.minimum_clearance_m
     if minimum_static < minimum_required - _TOLERANCE:
         hard_failures.append("actual_static_clearance_below_minimum")
     if minimum_actor is not None and minimum_actor < minimum_required - _TOLERANCE:
         hard_failures.append("actual_actor_clearance_below_minimum")
-    if runtime is not None and completion_tick is None and stop_confirmed_tick is None:
+    if (
+        not prefix_only
+        and runtime is not None
+        and completion_tick is None
+        and stop_confirmed_tick is None
+    ):
         hard_failures.append("protective_stop_not_confirmed")
     if hard_failures:
         outcome = R5CDiagnosticOutcome.FAILED
@@ -1018,6 +1221,8 @@ def _run_profile_diagnostic(
         outcome = R5CDiagnosticOutcome.COMPLETED
     elif gate.motion_state is DynamicMotionState.HOLDING:
         outcome = R5CDiagnosticOutcome.CONSERVATIVE_HOLD
+    elif prefix_only:
+        outcome = R5CDiagnosticOutcome.FAILED
     else:
         outcome = R5CDiagnosticOutcome.FAILED
         hard_failures.append("final_state_not_conservative")
@@ -1058,6 +1263,191 @@ def _run_profile_diagnostic(
         hard_failures=tuple(dict.fromkeys(hard_failures)),
         trace_content_hash=canonical_content_hash(tuple(trace)),
     )
+
+
+def _capture_controller_before(
+    runtime: _Runtime,
+    detail: dict[str, object],
+) -> None:
+    controller = runtime.pipeline.controller
+    detail["executor_active_before"] = getattr(controller, "active_section_index", None)
+
+
+def _capture_pipeline_trace(
+    record: PersistentPipelineStep,
+    runtime: _Runtime,
+    detail: dict[str, object],
+) -> None:
+    tick_input = record.tick_input
+    result = record.controller_result
+    controller = runtime.pipeline.controller
+    detail["controller_called"] = True
+    detail["controller_status"] = None if result is None else result.status.value
+    detail["controller_failure_reason"] = None if result is None else result.failure_reason
+    detail["controller_active_section"] = (
+        None if result is None else result.active_section_index
+    )
+    detail["controller_result_hash"] = (
+        None if result is None else result.semantic_content_hash
+    )
+    detail["executor_active_after"] = getattr(controller, "active_section_index", None)
+    detail["catchup_attempted"] = getattr(
+        controller,
+        "last_catchup_attempted",
+        None,
+    )
+    detail["catchup_succeeded"] = getattr(
+        controller,
+        "last_catchup_succeeded",
+        None,
+    )
+    detail["catchup_failed_guard"] = getattr(
+        controller,
+        "last_catchup_failed_guard",
+        None,
+    )
+    if tick_input is None:
+        return
+    window = tick_input.local_window
+    detail["window_revision"] = window.window_content_hash
+    detail["window_first_section"] = window.sections[0].section_index
+    detail["window_last_section"] = window.sections[-1].section_index
+    detail["window_source_control_tick"] = window.source_control_tick
+    projection = project_reference_cursor(
+        tick_input.full_reference,
+        tick_input.robot_state.pose,
+    )
+    detail["projection_section"] = projection.source_section_index
+    detail["projection_distance_m"] = projection.distance_to_reference_m
+    detail["projection_ambiguous"] = projection.ambiguous
+    detail["raw_reference_cursor_m"] = projection.cursor_arc_m
+    detail["effective_reference_cursor_m"] = projection.cursor_arc_m
+    active_before = detail.get("executor_active_before")
+    first = window.sections[0].section_index
+    if isinstance(active_before, int) and first > active_before:
+        detail["intervening_section_kinds"] = tuple(
+            section.section_kind.value
+            for section in tick_input.full_reference.sections[active_before + 1 : first]
+        )
+    else:
+        detail["intervening_section_kinds"] = ()
+
+
+def _append_failure_trace_tick(
+    collector: R7FailureTraceCollector,
+    *,
+    tick: int,
+    snapshot: DynamicObservationSnapshot,
+    directional: DirectionalPredictionResult,
+    release_input_usable: bool,
+    consecutive_ready_frames: int,
+    last_ready_sequence: int | None,
+    gate_state_before: DynamicMotionState,
+    stop_epoch_before: int,
+    gate_safe_frames_before: int,
+    confirmed_safe_frames_before: int,
+    confirmed_safe_frames_after: int,
+    last_confirmed_safe_sequence: int | None,
+    gate_overrides_before: int,
+    state_before: RobotState,
+    state_after: RobotState,
+    runtime_before: _Runtime | None,
+    runtime_after: _Runtime | None,
+    decision,
+    record: PersistentPipelineStep | None,
+    detail: dict[str, object],
+) -> None:
+    frame = snapshot.frame
+    result = None if record is None else record.controller_result
+    after_state = gate_state_before if decision is None else decision.motion_state
+    after_epoch = stop_epoch_before if decision is None else decision.stop_epoch
+    safe_after = gate_safe_frames_before if decision is None else decision.consecutive_safe_frames
+    gate_overrides_after = (
+        gate_overrides_before if decision is None else decision.counters.gate_overrides
+    )
+    reference = None if runtime_after is None else runtime_after.pipeline.full_reference
+    record_values: dict[str, object] = {
+        "tick": tick,
+        "simulation_time_s": tick * DYNAMIC_CONTROL_PERIOD_S,
+        "robot_pose_before": _pose_payload(state_before.pose),
+        "robot_twist_before": _twist_payload(state_before.twist),
+        "robot_pose_after": _pose_payload(state_after.pose),
+        "robot_twist_after": _twist_payload(state_after.twist),
+        "observation_event": snapshot.availability.value,
+        "observation_sequence": None if frame is None else frame.sequence,
+        "observation_status": snapshot.availability.value,
+        "observation_age_s": snapshot.age_s,
+        "last_event_was_no_frame": snapshot.last_event_was_no_frame,
+        "directional_status": directional.status.value,
+        "prediction_present": directional.prediction_set is not None,
+        "release_input_usable": release_input_usable,
+        "consecutive_ready_frames": consecutive_ready_frames,
+        "last_ready_sequence": last_ready_sequence,
+        "gate_state_before": gate_state_before.value,
+        "gate_state_after": after_state.value,
+        "stop_epoch_before": stop_epoch_before,
+        "stop_epoch_after": after_epoch,
+        "gate_consecutive_safe_frames_before": gate_safe_frames_before,
+        "gate_consecutive_safe_frames_after": safe_after,
+        "confirmed_safe_frame_count_before": confirmed_safe_frames_before,
+        "confirmed_safe_frame_count_after": confirmed_safe_frames_after,
+        "last_confirmed_safe_sequence": last_confirmed_safe_sequence,
+        "gate_override": gate_overrides_after > gate_overrides_before,
+        "gate_failure_reasons": (
+            () if decision is None else tuple(sorted(decision.failure_reasons))
+        ),
+        "runtime_present_before": runtime_before is not None,
+        "runtime_present_after": runtime_after is not None,
+        "actual_stop_confirmed": after_state is DynamicMotionState.HOLDING,
+        "reference_session_id": (
+            None if reference is None else reference.reference_session_id
+        ),
+        "reference_stop_epoch": None if reference is None else reference.stop_epoch,
+        "resume_authorization_revision": (
+            None
+            if runtime_after is None or runtime_after.resume_authorization is None
+            else runtime_after.resume_authorization.authorization_revision
+        ),
+        "controller_status": None if result is None else result.status.value,
+        "controller_failure_reason": None if result is None else result.failure_reason,
+        "controller_active_section": (
+            None if result is None else result.active_section_index
+        ),
+        "controller_command_before_gate": (
+            None if record is None else _twist_payload(record.proposal.command)
+        ),
+        "command_after_gate": (
+            None if decision is None else _twist_payload(decision.command)
+        ),
+        "controller_result_hash": (
+            None if result is None else result.semantic_content_hash
+        ),
+        "window_revision": None,
+        "window_first_section": None,
+        "window_last_section": None,
+        "window_source_control_tick": None,
+        "projection_section": None,
+        "projection_distance_m": None,
+        "projection_ambiguous": None,
+        "raw_reference_cursor_m": None,
+        "effective_reference_cursor_m": None,
+        "executor_active_before": None,
+        "executor_active_after": None,
+        "catchup_attempted": None,
+        "catchup_succeeded": None,
+        "catchup_failed_guard": None,
+        "intervening_section_kinds": (),
+    }
+    record_values.update(detail)
+    collector.append(record_values)
+
+
+def _pose_payload(pose: Pose2D) -> dict[str, float]:
+    return {"x_m": pose.x, "y_m": pose.y, "yaw_rad": pose.yaw}
+
+
+def _twist_payload(twist: Twist2D) -> dict[str, float]:
+    return {"linear_mps": twist.linear, "angular_radps": twist.angular}
 
 
 def _advance_state(state: RobotState, next_command: Twist2D) -> RobotState:

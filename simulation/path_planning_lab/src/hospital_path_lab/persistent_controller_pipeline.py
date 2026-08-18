@@ -33,6 +33,7 @@ from hospital_path_lab.local_reference_validation import LocalReferenceValidatio
 from hospital_path_lab.local_reference_window import (
     LocalReferenceWindowManager,
     WindowUpdateStatus,
+    project_reference_cursor,
 )
 from hospital_path_lab.persistent_controller_contracts import (
     PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION,
@@ -45,6 +46,7 @@ from hospital_path_lab.persistent_controller_contracts import (
 from hospital_path_lab.r5b_temporal_authorization import (
     R5BTemporalExecutionAuthorization,
 )
+from hospital_path_lab.reference_section_executor import R5_POSITION_TOLERANCE_M
 
 PERSISTENT_CONTROLLER_PIPELINE_VERSION = "persistent-controller-pipeline-v2"
 _TOLERANCE = 1e-12
@@ -192,10 +194,29 @@ class PersistentControllerPipeline:
             static_grid_snapshot=current_grid_snapshot,
             context_content_hash="",
         )
+        active_section_index = getattr(
+            self.controller,
+            "active_section_index",
+            None,
+        )
+        preserve_section_index = None
+        if active_section_index is not None:
+            projection = project_reference_cursor(
+                self.full_reference,
+                state_before.pose,
+            )
+            if (
+                not projection.ambiguous
+                and projection.source_section_index > active_section_index
+                and projection.distance_to_reference_m
+                > R5_POSITION_TOLERANCE_M + _TOLERANCE
+            ):
+                preserve_section_index = active_section_index
         update = self.window_manager.update(
             current_build_context,
             self.full_reference,
             self.validation,
+            preserve_section_index=preserve_section_index,
         )
         if update.status is not WindowUpdateStatus.WINDOW_READY or update.window is None:
             raise RuntimeError(f"persistent reference window unavailable:{update.reason_code}")

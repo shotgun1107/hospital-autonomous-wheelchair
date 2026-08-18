@@ -275,6 +275,9 @@ class ReferenceSectionExecutor:
         self._last_processed_tick: int | None = None
         self._last_input_hash: str | None = None
         self._last_decision: ReferenceSectionExecutionDecision | None = None
+        self._last_catchup_attempted = False
+        self._last_catchup_succeeded: bool | None = None
+        self._last_catchup_failed_guard: str | None = None
 
     @property
     def state(self) -> ReferenceExecutorState:
@@ -283,6 +286,18 @@ class ReferenceSectionExecutor:
     @property
     def active_section_index(self) -> int | None:
         return self._active_section_index
+
+    @property
+    def last_catchup_attempted(self) -> bool:
+        return self._last_catchup_attempted
+
+    @property
+    def last_catchup_succeeded(self) -> bool | None:
+        return self._last_catchup_succeeded
+
+    @property
+    def last_catchup_failed_guard(self) -> str | None:
+        return self._last_catchup_failed_guard
 
     @property
     def session_reset_count(self) -> int:
@@ -330,8 +345,13 @@ class ReferenceSectionExecutor:
             self._window_update_count += 1
 
         progress_catchup = False
+        self._last_catchup_attempted = False
+        self._last_catchup_succeeded = None
+        self._last_catchup_failed_guard = None
         if not self._active_section_is_in_window(tick_input):
+            self._last_catchup_attempted = True
             progress_catchup = self._advance_passed_contiguous_section(tick_input)
+            self._last_catchup_succeeded = progress_catchup
         if not self._active_section_is_in_window(tick_input):
             decision = self._invalidate_execution(
                 tick_input,
@@ -1000,40 +1020,57 @@ class ReferenceSectionExecutor:
             or tick_input.current_gate_motion_state is not DynamicMotionState.MOVING
             or not tick_input.local_window.sections
         ):
+            self._last_catchup_failed_guard = "unsupported_section_kind"
             return False
         active_index = self._active_section_index
         next_index = tick_input.local_window.sections[0].section_index
         if next_index != active_index + 1 or next_index >= len(self._reference.sections):
+            self._last_catchup_failed_guard = "non_contiguous_section"
             return False
         active = self._reference.sections[active_index]
         successor = self._reference.sections[next_index]
-        if (
-            active.travel_direction
-            not in {ReferenceTravelDirection.FORWARD, ReferenceTravelDirection.REVERSE}
-            or successor.travel_direction is not active.travel_direction
-            or active.exit_requires_stopped
-            or successor.entry_requires_stopped
-            or successor.section_kind
-            in {ReferenceSectionKind.ROTATE, ReferenceSectionKind.HOLD}
-        ):
+        if active.travel_direction not in {
+            ReferenceTravelDirection.FORWARD,
+            ReferenceTravelDirection.REVERSE,
+        }:
+            self._last_catchup_failed_guard = "unsupported_section_kind"
+            return False
+        if successor.travel_direction is not active.travel_direction:
+            self._last_catchup_failed_guard = "direction_changed"
+            return False
+        if active.exit_requires_stopped or successor.entry_requires_stopped:
+            self._last_catchup_failed_guard = "required_stop_boundary"
+            return False
+        if successor.section_kind in {
+            ReferenceSectionKind.ROTATE,
+            ReferenceSectionKind.HOLD,
+        }:
+            self._last_catchup_failed_guard = "rotate_or_hold_boundary"
             return False
         projection = project_reference_cursor(
             self._reference,
             tick_input.robot_state.pose,
         )
+        if projection.ambiguous:
+            self._last_catchup_failed_guard = "projection_ambiguous"
+            return False
+        if projection.source_section_index < next_index:
+            self._last_catchup_failed_guard = "cursor_not_past_section_end"
+            return False
         if (
-            projection.ambiguous
-            or projection.source_section_index < next_index
-            or projection.distance_to_reference_m
+            projection.distance_to_reference_m
             > self.config.position_tolerance_m + _TOLERANCE
         ):
+            self._last_catchup_failed_guard = "projection_too_far"
             return False
         active_end_arc = self._reference.knots[
             active.last_knot_index
         ].cumulative_translation_arc_m
         if projection.cursor_arc_m + _TOLERANCE < active_end_arc:
+            self._last_catchup_failed_guard = "cursor_not_past_section_end"
             return False
         self._active_section_index = next_index
+        self._last_catchup_failed_guard = None
         return True
 
     def _invalidate_execution(

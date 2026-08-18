@@ -344,6 +344,22 @@ class PersistentSourceDerivedDwbController:
         return self._executor.window_update_count
 
     @property
+    def active_section_index(self) -> int | None:
+        return self._executor.active_section_index
+
+    @property
+    def last_catchup_attempted(self) -> bool:
+        return self._executor.last_catchup_attempted
+
+    @property
+    def last_catchup_succeeded(self) -> bool | None:
+        return self._executor.last_catchup_succeeded
+
+    @property
+    def last_catchup_failed_guard(self) -> str | None:
+        return self._executor.last_catchup_failed_guard
+
+    @property
     def stack_build_count(self) -> int:
         return self._stack_build_count
 

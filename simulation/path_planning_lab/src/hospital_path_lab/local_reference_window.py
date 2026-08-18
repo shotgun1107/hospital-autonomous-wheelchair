@@ -167,6 +167,8 @@ class LocalReferenceWindowManager:
         context: ReferenceBuildContext,
         reference: LocalManeuverReference,
         validation: LocalReferenceValidation,
+        *,
+        preserve_section_index: int | None = None,
     ) -> LocalReferenceWindowUpdate:
         if not isinstance(context, ReferenceBuildContext):
             raise TypeError("context must be a ReferenceBuildContext")
@@ -174,6 +176,12 @@ class LocalReferenceWindowManager:
             raise TypeError("reference must be a LocalManeuverReference")
         if not isinstance(validation, LocalReferenceValidation):
             raise TypeError("validation must be a LocalReferenceValidation")
+        if preserve_section_index is not None and (
+            isinstance(preserve_section_index, bool)
+            or not isinstance(preserve_section_index, int)
+            or not 0 <= preserve_section_index < len(reference.sections)
+        ):
+            raise ValueError("preserve_section_index must identify a reference section")
 
         reason = _input_failure(context, reference, validation)
         if reason is not None:
@@ -193,7 +201,12 @@ class LocalReferenceWindowManager:
                 reference,
                 validation,
             )
-        input_digest = _window_input_digest(context, reference, validation)
+        input_digest = _window_input_digest(
+            context,
+            reference,
+            validation,
+            preserve_section_index=preserve_section_index,
+        )
         if self._last_control_tick is not None:
             if context.control_tick < self._last_control_tick:
                 return _failure_update(
@@ -253,6 +266,9 @@ class LocalReferenceWindowManager:
             projection.source_section_index,
             effective_cursor,
         )
+        if preserve_section_index is not None:
+            start_section = min(start_section, preserve_section_index)
+            end_section = max(end_section, preserve_section_index)
         bounds = (
             reference.sections[start_section].first_knot_index,
             reference.sections[end_section].last_knot_index,
@@ -576,6 +592,8 @@ def _window_input_digest(
     context: ReferenceBuildContext,
     reference: LocalManeuverReference,
     validation: LocalReferenceValidation,
+    *,
+    preserve_section_index: int | None,
 ) -> str:
     return canonical_content_hash(
         {
@@ -585,6 +603,7 @@ def _window_input_digest(
             "simulation_time_s": context.simulation_time_s,
             "reference_hash": reference.reference_content_hash,
             "validation_hash": validation.validation_content_hash,
+            "preserve_section_index": preserve_section_index,
         }
     )
 

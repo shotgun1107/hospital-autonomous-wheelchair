@@ -166,6 +166,10 @@ class PersistentRppController:
         return self._executor.window_update_count
 
     @property
+    def active_section_index(self) -> int | None:
+        return self._executor.active_section_index
+
+    @property
     def false_local_goal_deceleration_count(self) -> int:
         return self._false_local_goal_deceleration_count
 
