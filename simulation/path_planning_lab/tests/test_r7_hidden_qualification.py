@@ -8,7 +8,10 @@ from hospital_path_lab.dynamic_observation import NORMAL_OBSERVATION_PROFILE
 from hospital_path_lab.r5b_temporal_reference import build_r5b_crossing_reference_bundles
 from hospital_path_lab.r5c_observation_diagnostic import _ProfileObservationStream
 from hospital_path_lab.r7_hidden_qualification import (
+    R7_HIDDEN_OBSERVATION_VERSION,
     R7HiddenCaseResult,
+    _clearances_pass,
+    _normal_progress_is_ordered,
     audit_hidden_results,
     build_hidden_case_specs,
     hidden_seed_commitment,
@@ -23,6 +26,8 @@ def test_hidden_catalog_is_exact_paired_and_deterministic() -> None:
     assert len(first) == 20
     assert tuple(item.ordinal for item in first) == tuple(range(20))
     assert len({item.case_id for item in first}) == 20
+    assert R7_HIDDEN_OBSERVATION_VERSION == "r7-hidden-observation-v2"
+    assert all(item.case_id.startswith("hidden-v3-") for item in first)
     assert len({item.content_hash for item in first}) == 20
     for replica in range(5):
         for side_name in ("left", "right"):
@@ -38,6 +43,14 @@ def test_hidden_catalog_is_exact_paired_and_deterministic() -> None:
     assert build_hidden_case_specs(123_457) != first
     assert hidden_seed_commitment(123_456) == hidden_seed_commitment(123_456)
     assert hidden_seed_commitment(123_457) != hidden_seed_commitment(123_456)
+
+
+def test_hidden_v3_commitment_does_not_reuse_v1_namespace() -> None:
+    from hashlib import sha256
+
+    root_seed = 123_456
+    old = sha256(f"r7-hidden-observation-v1:{root_seed}".encode()).hexdigest()
+    assert hidden_seed_commitment(root_seed) != old
 
 
 @pytest.mark.parametrize("bad", (-1, True, 1.5, 1 << 63))
@@ -102,6 +115,28 @@ def test_hidden_audit_requires_all_normal_complete_and_all_stress_hold() -> None
     assert not rejected_unsafe.passed
     assert rejected_unsafe.hard_failure_count == 1
     assert "hidden_hard_failure_nonzero" in rejected_unsafe.failures
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("post_pass_proof_tick", 70),
+        ("follow_original_release_tick", 600),
+        ("completion_tick", 700),
+        ("minimum_actor_clearance_m", 0.079),
+        ("minimum_static_clearance_m", 0.079),
+    ),
+)
+def test_normal_hidden_result_rejects_bad_order_or_clearance(
+    field: str,
+    value,
+) -> None:
+    result = _passing_result(build_hidden_case_specs(123_456)[0])
+    changed = replace(result, **{field: value}, content_hash="")
+
+    assert not (
+        _normal_progress_is_ordered(changed) and _clearances_pass(changed)
+    )
 
 
 def _passing_result(spec) -> R7HiddenCaseResult:

@@ -8,6 +8,7 @@ import os
 import platform
 import secrets
 import subprocess
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -25,43 +26,86 @@ from hospital_path_lab.r7_hidden_qualification import (
 
 R7_EVIDENCE_RELATIVE_PATH = Path(
     "simulation/path_planning_lab/outputs/"
-    "r7-native-v3-public-qualification-evidence-20260818-2642965.zip"
+    "r7-native-v4-public-qualification-evidence-20260818-8a6275c.zip"
 )
-R7_EVIDENCE_SIZE = 7_771
+R7_EVIDENCE_SIZE = 7_773
 R7_EVIDENCE_SHA256 = (
-    "81bed89b078c77f964cac56a9da33979fc86b9bd8b7600b06824cfe0c8297c42"
+    "3829e14dcf5e548210cdc181bde5dc913743f4f211ca25c3f28c15e2a7016183"
 )
-R7_IMPLEMENTATION_COMMIT = "2642965611a27c11111cdef2829d8d46cfed367b"
+R7_IMPLEMENTATION_COMMIT = "8a6275c874ec060c0b268d4f56ee7205ab9f7266"
+R7_RECEIPT_CONTENT_HASH = (
+    "a971ffeefa83edfd430600261f866d6482467289414d3059592f4f1a95e4ef64"
+)
 R7_RESULT_DOCUMENT = (
     "docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md"
 )
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--max-workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
-    args = parser.parse_args()
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=min(14, max(1, (os.cpu_count() or 2) // 2)),
+    )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="증거와 실행환경만 확인하고 hidden seed는 만들지 않는다.",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
     if args.max_workers <= 0:
         parser.error("max-workers must be positive")
 
-    repository_root = Path(__file__).resolve().parents[3]
+    repository_root = _repository_root()
     output = args.output.resolve()
     if output.exists():
         parser.error("output path already exists; hidden outputs are never overwritten")
     if _git(repository_root, "status", "--porcelain=v1"):
         parser.error("hidden run requires a clean Git working tree")
 
-    r7_gate = _verify_r7_evidence(repository_root)
-    _verify_native_libraries(repository_root, r7_gate)
-    output.mkdir(parents=True)
+    preflight = _preflight(repository_root)
+    if args.preflight_only:
+        output.mkdir(parents=True)
+        _write_json(
+            output / "preflight-manifest.json",
+            {
+                "schema": "r7-hidden-preflight-v2",
+                "checked_at_utc": datetime.now(UTC).isoformat(),
+                **preflight,
+                "max_workers_if_approved": args.max_workers,
+                "hidden_seed_generated": False,
+                "hidden_executed": False,
+                "product_or_human_safety_claim": False,
+            },
+        )
+        print("preflight_passed=true", flush=True)
+        print("hidden_seed_generated=false", flush=True)
+        return 0
 
     root_seed = secrets.randbits(63)
     commitment = hidden_seed_commitment(root_seed)
-    specs = build_hidden_case_specs(root_seed)
-    head = _git(repository_root, "rev-parse", "HEAD")
-    tree = _git(repository_root, "rev-parse", "HEAD^{tree}")
+    output.mkdir(parents=True)
     started_at = datetime.now(UTC).isoformat()
+    _write_json(
+        output / "seed-commitment.json",
+        {
+            "schema": "r7-hidden-seed-commitment-v2",
+            "seed_commitment": commitment,
+            "root_seed_disclosed_before_run": False,
+            "created_at_utc": started_at,
+        },
+    )
+    specs = build_hidden_case_specs(root_seed)
+    head = preflight["head"]
+    tree = preflight["tree"]
+    r7_gate = preflight["r7_gate"]
     pre_run = {
         "schema": R7_HIDDEN_OBSERVATION_VERSION,
         "started_at_utc": started_at,
@@ -79,18 +123,15 @@ def main() -> int:
         "max_workers": args.max_workers,
         "python_wall_clock_is_qualification": False,
         "r7_gate": r7_gate,
-        "machine": {
-            "name": platform.node(),
-            "platform": platform.platform(),
-            "python": platform.python_version(),
-            "logical_cpu_count": os.cpu_count(),
-        },
+        "machine": preflight["machine"],
+        "hidden_seed_generated": True,
+        "hidden_executed": True,
     }
     _write_json(output / "pre-run-manifest.json", pre_run)
     _write_json(
         output / "consumed-seed.json",
         {
-            "schema": "r7-hidden-consumed-seed-v1",
+            "schema": "r7-hidden-consumed-seed-v2",
             "root_seed": root_seed,
             "seed_commitment": commitment,
             "consumed_at_utc": started_at,
@@ -105,7 +146,7 @@ def main() -> int:
         _write_json(
             output / "partial-state.json",
             {
-                "schema": "r7-hidden-partial-v1",
+                "schema": "r7-hidden-partial-v2",
                 "seed_commitment": commitment,
                 "completed_case_count": len(partial),
                 "completed_case_ids": tuple(item.case_id for item in partial),
@@ -118,16 +159,32 @@ def main() -> int:
             flush=True,
         )
 
-    results = evaluate_hidden_cases(
-        repository_root,
-        specs,
-        max_workers=args.max_workers,
-        on_case=on_case,
-    )
+    try:
+        results = evaluate_hidden_cases(
+            repository_root,
+            specs,
+            max_workers=args.max_workers,
+            on_case=on_case,
+        )
+    except BaseException as exc:
+        _write_json(
+            output / "infrastructure-failure.json",
+            {
+                "schema": "r7-hidden-infrastructure-failure-v2",
+                "completed": False,
+                "algorithm_verdict": None,
+                "seed_commitment": commitment,
+                "completed_case_count": len(partial),
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "partial_is_final_evidence": False,
+            },
+        )
+        raise
     audit = audit_hidden_results(specs, results)
     _write_json(output / "case-results.json", results)
     summary = {
-        "schema": "r7-hidden-observation-summary-v1",
+        "schema": "r7-hidden-observation-summary-v2",
         "passed": audit.passed,
         "case_count": audit.result_count,
         "normal_completed_count": audit.normal_completed_count,
@@ -146,7 +203,7 @@ def main() -> int:
         _summary_markdown(summary, results), encoding="utf-8"
     )
     receipt = {
-        "schema": "r7-hidden-consumption-receipt-v1",
+        "schema": "r7-hidden-consumption-receipt-v2",
         "completed": True,
         "passed": audit.passed,
         "head": head,
@@ -169,6 +226,35 @@ def main() -> int:
     return 0 if audit.passed else 1
 
 
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _preflight(repository_root: Path) -> dict[str, object]:
+    _git(
+        repository_root,
+        "merge-base",
+        "--is-ancestor",
+        R7_IMPLEMENTATION_COMMIT,
+        "HEAD",
+    )
+    r7_gate = _verify_r7_evidence(repository_root)
+    _verify_native_libraries(repository_root, r7_gate)
+    return {
+        "head": _git(repository_root, "rev-parse", "HEAD"),
+        "tree": _git(repository_root, "rev-parse", "HEAD^{tree}"),
+        "working_tree_clean": True,
+        "r7_implementation_commit": R7_IMPLEMENTATION_COMMIT,
+        "r7_gate": r7_gate,
+        "machine": {
+            "name": platform.node(),
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "logical_cpu_count": os.cpu_count(),
+        },
+    }
+
+
 def _verify_r7_evidence(repository_root: Path) -> dict[str, object]:
     evidence = repository_root / R7_EVIDENCE_RELATIVE_PATH
     if not evidence.is_file() or evidence.stat().st_size != R7_EVIDENCE_SIZE:
@@ -179,8 +265,17 @@ def _verify_r7_evidence(repository_root: Path) -> dict[str, object]:
         manifest = json.loads(archive.read("run-manifest.json"))
         receipt = json.loads(archive.read("qualification-receipt.json"))
         parity = json.loads(archive.read("semantic-parity.json"))
+        release_gate = json.loads(archive.read("release-gate.json"))
+    if (
+        release_gate.get("qualified") is not True
+        or release_gate.get("eligible_for_user_hidden_approval") is not True
+        or release_gate.get("hidden_executed") is not False
+    ):
+        raise RuntimeError("R7 release gate is not passing")
     if receipt.get("deadline_miss_count") != 0 or receipt.get("sample_count") != 500:
         raise RuntimeError("R7 timing qualification is not passing")
+    if receipt.get("receipt_content_hash") != R7_RECEIPT_CONTENT_HASH:
+        raise RuntimeError("R7 qualification receipt hash mismatch")
     if manifest.get("hidden_executed") is not False:
         raise RuntimeError("R7 evidence already reports hidden execution")
     parity_cases = parity.get("records", ())
@@ -211,6 +306,7 @@ def _verify_r7_evidence(repository_root: Path) -> dict[str, object]:
         "deadline_miss_count": receipt["deadline_miss_count"],
         "sample_count": receipt["sample_count"],
         "semantic_parity_case_count": len(parity_cases),
+        "release_gate_qualified": True,
         "receipt_content_hash": receipt["receipt_content_hash"],
         "source_freeze_hash": receipt["source_freeze_hash"],
         "native_full_library_sha256": receipt["native_full_library_sha256"],
@@ -271,10 +367,12 @@ def _sha256(path: Path) -> str:
 
 
 def _write_json(path: Path, value) -> None:
-    path.write_text(
+    temporary = path.with_name(f"{path.name}.tmp")
+    temporary.write_text(
         json.dumps(_json_value(value), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    temporary.replace(path)
 
 
 def _json_value(value):

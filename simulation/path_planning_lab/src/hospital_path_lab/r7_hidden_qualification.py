@@ -20,10 +20,11 @@ from hospital_path_lab.r5c_observation_diagnostic import (
     run_r5c_crossing_completion_diagnostic,
 )
 
-R7_HIDDEN_OBSERVATION_VERSION = "r7-hidden-observation-v1"
+R7_HIDDEN_OBSERVATION_VERSION = "r7-hidden-observation-v2"
 R7_HIDDEN_REPLICA_COUNT = 5
 R7_HIDDEN_REQUIRED_CASE_COUNT = 20
 R7_HIDDEN_TICK_LIMIT = 1_600
+R7_HIDDEN_MINIMUM_CLEARANCE_M = 0.08
 _MAX_ROOT_SEED = (1 << 63) - 1
 
 
@@ -122,7 +123,7 @@ def build_hidden_case_specs(root_seed: int) -> tuple[R7HiddenCaseSpec, ...]:
                     R7HiddenCaseSpec(
                         ordinal=len(specs),
                         case_id=(
-                            f"hidden-{replica:02d}-{side_name}-{profile_name}"
+                            f"hidden-v3-{replica:02d}-{side_name}-{profile_name}"
                         ),
                         replica=replica,
                         side_index=side_index,
@@ -170,14 +171,13 @@ def run_hidden_case(
         observation_seed=spec.observation_seed,
     )
     if spec.expected_outcome == "completed":
+        ordered_progress = _normal_progress_is_ordered(result)
         passed = all(
             (
                 result.outcome is R5CDiagnosticOutcome.COMPLETED,
-                result.completion_tick is not None,
-                result.post_pass_proof_tick is not None,
-                result.follow_original_release_tick is not None,
-                result.first_motion_tick is not None,
+                ordered_progress,
                 result.final_motion_state is DynamicMotionState.COMPLETED,
+                _clearances_pass(result),
                 not result.hard_failures,
             )
         )
@@ -190,6 +190,7 @@ def run_hidden_case(
                 result.controller_call_count == 0,
                 not result.release_ticks,
                 result.final_motion_state is DynamicMotionState.HOLDING,
+                _clearances_pass(result),
                 not result.hard_failures,
             )
         )
@@ -306,6 +307,28 @@ def _validate_root_seed(root_seed: int) -> None:
         or not 0 <= root_seed <= _MAX_ROOT_SEED
     ):
         raise ValueError("root_seed must be a non-negative signed 63-bit exact integer")
+
+
+def _normal_progress_is_ordered(result) -> bool:
+    ticks = (
+        result.first_motion_tick,
+        result.post_pass_proof_tick,
+        result.follow_original_release_tick,
+        result.completion_tick,
+    )
+    return all(tick is not None for tick in ticks) and all(
+        left < right for left, right in zip(ticks[:-1], ticks[1:], strict=True)
+    )
+
+
+def _clearances_pass(result) -> bool:
+    return (
+        result.minimum_actor_clearance_m is not None
+        and result.minimum_actor_clearance_m + 1e-12
+        >= R7_HIDDEN_MINIMUM_CLEARANCE_M
+        and result.minimum_static_clearance_m + 1e-12
+        >= R7_HIDDEN_MINIMUM_CLEARANCE_M
+    )
 
 
 def _derived_observation_seed(root_seed: int, *, replica: int, side_name: str) -> int:
