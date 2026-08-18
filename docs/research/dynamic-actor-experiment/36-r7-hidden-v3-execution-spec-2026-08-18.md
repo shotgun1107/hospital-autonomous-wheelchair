@@ -47,8 +47,9 @@ hidden 실행 전에 다음을 다시 확인한다.
 5. 실행 전용 복제본의 작업트리가 깨끗하다.
 6. 다른 simulation worker와 timing 측정이 실행 중이지 않다.
 
-현재 `run_r7_hidden_observation.py`는 예전 v3 증거 ZIP과 예전 구현 commit을 고정하고 있다.
-따라서 이 명세에 맞게 수정·시험하기 전에는 실행 금지다.
+`run_r7_hidden_observation.py`는 commit `6a272ff`에서 새 v4 증거 ZIP과 실행 commit을
+검증하도록 수정됐다. 깨끗한 복제본에서 seed 없는 preflight도 통과했다. 실제 hidden 실행은
+아직 승인되지 않았다.
 
 ## 4. hidden 사례
 
@@ -78,7 +79,8 @@ hidden 실행 전에 다음을 다시 확인한다.
 코드·증거·DLL·clean 상태 확인
 → 운영체제 난수로 63-bit root seed 생성
 → seed commitment SHA-256 계산
-→ pre-run-manifest.json을 먼저 기록
+→ case를 만들기 전에 seed-commitment.json 기록
+→ pre-run-manifest.json 기록
 → consumed-seed.json에 사용된 seed 기록
 → 20개 사례 실행
 ```
@@ -175,6 +177,8 @@ AND hard failure 0
 ## 9. 필수 산출물
 
 ```text
+preflight-manifest.json   # seed 없는 사전검사 때만 생성
+seed-commitment.json
 pre-run-manifest.json
 consumed-seed.json
 case-results.json
@@ -182,6 +186,7 @@ summary.json
 summary.md
 hidden-consumption-receipt.json
 partial-state.json        # 중단됐을 때만 남음
+infrastructure-failure.json # 실행 오류·중단 때만 남음
 ```
 
 manifest와 receipt에는 최소한 다음을 기록한다.
@@ -200,15 +205,15 @@ manifest와 receipt에는 최소한 다음을 기록한다.
 
 ## 10. 실제 실행 전 구현 순서
 
-1. hidden schema를 `r7-hidden-observation-v2`로 올린다.
-2. runner가 새 v4 증거 ZIP과 실행 commit `8a6275c`를 검증하도록 고친다.
-3. runner에 수동 root seed 입력 경로가 없음을 시험한다.
-4. ZIP·DLL·commit·source hash 변조를 모두 실행 전에 거부하는 시험을 추가한다.
-5. 20개 catalog·Normal/Stress pair·ordinal·판정 규칙 시험을 통과시킨다.
-6. 고정된 가짜 seed를 사용하는 단위시험만 실행한다. 실제 hidden seed는 만들지 않는다.
-7. Ruff·compileall·직접 영향시험과 전체 회귀를 통과한다.
-8. 구현을 커밋·푸시하고 전용 clean 복제본에서 preflight만 실행한다.
-9. 사용자에게 실제 hidden-v3 실행 승인을 다시 받는다.
-10. 승인 뒤 한 번 실행한다.
+1. [완료] hidden schema를 `r7-hidden-observation-v2`로 올린다.
+2. [완료] runner가 새 v4 증거 ZIP과 실행 commit `8a6275c`를 검증하도록 고친다.
+3. [완료] runner에 수동 root seed 입력 경로가 없음을 시험한다.
+4. [완료] ZIP·DLL·commit·source hash가 맞지 않으면 실행 전에 거부한다.
+5. [완료] 20개 catalog·Normal/Stress pair·ordinal·판정 규칙 시험을 통과시킨다.
+6. [완료] 고정된 가짜 seed를 사용하는 단위시험만 실행했다. 실제 hidden seed는 만들지 않았다.
+7. [완료] Ruff·compileall·직접 영향시험과 전체 회귀를 통과했다.
+8. [완료] 구현을 commit `6a272ff`로 푸시하고 전용 clean 복제본에서 preflight만 실행했다.
+9. [대기] 사용자에게 실제 hidden-v3 실행 승인을 다시 받는다.
+10. [미실행] 승인 뒤 한 번 실행한다.
 
 이 문서 작성만으로 hidden 실행이 승인된 것은 아니다.
