@@ -1,10 +1,11 @@
 # R7 새 hidden 관측 시험 v2
 
-- 상태: 실행 승인, seed 생성 전
+- 상태: 실행 완료 — `FAIL`
 - 승인일: `2026-08-18`
 - 실행 기준 코드: `2642965611a27c11111cdef2829d8d46cfed367b`
 - 수정 결과: [30-r7-failure-fix-and-public-regression-result-2026-08-18.md](./30-r7-failure-fix-and-public-regression-result-2026-08-18.md)
 - 이전 hidden 결과: [28-r7-hidden-observation-result-2026-08-18.md](./28-r7-hidden-observation-result-2026-08-18.md)
+- 실행 결과: [32-r7-hidden-v2-result-2026-08-18.md](./32-r7-hidden-v2-result-2026-08-18.md)
 
 ## 1. 목적
 
