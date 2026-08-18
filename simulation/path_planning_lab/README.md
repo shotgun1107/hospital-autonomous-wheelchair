@@ -59,7 +59,9 @@ v2 정식 직렬 `500회`는 Python↔C++ 동일성 `5/5`, p50 `10.847ms`, p95 `
 R7 public 직접 영향 `9 passed`, R5-C 직접 영향 `12 passed`, 전체 회귀 `969 passed`이며
 실패·건너뜀은 `0`이다. 소비된 hidden-v2 Normal 실패 입력 3건은 회귀자료로만 다시 실행해
 모두 목적지에 도착했고 hard failure는 `0`이었다. 기존 hidden 판정을 PASS로 바꾸지 않으며,
-새 hidden은 별도 승인 전 실행하지 않는다. 상세는
+변경 commit `8a6275c`의 C++ 재자격은 Python↔C++ `5/5`, p50 `12.686ms`, p95
+`29.060ms`, 최대 `37.842ms`, 50ms 초과 `0/500`으로 통과했다. 새 hidden은 별도 승인 전
+실행하지 않는다. 상세는
 [TTL 재사용 명세](../../docs/research/dynamic-actor-experiment/34-r7-single-frame-dropout-ttl-holdover-2026-08-18.md)와
 [수정 결과](../../docs/research/dynamic-actor-experiment/35-r7-dropout-holdover-and-return-result-2026-08-18.md)를 따른다.
 

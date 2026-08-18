@@ -80,10 +80,31 @@ Stress는 기본 지연이 `250 ms`라 한 번 더 누락되면 stale이 되기 
 - 위 직접 영향시험 `21 passed`
 - CPU 경쟁 없이 직렬로 실행한 timing 계약·R7 native 보조시험 `19 passed`
 
-## 남은 검증
+### R7 C++ 50 ms 재자격
 
-- DWB adapter 소스가 바뀌었으므로 R7 50 ms 정식 `500회` 재측정
+변경 commit `8a6275c`의 깨끗한 복제본에서 C++를 다시 빌드한 뒤, worker 없이 공개 입력
+5개를 각 `100회`, 총 `500회` 직렬 측정했다.
+
+| 항목 | 결과 |
+|---|---:|
+| Python↔C++ 동일성 | `5/5` |
+| p50 | `12.686 ms` |
+| p95 | `29.060 ms` |
+| p99 | `30.829 ms` |
+| 최대 | `37.842 ms` |
+| 50 ms 초과 | `0/500` |
+
+- receipt: `a971ffeefa83edfd430600261f866d6482467289414d3059592f4f1a95e4ef64`
+- 증거 ZIP: `r7-native-v4-public-qualification-evidence-20260818-8a6275c.zip`
+- ZIP 크기: `7,773 bytes`
+- ZIP SHA-256: `3829e14dcf5e548210cdc181bde5dc913743f4f211ca25c3f28c15e2a7016183`
+- hidden: 미실행
+
+## 남은 작업
+
 - 새 hidden 실행은 사용자 별도 승인 전 금지
+- 새 hidden을 하려면 새 commitment·seed와 이번 v4 timing 증거를 사용하는 실행 명세를 먼저
+  동결해야 한다.
 
 이 결과는 합성 관측 simulation 연구 결과다. 실제 카메라, 실제 사람, 실물 휠체어, 제품 자동
 재출발 또는 사람 탑승 안전의 증거가 아니다.
