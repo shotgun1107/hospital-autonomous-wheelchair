@@ -176,13 +176,13 @@ def test_normal_right_seed_8970341022568507592_completes_after_stop_bound_recove
 
     assert result.hard_failures == ()
     assert result.outcome.value == "completed"
-    assert result.completion_tick == 1_178
+    assert result.completion_tick == 1_566
     assert result.post_pass_proof_tick is not None
     assert result.follow_original_release_tick is not None
     assert trace.records[-1]["gate_state_after"] == "completed"
 
 
-def test_normal_left_seed_6422064046178126625_remains_fail_closed_without_pass_proof() -> None:
+def test_normal_left_seed_6422064046178126625_completes_with_continued_actor() -> None:
     trace = R7FailureTraceCollector()
     result = run_r5c_crossing_completion_diagnostic(
         side_index=0,
@@ -193,12 +193,11 @@ def test_normal_left_seed_6422064046178126625_remains_fail_closed_without_pass_p
     )
 
     assert result.hard_failures == ()
-    assert result.outcome.value == "conservative_hold"
-    assert result.post_pass_proof_tick is None
-    assert result.follow_original_release_tick is None
-    assert trace.records[-1]["directional_status"] == "empty_frame"
-    assert trace.records[-1]["release_input_usable"] is False
-    assert trace.records[-1]["gate_state_after"] == "holding"
+    assert result.outcome.value == "completed"
+    assert result.completion_tick == 1_456
+    assert result.post_pass_proof_tick == 877
+    assert result.follow_original_release_tick == 962
+    assert trace.records[-1]["gate_state_after"] == "completed"
 
 
 def test_active_runtime_treats_pre_pass_empty_status_as_input_loss(
@@ -248,3 +247,42 @@ def test_active_runtime_treats_pre_pass_empty_status_as_input_loss(
     assert empty_tick["gate_state_after"] == "braking"
     assert empty_tick["recovery_reason"] == "prediction_loss"
     assert empty_tick["controller_exception_message"] is None
+
+
+def test_completion_extension_continues_terminal_actor_without_teleporting() -> None:
+    world = r5c_diagnostic.build_r5b_crossing_reference_bundles()[0].source.world
+    actor = world.actors[0]
+    extended_terminal = r5c_diagnostic._actor_states_at_observation_time(
+        world,
+        80.0,
+        extend_terminal_actor_trajectory=True,
+    )[0]
+
+    source_terminal = actor.state_at(world.duration_s)
+    assert source_terminal is not None
+    assert world.duration_s == actor.active_until_s == 39.0
+    assert extended_terminal.position.x == pytest.approx(
+        actor.start_position.x + actor.velocity.x * 80.0
+    )
+    assert extended_terminal.position.y == pytest.approx(
+        actor.start_position.y + actor.velocity.y * 80.0
+    )
+    assert extended_terminal.velocity == source_terminal.velocity
+
+
+def test_completion_extension_does_not_emit_empty_at_old_world_boundary() -> None:
+    trace = R7FailureTraceCollector()
+    result = run_r5c_crossing_completion_diagnostic(
+        side_index=0,
+        profile=NORMAL_OBSERVATION_PROFILE,
+        tick_limit=785,
+        observation_horizon_ticks=_FULL_OBSERVATION_HORIZON_TICKS,
+        observation_seed=0,
+        failure_trace=trace,
+    )
+
+    old_boundary_delivery_tick = 784
+    boundary = trace.records[old_boundary_delivery_tick]
+    assert result.hard_failures == ()
+    assert boundary["directional_status"] != "empty_frame"
+    assert boundary["prediction_present"] is True

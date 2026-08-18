@@ -18,9 +18,10 @@ from enum import StrEnum
 from math import isfinite
 
 from hospital_path_lab.collision import CollisionChecker
-from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, Twist2D
+from hospital_path_lab.contracts import GridSnapshot, Point2D, Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_CONTROL_PERIOD_S,
+    ActorState,
     DynamicGroundTruthFrame,
     DynamicMotionState,
 )
@@ -138,7 +139,7 @@ class _ProfileObservationStream:
         tick_limit: int,
         stream_id: str,
         mission_revision: int,
-        hold_terminal_actor_state: bool = False,
+        extend_terminal_actor_trajectory: bool = False,
         observation_seed: int | None = None,
     ) -> None:
         if observation_seed is None:
@@ -163,11 +164,10 @@ class _ProfileObservationStream:
                 tick_id=tick,
                 simulation_time_s=tick * DYNAMIC_CONTROL_PERIOD_S,
                 robot_state=world.initial_state,
-                actors=(
-                    ()
-                    if hold_terminal_actor_state
-                    and tick * DYNAMIC_CONTROL_PERIOD_S > world.duration_s
-                    else world.actor_states_at(tick * DYNAMIC_CONTROL_PERIOD_S)
+                actors=_actor_states_at_observation_time(
+                    world,
+                    tick * DYNAMIC_CONTROL_PERIOD_S,
+                    extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
                 ),
                 map_revision=world.map_revision,
                 mission_revision=mission_revision,
@@ -447,7 +447,7 @@ def run_r5c_crossing_diagnostic(
         controller_step=controller_step,
         recover_after_loss=recover_after_loss,
         finish_with_confirmed_stop=recover_after_loss,
-        hold_terminal_actor_state=complete_after_post_pass,
+        extend_terminal_actor_trajectory=complete_after_post_pass,
         empty_release_authorized=(
             (lambda: post_pass_authorization_hash is not None)
             if complete_after_post_pass
@@ -750,7 +750,7 @@ def _run_profile_diagnostic(
     controller_step: Callable,
     recover_after_loss: bool = False,
     finish_with_confirmed_stop: bool = False,
-    hold_terminal_actor_state: bool = False,
+    extend_terminal_actor_trajectory: bool = False,
     empty_release_authorized: Callable[[], bool] | None = None,
     observation_seed: int | None = None,
     failure_trace: R7FailureTraceCollector | None = None,
@@ -775,7 +775,7 @@ def _run_profile_diagnostic(
         tick_limit=observation_horizon_ticks,
         stream_id=stream_id,
         mission_revision=mission_revision,
-        hold_terminal_actor_state=hold_terminal_actor_state,
+        extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
         observation_seed=observation_seed,
     )
     state = RobotState(world.initial_state.pose, Twist2D())
@@ -838,7 +838,7 @@ def _run_profile_diagnostic(
         release_input_usable = (
             directional.status is DirectionalPredictionStatus.READY
             or (
-                hold_terminal_actor_state
+                extend_terminal_actor_trajectory
                 and directional.status is DirectionalPredictionStatus.EMPTY_FRAME
                 and empty_release_authorized is not None
                 and empty_release_authorized()
@@ -911,6 +911,7 @@ def _run_profile_diagnostic(
                 tick,
                 minimum_static,
                 minimum_actor,
+                extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
             )
             if gate.motion_state is DynamicMotionState.COMPLETED:
                 completion_tick = tick
@@ -1020,6 +1021,7 @@ def _run_profile_diagnostic(
                     tick,
                     minimum_static,
                     minimum_actor,
+                    extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
                 )
                 if gate.motion_state is DynamicMotionState.COMPLETED:
                     completion_tick = tick
@@ -1058,6 +1060,7 @@ def _run_profile_diagnostic(
                 tick,
                 minimum_static,
                 minimum_actor,
+                extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
             )
             if gate.motion_state is DynamicMotionState.COMPLETED:
                 completion_tick = tick
@@ -1119,6 +1122,7 @@ def _run_profile_diagnostic(
                     tick,
                     minimum_static,
                     minimum_actor,
+                    extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
                 )
                 if gate.motion_state is DynamicMotionState.COMPLETED:
                     completion_tick = tick
@@ -1191,6 +1195,7 @@ def _run_profile_diagnostic(
             tick,
             minimum_static,
             minimum_actor,
+            extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
         )
         if completion_tick is not None:
             emit_failure_trace(record.safety_decision, record)
@@ -1457,6 +1462,47 @@ def _twist_payload(twist: Twist2D) -> dict[str, float]:
     return {"linear_mps": twist.linear, "angular_radps": twist.angular}
 
 
+def _actor_states_at_observation_time(
+    world: WitnessWorldSnapshot,
+    simulation_time_s: float,
+    *,
+    extend_terminal_actor_trajectory: bool,
+) -> tuple[ActorState, ...]:
+    """Observe terminal Actors beyond the source world's short evidence horizon.
+
+    The completion diagnostic extends a 39 s public world to an 80 s control
+    horizon.  Deleting every Actor at the old boundary fabricated a fresh EMPTY
+    observation even though the constant-velocity Actor had simply travelled
+    beyond the mapped corridor.  Only trajectories that reach the original
+    boundary are extended; Actors intentionally ending earlier stay ended.
+    """
+
+    if not isfinite(simulation_time_s) or simulation_time_s < 0.0:
+        raise ValueError("extended Actor query time must be finite and non-negative")
+    if simulation_time_s <= world.duration_s + _TOLERANCE:
+        return world.actor_states_at(min(simulation_time_s, world.duration_s))
+    if not extend_terminal_actor_trajectory:
+        return ()
+    states: list[ActorState] = []
+    for actor in world.actors:
+        if actor.active_until_s < world.duration_s - _TOLERANCE:
+            continue
+        elapsed_s = simulation_time_s - actor.active_from_s
+        states.append(
+            ActorState(
+                actor_id=actor.actor_binding_id,
+                position=Point2D(
+                    actor.start_position.x + actor.velocity.x * elapsed_s,
+                    actor.start_position.y + actor.velocity.y * elapsed_s,
+                ),
+                velocity=actor.velocity,
+                radius_m=actor.radius_m,
+                trajectory_revision=actor.trajectory_revision,
+            )
+        )
+    return tuple(states)
+
+
 def _advance_state(state: RobotState, next_command: Twist2D) -> RobotState:
     pose = integrate_persistent_chassis_pose(
         state.pose,
@@ -1473,10 +1519,16 @@ def _update_clearances(
     tick: int,
     minimum_static: float,
     minimum_actor: float | None,
+    *,
+    extend_terminal_actor_trajectory: bool = False,
 ) -> tuple[float, float | None]:
     minimum_static = min(minimum_static, checker.clearance(state.pose))
     time_s = (tick + 1) * DYNAMIC_CONTROL_PERIOD_S
-    actors = () if time_s > world.duration_s else world.actor_states_at(time_s)
+    actors = _actor_states_at_observation_time(
+        world,
+        time_s,
+        extend_terminal_actor_trajectory=extend_terminal_actor_trajectory,
+    )
     for actor in actors:
         clearance = oriented_footprint_circle_surface_distance(
             state.pose,
