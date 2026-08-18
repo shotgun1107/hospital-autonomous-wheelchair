@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
+import hospital_path_lab.r5c_observation_diagnostic as r5c_diagnostic
+from hospital_path_lab.dynamic_directional_prediction import (
+    DirectionalPredictionStatus,
+)
 from hospital_path_lab.dynamic_observation import (
     NORMAL_OBSERVATION_PROFILE,
     STRESS_OBSERVATION_PROFILE,
@@ -194,3 +199,52 @@ def test_normal_left_seed_6422064046178126625_remains_fail_closed_without_pass_p
     assert trace.records[-1]["directional_status"] == "empty_frame"
     assert trace.records[-1]["release_input_usable"] is False
     assert trace.records[-1]["gate_state_after"] == "holding"
+
+
+def test_active_runtime_treats_pre_pass_empty_status_as_input_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_tick = r5c_diagnostic._ProfileObservationStream.tick
+
+    def tick_with_pre_pass_empty(stream, tick_id: int):
+        snapshot, circular, directional = original_tick(stream, tick_id)
+        if tick_id == 81:
+            assert directional.prediction_set is not None
+            empty_prediction = replace(directional.prediction_set, tubes=())
+            directional = replace(
+                directional,
+                status=DirectionalPredictionStatus.EMPTY_FRAME,
+                prediction_set=empty_prediction,
+                hold_required=False,
+                reason_code="public_pre_pass_empty_regression",
+                history_counts=(),
+            )
+        return snapshot, circular, directional
+
+    monkeypatch.setattr(
+        r5c_diagnostic._ProfileObservationStream,
+        "tick",
+        tick_with_pre_pass_empty,
+    )
+    trace = R7FailureTraceCollector()
+    result = run_r5c_crossing_completion_diagnostic(
+        side_index=0,
+        profile=NORMAL_OBSERVATION_PROFILE,
+        tick_limit=90,
+        observation_horizon_ticks=_FULL_OBSERVATION_HORIZON_TICKS,
+        observation_seed=0,
+        failure_trace=trace,
+    )
+
+    empty_tick = trace.records[81]
+    assert result.hard_failures == ()
+    assert result.first_prediction_loss_tick == 81
+    assert empty_tick["directional_status"] == "empty_frame"
+    assert empty_tick["prediction_present"] is True
+    assert empty_tick["release_input_usable"] is False
+    assert empty_tick["runtime_present_before"] is True
+    assert empty_tick["controller_called"] is False
+    assert empty_tick["gate_state_before"] == "moving"
+    assert empty_tick["gate_state_after"] == "braking"
+    assert empty_tick["recovery_reason"] == "prediction_loss"
+    assert empty_tick["controller_exception_message"] is None

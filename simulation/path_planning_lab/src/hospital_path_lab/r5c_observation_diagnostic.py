@@ -1028,7 +1028,11 @@ def _run_profile_diagnostic(
                 emit_failure_trace(decision)
                 continue
 
-        if stopping_after_loss or directional.prediction_set is None:
+        if (
+            stopping_after_loss
+            or not release_input_usable
+            or directional.prediction_set is None
+        ):
             if not stopping_after_loss:
                 prediction_loss_ticks.append(tick)
                 if first_prediction_loss_tick is None:
@@ -1038,8 +1042,11 @@ def _run_profile_diagnostic(
                 stopping_after_loss = True
                 stopping_after_loss_reason = "prediction_loss"
             trace_detail["recovery_reason"] = stopping_after_loss_reason
-            # Directional prediction loss is the controller-facing failure.  Do
-            # not substitute the circular fallback and accidentally keep moving.
+            # A prediction object is not sufficient authority to keep moving.
+            # Fresh EMPTY deliberately carries an empty prediction set, but it
+            # is controller-usable only after a conservative post-pass proof.
+            # Treat every phase-ineligible directional result as input loss and
+            # do not substitute the circular fallback.
             decision = hold(state, tick, snapshot, None)
             gate_safe_frame_count = decision.consecutive_safe_frames
             state = _advance_state(state, decision.command)
