@@ -373,6 +373,52 @@ def test_single_frame_dropout_returns_explicit_hold_without_reusing_prediction()
     assert result.history_counts == (("actor-001", 1),)
 
 
+def test_single_frame_dropout_reuses_locked_direction_only_until_ttl() -> None:
+    source = _source()
+    validator = DynamicObservationValidator(source, NORMAL_OBSERVATION_PROFILE)
+    predictor = DirectionalActorPredictor()
+    result = None
+    for sequence in range(20):
+        frame = _frame(
+            source,
+            NORMAL_OBSERVATION_PROFILE,
+            sequence,
+            velocity=Vector2D(0.20, 0.0),
+        )
+        assert validator.accept(frame, received_at_s=frame.delivered_at_s).accepted
+        result = predictor.update(
+            validator.snapshot(control_time_s=frame.delivered_at_s)
+        )
+    assert result is not None
+    assert result.status is DirectionalPredictionStatus.READY
+    original_history = result.prediction_set.history_content_hash
+
+    validator.record_no_frame(sequence=20, delivery_time_s=2.1)
+    held = predictor.update(validator.snapshot(control_time_s=2.1))
+
+    assert held.status is DirectionalPredictionStatus.READY
+    assert held.reason_code == "ttl_holdover"
+    assert held.duplicate_observation
+    assert held.history_counts == (("actor-001", 20),)
+    assert held.prediction_set is not None
+    assert held.prediction_set.history_content_hash == original_history
+    assert held.prediction_set.snapshot_age_s == pytest.approx(0.2)
+    assert held.prediction_set.controller_time_s == pytest.approx(2.1)
+
+    validator.record_no_frame(sequence=21, delivery_time_s=2.2)
+    at_ttl = predictor.update(validator.snapshot(control_time_s=2.2))
+    assert at_ttl.status is DirectionalPredictionStatus.READY
+    assert at_ttl.prediction_set is not None
+    assert at_ttl.prediction_set.snapshot_age_s == pytest.approx(0.3)
+
+    validator.record_no_frame(sequence=22, delivery_time_s=2.3)
+    stale = predictor.update(validator.snapshot(control_time_s=2.3))
+    assert stale.status is DirectionalPredictionStatus.STALE
+    assert stale.hold_required
+    assert stale.prediction_set is None
+    assert stale.history_counts == ()
+
+
 def test_stale_invalid_and_unavailable_states_are_explicit_holds() -> None:
     source = _source()
     validator = DynamicObservationValidator(source, NORMAL_OBSERVATION_PROFILE)

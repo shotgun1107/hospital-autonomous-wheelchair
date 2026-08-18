@@ -163,6 +163,105 @@ def test_issuer_rejects_early_release_and_issues_tick_bound_chain(bundle) -> Non
     assert continuation.prior_authorization_hash == initial.authorization_content_hash
 
 
+def test_issuer_allows_ttl_holdover_only_for_existing_continuation(bundle) -> None:
+    validator, predictor, results = _ideal_tick(bundle)
+    issuer = R5BTemporalAuthorizationIssuer()
+    snapshot40, prediction40 = results[40]
+    held_snapshot40 = replace(snapshot40, last_event_was_no_frame=True)
+    held_prediction40 = predictor.update(held_snapshot40)
+    with pytest.raises(ValueError, match="initial release requires"):
+        R5BTemporalAuthorizationIssuer().issue(
+            reference=bundle.reference,
+            temporal_evidence=bundle.temporal_evidence,
+            temporal_geometry=bundle.temporal_geometry,
+            robot_state=bundle.source.world.initial_state,
+            vehicle_profile=bundle.build_context.vehicle_profile,
+            observation_snapshot=held_snapshot40,
+            prediction_result=held_prediction40,
+            controller_tick=40,
+            simulation_time_s=2.0,
+            gate_motion_state=DynamicMotionState.HOLDING,
+            gate_stop_epoch=bundle.reference.stop_epoch,
+            resume_authorization_revision=7,
+            actual_stop_confirmed=True,
+            local_safety_recheck_passed=True,
+        )
+    initial = issuer.issue(
+        reference=bundle.reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot40,
+        prediction_result=prediction40,
+        controller_tick=40,
+        simulation_time_s=2.0,
+        gate_motion_state=DynamicMotionState.HOLDING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=7,
+        actual_stop_confirmed=True,
+        local_safety_recheck_passed=True,
+    )
+    snapshot41 = validator.snapshot(control_time_s=2.05)
+    prediction41 = predictor.update(snapshot41)
+    continuation41 = issuer.issue(
+        reference=bundle.reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot41,
+        prediction_result=prediction41,
+        controller_tick=41,
+        simulation_time_s=2.05,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+        actual_stop_confirmed=False,
+        local_safety_recheck_passed=True,
+    )
+
+    validator.record_no_frame(sequence=20, delivery_time_s=2.1)
+    snapshot42 = validator.snapshot(control_time_s=2.1)
+    prediction42 = predictor.update(snapshot42)
+    held = issuer.issue(
+        reference=bundle.reference,
+        temporal_evidence=bundle.temporal_evidence,
+        temporal_geometry=bundle.temporal_geometry,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot42,
+        prediction_result=prediction42,
+        controller_tick=42,
+        simulation_time_s=2.1,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+        actual_stop_confirmed=False,
+        local_safety_recheck_passed=True,
+    )
+
+    assert initial.phase is R5BTemporalAuthorizationPhase.INITIAL_RELEASE
+    assert continuation41.phase is R5BTemporalAuthorizationPhase.CONTINUATION
+    assert held.phase is R5BTemporalAuthorizationPhase.CONTINUATION
+    assert prediction42.reason_code == "ttl_holdover"
+    assert prediction42.duplicate_observation
+    assert held.post_pass_proof_tick is None
+    validate_r5b_temporal_authorization_for_tick(
+        held,
+        reference=bundle.reference,
+        robot_state=bundle.source.world.initial_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=snapshot42,
+        prediction_set=prediction42.prediction_set,
+        controller_tick=42,
+        simulation_time_s=2.1,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+    )
+
+
 def test_persistent_tick_input_requires_and_accepts_temporal_authorization(bundle) -> None:
     _, _, results = _ideal_tick(bundle)
     snapshot, prediction_result = results[40]
@@ -391,20 +490,19 @@ def test_post_pass_chain_accepts_fresh_empty_but_rejects_stale_or_target_regress
         )
 
     no_frame_snapshot = replace(empty_snapshot, last_event_was_no_frame=True)
-    with pytest.raises(ValueError, match="not usable"):
-        validate_r5b_temporal_authorization_for_tick(
-            authorization,
-            reference=bundle.reference,
-            robot_state=far_state,
-            vehicle_profile=bundle.build_context.vehicle_profile,
-            observation_snapshot=no_frame_snapshot,
-            prediction_set=empty_prediction.prediction_set,
-            controller_tick=604,
-            simulation_time_s=604 * 0.05,
-            gate_motion_state=DynamicMotionState.MOVING,
-            gate_stop_epoch=bundle.reference.stop_epoch,
-            resume_authorization_revision=None,
-        )
+    validate_r5b_temporal_authorization_for_tick(
+        authorization,
+        reference=bundle.reference,
+        robot_state=far_state,
+        vehicle_profile=bundle.build_context.vehicle_profile,
+        observation_snapshot=no_frame_snapshot,
+        prediction_set=empty_prediction.prediction_set,
+        controller_tick=604,
+        simulation_time_s=604 * 0.05,
+        gate_motion_state=DynamicMotionState.MOVING,
+        gate_stop_epoch=bundle.reference.stop_epoch,
+        resume_authorization_revision=None,
+    )
 
     regression_issuer = R5BTemporalAuthorizationIssuer()
     _issue_initial(bundle, regression_issuer, results)

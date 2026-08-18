@@ -598,14 +598,50 @@ def test_replayed_fresh_issued_directional_prediction_fails_closed(
     assert expected_failure in decision.failure_reasons
 
 
-def test_directional_prediction_is_rejected_after_no_frame_event() -> None:
-    observation, prediction = _fresh_directional_observation(
+def test_directional_prediction_is_accepted_after_single_no_frame_within_ttl() -> None:
+    observation, _ = _fresh_directional_observation(
         sequence=0,
         simulation_time_s=0.0,
         actor_position=Point2D(4.0, 2.0),
     )
-    dropped = replace(observation, last_event_was_no_frame=True)
-    context = _directional_context(dropped, prediction)
+    predictor = DirectionalActorPredictor()
+    velocity = Vector2D(0.04, 0.0)
+    for history_index in range(predictor.parameters.history_frame_count):
+        frame = observation.frame
+        assert frame is not None
+        observed_at_s = history_index * DYNAMIC_OBSERVATION_PERIOD_S
+        remaining_s = (
+            predictor.parameters.history_frame_count - 1 - history_index
+        ) * DYNAMIC_OBSERVATION_PERIOD_S
+        shifted_track = replace(
+            frame.tracks[0],
+            observed_position=Point2D(
+                4.0 - velocity.x * remaining_s,
+                2.0,
+            ),
+            observed_velocity=velocity,
+        )
+        shifted = replace(
+            frame,
+            observation_revision=history_index,
+            sequence=history_index,
+            observed_at_s=observed_at_s,
+            delivered_at_s=observed_at_s,
+            tracks=(shifted_track,),
+            content_hash="pending",
+        )
+        shifted = replace(shifted, content_hash=dynamic_observation_content_hash(shifted))
+        fresh = replace(
+            observation,
+            frame=shifted,
+            age_s=0.0,
+            last_event_was_no_frame=False,
+        )
+        predictor.update(fresh)
+    dropped = replace(fresh, age_s=0.2, last_event_was_no_frame=True)
+    held = predictor.update(dropped)
+    assert held.prediction_set is not None
+    context = _directional_context(dropped, held.prediction_set)
 
     decision = DynamicSafetyGate().step(
         _proposal(context),
@@ -613,10 +649,10 @@ def test_directional_prediction_is_rejected_after_no_frame_event() -> None:
         context=context,
     )
 
-    assert not decision.proposal_accepted
-    assert decision.command == Twist2D()
-    assert decision.primary_hold_reason is DynamicHoldReason.INVALID_SOURCE
-    assert "directional_frame_dropout" in decision.failure_reasons
+    assert decision.proposal_accepted
+    assert decision.command == Twist2D(0.20, 0.0)
+    assert decision.primary_hold_reason is None
+    assert decision.consecutive_safe_frames == 0
 
 
 def test_normalized_rollout_subdivides_seven_milliseconds_below_five_ms() -> None:

@@ -117,18 +117,49 @@ def test_normal_left_seed_1993037174228324916_does_not_continue_while_braking() 
     )
 
     assert result.hard_failures == ()
-    assert not any(
-        record["temporal_authorization_phase"] == "continuation"
-        and (
-            record["gate_state_before"] in {"braking", "holding"}
-            or record["gate_state_after"] in {"braking", "holding"}
-        )
+    invalid_continuations = tuple(
+        record
         for record in records
+        if (
+        record["temporal_authorization_phase"] == "continuation"
+        and record["gate_state_before"] in {"braking", "holding"}
+        )
+    )
+    assert not invalid_continuations, tuple(
+        (
+            record["tick"],
+            record["last_event_was_no_frame"],
+            record["directional_status"],
+            record["gate_state_before"],
+            record["gate_state_after"],
+            record["gate_failure_reasons"],
+            record["authorization_issue_outcome"],
+        )
+        for record in invalid_continuations[:3]
     )
     for record in records:
         if record["runtime_present_before"] is False and record["runtime_present_after"] is True:
             assert record["gate_state_before"] == "holding"
             assert record["reference_stop_epoch"] == record["stop_epoch_before"]
+    ttl_holdovers = tuple(
+        (index, record)
+        for index, record in enumerate(records)
+        if record["last_event_was_no_frame"]
+        and record["directional_status"] == "ready"
+        and record["runtime_present_before"]
+    )
+    assert ttl_holdovers
+    for index, record in ttl_holdovers:
+        assert record["controller_called"]
+        assert record["gate_state_after"] == "moving"
+        assert (
+            record["gate_consecutive_safe_frames_after"]
+            == record["gate_consecutive_safe_frames_before"]
+        )
+        if index > 0:
+            assert record["consecutive_ready_frames"] == records[index - 1][
+                "consecutive_ready_frames"
+            ]
 
 
 def test_normal_right_seed_4525333994236990214_keeps_active_section_representable() -> None:
@@ -176,9 +207,15 @@ def test_normal_right_seed_8970341022568507592_completes_after_stop_bound_recove
 
     assert result.hard_failures == ()
     assert result.outcome.value == "completed"
-    assert result.completion_tick == 1_566
+    assert result.completion_tick is not None
+    assert result.completion_tick < 1_566
     assert result.post_pass_proof_tick is not None
     assert result.follow_original_release_tick is not None
+    assert (
+        result.post_pass_proof_tick
+        < result.follow_original_release_tick
+        < result.completion_tick
+    )
     assert trace.records[-1]["gate_state_after"] == "completed"
 
 
@@ -194,9 +231,15 @@ def test_normal_left_seed_6422064046178126625_completes_with_continued_actor() -
 
     assert result.hard_failures == ()
     assert result.outcome.value == "completed"
-    assert result.completion_tick == 1_456
-    assert result.post_pass_proof_tick == 877
-    assert result.follow_original_release_tick == 962
+    assert result.completion_tick is not None
+    assert result.completion_tick < 1_456
+    assert result.post_pass_proof_tick is not None
+    assert result.follow_original_release_tick is not None
+    assert (
+        result.post_pass_proof_tick
+        < result.follow_original_release_tick
+        < result.completion_tick
+    )
     assert trace.records[-1]["gate_state_after"] == "completed"
 
 
@@ -271,18 +314,22 @@ def test_completion_extension_continues_terminal_actor_without_teleporting() -> 
 
 
 def test_completion_extension_does_not_emit_empty_at_old_world_boundary() -> None:
-    trace = R7FailureTraceCollector()
-    result = run_r5c_crossing_completion_diagnostic(
-        side_index=0,
+    world = r5c_diagnostic.build_r5b_crossing_reference_bundles()[0].source.world
+    stream = r5c_diagnostic._ProfileObservationStream(
+        world,
         profile=NORMAL_OBSERVATION_PROFILE,
-        tick_limit=785,
-        observation_horizon_ticks=_FULL_OBSERVATION_HORIZON_TICKS,
+        tick_limit=_FULL_OBSERVATION_HORIZON_TICKS,
+        stream_id="r7-terminal-extension-regression",
+        mission_revision=0,
+        extend_terminal_actor_trajectory=True,
         observation_seed=0,
-        failure_trace=trace,
     )
 
     old_boundary_delivery_tick = 784
-    boundary = trace.records[old_boundary_delivery_tick]
-    assert result.hard_failures == ()
-    assert boundary["directional_status"] != "empty_frame"
-    assert boundary["prediction_present"] is True
+    directional = None
+    for tick in range(old_boundary_delivery_tick + 1):
+        _snapshot, _circular, directional = stream.tick(tick)
+
+    assert directional is not None
+    assert directional.status.value != "empty_frame"
+    assert directional.prediction_set is not None

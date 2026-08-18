@@ -288,7 +288,9 @@ class R5BTemporalAuthorizationIssuer:
                 and self._last.phase
                 is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
             ),
+            allow_ttl_holdover=self._last is not None,
         )
+        ttl_holdover = observation_snapshot.last_event_was_no_frame
         if self._last is None:
             if controller_tick != release_tick:
                 raise ValueError("R5-B first authorization must occur at its frozen release tick")
@@ -315,25 +317,33 @@ class R5BTemporalAuthorizationIssuer:
                 or self._last.target_track_id != tube.track_id
             ):
                 raise ValueError("R5-B continuation target track identity changed")
-            proof = _post_pass_proof(
-                reference,
-                robot_state.pose,
-                vehicle_profile,
-                prediction,
-                tube.actor_binding_id,
-            )
-            if (
-                self._last is not None
-                and proof[2] + _GEOMETRY_TOLERANCE_M
-                >= R5B_POST_PASS_MINIMUM_MARGIN_M
-            ):
-                phase = R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
-            elif (
-                self._last is not None
-                and self._last.phase
-                is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
-            ):
-                raise ValueError("R5-B target is no longer conservatively behind the robot")
+            if ttl_holdover:
+                if (
+                    self._last is not None
+                    and self._last.phase
+                    is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
+                ):
+                    phase = R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
+            else:
+                proof = _post_pass_proof(
+                    reference,
+                    robot_state.pose,
+                    vehicle_profile,
+                    prediction,
+                    tube.actor_binding_id,
+                )
+                if (
+                    self._last is not None
+                    and proof[2] + _GEOMETRY_TOLERANCE_M
+                    >= R5B_POST_PASS_MINIMUM_MARGIN_M
+                ):
+                    phase = R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
+                elif (
+                    self._last is not None
+                    and self._last.phase
+                    is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
+                ):
+                    raise ValueError("R5-B target is no longer conservatively behind the robot")
         elif (
             self._last is None
             or self._last.phase is not R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION
@@ -463,7 +473,7 @@ def validate_r5b_temporal_authorization_for_tick(
         raise ValueError("R5-B temporal authorization target track changed")
     if authorization.phase is R5BTemporalAuthorizationPhase.POST_PASS_COMPLETION:
         _validate_stored_post_pass_proof(authorization, reference, vehicle_profile)
-        if not frame_is_empty:
+        if not frame_is_empty and not observation_snapshot.last_event_was_no_frame:
             tube = matching_tubes[0]
             robot_rear, actor_front, margin = _post_pass_proof(
                 reference,
@@ -531,8 +541,13 @@ def validate_r5b_temporal_authorization_for_tick(
         raise ValueError("R5-B temporal authorization does not match the current tick")
     if observation_snapshot.availability is not DynamicObservationAvailability.FRESH:
         raise ValueError("R5-B temporal authorization observation is not fresh")
-    if observation_snapshot.last_event_was_no_frame or observation_snapshot.failures:
+    if observation_snapshot.failures:
         raise ValueError("R5-B temporal authorization observation is not usable")
+    if (
+        observation_snapshot.last_event_was_no_frame
+        and authorization.phase is R5BTemporalAuthorizationPhase.INITIAL_RELEASE
+    ):
+        raise ValueError("R5-B initial release requires a newly delivered frame")
 
 
 def _validate_sources(
@@ -562,15 +577,20 @@ def _validated_current_inputs(
     result: DirectionalPredictionResult,
     *,
     allow_empty: bool,
+    allow_ttl_holdover: bool,
 ) -> tuple[object, DirectionalPredictionSet, object | None]:
     if snapshot.availability is not DynamicObservationAvailability.FRESH:
         raise ValueError("R5-B authorization requires a fresh observation")
-    if snapshot.last_event_was_no_frame or snapshot.failures or snapshot.frame is None:
+    if snapshot.failures or snapshot.frame is None:
         raise ValueError("R5-B authorization rejects missing or invalid observations")
+    if snapshot.last_event_was_no_frame and not allow_ttl_holdover:
+        raise ValueError("R5-B initial release requires a newly delivered frame")
     frame = snapshot.frame
     if dynamic_observation_content_hash(frame) != frame.content_hash:
         raise ValueError("R5-B authorization observation hash mismatch")
     prediction = result.prediction_set
+    if snapshot.last_event_was_no_frame and not result.duplicate_observation:
+        raise ValueError("R5-B TTL holdover must reuse the last accepted frame")
     if frame.frame_kind is DynamicObservationFrameKind.EMPTY:
         if (
             not allow_empty

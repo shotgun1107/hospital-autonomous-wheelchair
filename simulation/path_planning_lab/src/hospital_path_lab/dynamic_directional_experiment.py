@@ -147,7 +147,6 @@ class DirectionalPublicEpisodeContextFactory:
             (
                 observation.availability is DynamicObservationAvailability.FRESH,
                 observation.frame is not None,
-                not observation.last_event_was_no_frame,
                 prediction_result.status in _SAFE_DIRECTIONAL_STATUSES,
                 prediction_result.prediction_set is not None,
             )

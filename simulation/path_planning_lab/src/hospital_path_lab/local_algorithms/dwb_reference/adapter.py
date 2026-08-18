@@ -495,11 +495,6 @@ class SourceDerivedDwbController:
         if type(prediction) not in (ActorPredictionSet, DirectionalPredictionSet):
             return "actor_prediction_content_mismatch"
         if (
-            isinstance(prediction, DirectionalPredictionSet)
-            and observation.last_event_was_no_frame
-        ):
-            return "fresh_observation_required"
-        if (
             prediction.stream_id,
             prediction.episode_id,
             prediction.map_id,

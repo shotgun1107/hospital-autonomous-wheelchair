@@ -349,9 +349,6 @@ class DirectionalActorPredictor:
         if snapshot.failures:
             self.reset()
             return self._hold(DirectionalPredictionStatus.INVALID, "snapshot_has_failures")
-        if snapshot.last_event_was_no_frame:
-            return self._hold(DirectionalPredictionStatus.DROPOUT, "frame_dropout")
-
         frame = snapshot.frame
         if dynamic_observation_content_hash(frame) != frame.content_hash:
             self.reset()
@@ -367,6 +364,13 @@ class DirectionalActorPredictor:
 
         frame_key = (frame.sequence, frame.observation_revision, frame.content_hash)
         duplicate = frame_key == self._last_frame_key
+        if snapshot.last_event_was_no_frame and not duplicate:
+            self.reset()
+            return self._hold(
+                DirectionalPredictionStatus.INVALID,
+                "dropout_frame_does_not_match_last_accepted_frame",
+                session_reset=session_reset,
+            )
         if not duplicate and self._last_frame_key is not None:
             order_valid = (
                 frame.sequence > self._last_frame_key[0]
@@ -401,7 +405,11 @@ class DirectionalActorPredictor:
                 status=DirectionalPredictionStatus.EMPTY_FRAME,
                 prediction_set=prediction_set,
                 hold_required=False,
-                reason_code="fresh_empty_frame",
+                reason_code=(
+                    "ttl_holdover_empty_frame"
+                    if snapshot.last_event_was_no_frame
+                    else "fresh_empty_frame"
+                ),
                 history_counts=(),
                 duplicate_observation=duplicate,
                 session_reset=session_reset,
@@ -437,6 +445,16 @@ class DirectionalActorPredictor:
         status = _combined_status(outcome.status for outcome in outcomes)
         counts = self._history_counts()
         if status is not DirectionalPredictionStatus.READY:
+            if snapshot.last_event_was_no_frame:
+                return DirectionalPredictionResult(
+                    status=DirectionalPredictionStatus.DROPOUT,
+                    prediction_set=None,
+                    hold_required=True,
+                    reason_code="frame_dropout_before_direction_lock",
+                    history_counts=counts,
+                    duplicate_observation=True,
+                    session_reset=session_reset,
+                )
             if status in (
                 DirectionalPredictionStatus.LOW_SPEED,
                 DirectionalPredictionStatus.LOW_CONFIDENCE,
@@ -464,7 +482,11 @@ class DirectionalActorPredictor:
                 parameters=self.parameters,
             ),
             hold_required=False,
-            reason_code="direction_locked",
+            reason_code=(
+                "ttl_holdover"
+                if snapshot.last_event_was_no_frame
+                else "direction_locked"
+            ),
             history_counts=counts,
             duplicate_observation=duplicate,
             session_reset=session_reset,

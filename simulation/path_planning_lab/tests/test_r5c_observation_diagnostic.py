@@ -49,24 +49,37 @@ def stress_results():
     )
 
 
-@pytest.mark.parametrize("side_index", (0, 1), ids=("left", "right"))
-def test_normal_crossing_stops_after_first_directional_input_loss(
+@pytest.mark.parametrize(
+    ("side_index", "expected_outcome", "expected_stop_epoch"),
+    (
+        (0, R5CDiagnosticOutcome.CONSERVATIVE_HOLD, 2),
+        (1, R5CDiagnosticOutcome.COMPLETED, 1),
+    ),
+    ids=("left", "right"),
+)
+def test_normal_crossing_reuses_ttl_valid_dropouts_without_prediction_loss(
     normal_crossing_results,
     side_index: int,
+    expected_outcome: R5CDiagnosticOutcome,
+    expected_stop_epoch: int,
 ) -> None:
     result = normal_crossing_results[side_index]
 
     assert result.actual_release_tick == result.planned_release_tick == 80
     assert result.initial_stop_confirmed_tick is not None
     assert result.first_motion_tick is not None
-    assert result.first_prediction_loss_tick is not None
-    assert result.protective_stop_started_tick == result.first_prediction_loss_tick
-    assert result.stop_confirmed_tick is not None
-    assert result.stop_confirmed_tick > result.first_prediction_loss_tick
-    assert result.completion_tick is None
-    assert result.outcome is R5CDiagnosticOutcome.CONSERVATIVE_HOLD
-    assert result.final_motion_state is DynamicMotionState.HOLDING
-    assert result.final_stop_epoch == 2
+    assert result.no_frame_tick_count > 0
+    assert result.first_prediction_loss_tick is None
+    assert result.prediction_loss_ticks == ()
+    assert result.outcome is expected_outcome
+    assert result.final_stop_epoch == expected_stop_epoch
+    if expected_outcome is R5CDiagnosticOutcome.COMPLETED:
+        assert result.completion_tick is not None
+        assert result.final_motion_state is DynamicMotionState.COMPLETED
+    else:
+        assert result.completion_tick is None
+        assert result.stop_confirmed_tick is not None
+        assert result.final_motion_state is DynamicMotionState.HOLDING
     assert result.controller_call_count > 0
     assert result.minimum_actor_clearance_m is not None
     assert result.minimum_actor_clearance_m >= 0.08
@@ -75,7 +88,7 @@ def test_normal_crossing_stops_after_first_directional_input_loss(
     assert result.passed_safety_boundary
 
 
-def test_normal_restop_stops_after_first_directional_input_loss(
+def test_normal_restop_reuses_ttl_valid_dropouts_and_still_stops_safely(
     normal_restop_result,
 ) -> None:
     result = normal_restop_result
@@ -85,9 +98,10 @@ def test_normal_restop_stops_after_first_directional_input_loss(
     assert result.actual_release_tick >= result.planned_release_tick
     assert result.initial_stop_confirmed_tick is not None
     assert result.first_motion_tick is not None
-    assert result.first_prediction_loss_tick is not None
+    assert result.no_frame_tick_count > 0
+    assert result.first_prediction_loss_tick is None
+    assert result.prediction_loss_ticks == ()
     assert result.stop_confirmed_tick is not None
-    assert result.stop_confirmed_tick > result.first_prediction_loss_tick
     assert result.outcome is R5CDiagnosticOutcome.CONSERVATIVE_HOLD
     assert result.final_motion_state is DynamicMotionState.HOLDING
     assert result.final_stop_epoch == 2
@@ -103,23 +117,24 @@ def test_normal_restop_recovery_uses_new_stop_epoch_and_session_after_each_loss(
 ) -> None:
     result = normal_restop_recovery_result
 
-    assert result.outcome is R5CDiagnosticOutcome.CONSERVATIVE_HOLD
-    assert result.final_motion_state is DynamicMotionState.HOLDING
-    assert result.completion_tick is None
+    assert result.outcome is R5CDiagnosticOutcome.COMPLETED
+    assert result.final_motion_state is DynamicMotionState.COMPLETED
+    assert result.completion_tick is not None
     assert len(result.release_ticks) >= 2
-    assert len(result.prediction_loss_ticks) == len(result.confirmed_stop_ticks)
+    assert result.no_frame_tick_count > 0
+    assert result.prediction_loss_ticks == ()
+    assert len(result.confirmed_stop_ticks) == len(result.release_ticks) - 1
     assert result.controller_session_count == len(result.release_ticks)
     assert result.session_stop_epochs == tuple(range(1, len(result.release_ticks) + 1))
     assert all(
-        loss_tick < stop_tick < next_release_tick
-        for loss_tick, stop_tick, next_release_tick in zip(
-            result.prediction_loss_ticks,
+        stop_tick < next_release_tick
+        for stop_tick, next_release_tick in zip(
             result.confirmed_stop_ticks,
             result.release_ticks[1:],
-            strict=False,
+            strict=True,
         )
     )
-    assert result.final_stop_epoch == result.session_stop_epochs[-1] + 1
+    assert result.final_stop_epoch == result.session_stop_epochs[-1]
     assert result.minimum_actor_clearance_m is not None
     assert result.minimum_actor_clearance_m >= 0.08
     assert result.minimum_static_clearance_m >= 0.08
@@ -180,18 +195,29 @@ def test_stress_never_releases_without_ready_directional_prediction(
     assert result.passed_safety_boundary
 
 
-def test_crossing_sides_share_the_same_normal_observation_status_stream(
+def test_crossing_sides_share_the_same_ttl_dropout_events_before_they_diverge(
     normal_crossing_results,
 ) -> None:
     left, right = normal_crossing_results
 
-    assert left.observation_status_counts == right.observation_status_counts
-    assert left.no_frame_tick_count == right.no_frame_tick_count
-    assert left.first_prediction_loss_tick == right.first_prediction_loss_tick
+    left_counts = dict(left.observation_status_counts)
+    right_counts = dict(right.observation_status_counts)
+    assert left_counts["dropout"] == right_counts["dropout"] == 2
+    assert left.no_frame_tick_count > 0
+    assert right.no_frame_tick_count > 0
+    assert left.first_prediction_loss_tick is None
+    assert right.first_prediction_loss_tick is None
 
 
-@pytest.mark.parametrize("side_index", (0, 1), ids=("left", "right"))
-def test_normal_crossing_recovery_uses_new_stop_bound_sessions(side_index: int) -> None:
+@pytest.mark.parametrize(
+    ("side_index", "expected_session_count"),
+    ((0, 2), (1, 1)),
+    ids=("left", "right"),
+)
+def test_normal_crossing_recovery_uses_only_confirmed_stop_bound_sessions(
+    side_index: int,
+    expected_session_count: int,
+) -> None:
     result = run_r5c_crossing_recovery_diagnostic(
         side_index=side_index,
         profile=NORMAL_OBSERVATION_PROFILE,
@@ -201,18 +227,17 @@ def test_normal_crossing_recovery_uses_new_stop_bound_sessions(side_index: int) 
         R5CDiagnosticOutcome.COMPLETED,
         R5CDiagnosticOutcome.CONSERVATIVE_HOLD,
     }
-    assert len(result.release_ticks) >= 2
+    assert result.outcome is R5CDiagnosticOutcome.COMPLETED
+    assert len(result.release_ticks) == expected_session_count
     assert result.session_stop_epochs == tuple(range(1, len(result.release_ticks) + 1))
-    stop_causes = tuple(
-        sorted((*result.prediction_loss_ticks, *result.authorization_loss_ticks))
-    )
+    assert result.prediction_loss_ticks == ()
+    assert len(result.confirmed_stop_ticks) == len(result.release_ticks) - 1
     assert all(
-        loss_tick < stop_tick < next_release_tick
-        for loss_tick, stop_tick, next_release_tick in zip(
-            stop_causes,
+        stop_tick < next_release_tick
+        for stop_tick, next_release_tick in zip(
             result.confirmed_stop_ticks,
             result.release_ticks[1:],
-            strict=False,
+            strict=True,
         )
     )
     assert result.minimum_actor_clearance_m is not None

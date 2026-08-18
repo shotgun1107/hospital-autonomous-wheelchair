@@ -131,7 +131,7 @@ def _trajectory(request: DwbGeneratorRequest) -> DwbTrajectory:
     )
 
 
-def _directional_snapshot(*, empty: bool = False):
+def _directional_snapshot(*, empty: bool = False, dropout: bool = False):
     source = DynamicObservationSourceIdentity(
         stream_id="stream-v7",
         episode_id="episode-v7",
@@ -181,7 +181,23 @@ def _directional_snapshot(*, empty: bool = False):
         )
 
     assert result is not None and result.prediction_set is not None and frame is not None
-    observation = validator.snapshot(control_time_s=frame.delivered_at_s)
+    control_time_s = frame.delivered_at_s
+    if dropout:
+        next_sequence = frame.sequence + 1
+        control_time_s = (
+            next_sequence * NORMAL_OBSERVATION_PROFILE.observation_period_s
+            + NORMAL_OBSERVATION_PROFILE.latency_s
+        )
+        validator.record_no_frame(
+            sequence=next_sequence,
+            delivery_time_s=control_time_s,
+        )
+        observation = validator.snapshot(control_time_s=control_time_s)
+        result = predictor.update(observation)
+        assert result.prediction_set is not None
+        assert result.duplicate_observation
+    else:
+        observation = validator.snapshot(control_time_s=control_time_s)
     grid = GridSnapshot(
         metadata=SnapshotMetadata(
             map_id="map-v7",
@@ -194,8 +210,8 @@ def _directional_snapshot(*, empty: bool = False):
         grid=GridMap(np.zeros((180, 180), dtype=np.bool_), resolution_m=0.02),
     )
     snapshot = build_controller_snapshot(
-        tick_id=40,
-        simulation_time_s=frame.delivered_at_s,
+        tick_id=round(control_time_s / 0.05),
+        simulation_time_s=control_time_s,
         mission_id="mission-v7",
         robot_state=RobotState(Pose2D(1.0, 1.0, 0.0), Twist2D(0.20, 0.0)),
         goal_pose=Pose2D(2.4, 1.0, 0.0),
@@ -344,24 +360,14 @@ def test_adapter_rejects_malformed_actor_tubes_without_raising() -> None:
     assert not core.requests
 
 
-def test_adapter_rejects_issued_directional_prediction_after_no_frame_event() -> None:
+def test_adapter_accepts_issued_directional_prediction_after_single_dropout() -> None:
     core = FakeCore()
-    snapshot = _directional_snapshot()
-    dropped = replace(
-        snapshot,
-        validated_observation=replace(
-            snapshot.validated_observation,
-            last_event_was_no_frame=True,
-        ),
-    )
+    dropped = _directional_snapshot(dropout=True)
 
     result = SourceDerivedDwbController(core=core).step(dropped)
 
-    assert result.status is PlanStatus.INVALID_INPUT
-    assert result.failure_reason == "fresh_observation_required"
-    assert result.requested_twist == Twist2D()
-    assert result.controller_requested_stop
-    assert not core.requests
+    assert result.status is PlanStatus.FOUND
+    assert len(core.requests) == 1
 
 
 @pytest.mark.parametrize(

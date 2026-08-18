@@ -1,8 +1,9 @@
 """Limited public Normal/Stress diagnostic for the completed R5-B scenes.
 
 This module deliberately does not close R2-B or issue an R5-C qualification
-receipt.  It exercises only public scenes whose Actors exist from t=0 and
-stops the run after the first loss of a usable directional prediction.
+receipt.  It exercises only public scenes whose Actors exist from t=0. A
+single missing frame may reuse an already locked direction until TTL, while a
+stale or otherwise unusable input still starts a protective stop.
 """
 
 # The trace emitter is defined and consumed entirely within one loop iteration;
@@ -18,12 +19,13 @@ from enum import StrEnum
 from math import isfinite
 
 from hospital_path_lab.collision import CollisionChecker
-from hospital_path_lab.contracts import GridSnapshot, Point2D, Pose2D, RobotState, Twist2D
+from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DYNAMIC_CONTROL_PERIOD_S,
     ActorState,
     DynamicGroundTruthFrame,
     DynamicMotionState,
+    Point2D,
 )
 from hospital_path_lab.dynamic_directional_prediction import (
     DirectionalActorPredictor,
@@ -263,6 +265,22 @@ def run_r5c_crossing_diagnostic(
             prediction_set=circular,
         )
 
+    def protective_stop(
+        state: RobotState,
+        tick: int,
+        snapshot: DynamicObservationSnapshot,
+        circular: ActorPredictionSet | None,
+    ):
+        return _pre_release_hold_step(
+            source_bundle,
+            gate=gate,
+            robot_state=state,
+            tick_id=tick,
+            snapshot=snapshot,
+            prediction_set=circular,
+            controller_requested_stop=True,
+        )
+
     def launch(state: RobotState, tick: int) -> _Runtime:
         nonlocal active_bundle, follow_original_release_tick
         if post_pass_authorization_hash is not None:
@@ -443,12 +461,18 @@ def run_r5c_crossing_diagnostic(
             forbidden_cells=source_bundle.build_context.static_grid_snapshot.forbidden_cells,
         ),
         hold=hold,
+        protective_stop=protective_stop,
         launch=launch,
         controller_step=controller_step,
         recover_after_loss=recover_after_loss,
         finish_with_confirmed_stop=recover_after_loss,
         extend_terminal_actor_trajectory=complete_after_post_pass,
         empty_release_authorized=(
+            (lambda: post_pass_authorization_hash is not None)
+            if complete_after_post_pass
+            else None
+        ),
+        planned_transition_stop_requested=(
             (lambda: post_pass_authorization_hash is not None)
             if complete_after_post_pass
             else None
@@ -748,10 +772,12 @@ def _run_profile_diagnostic(
     hold: Callable,
     launch: Callable[[RobotState, int], _Runtime],
     controller_step: Callable,
+    protective_stop: Callable | None = None,
     recover_after_loss: bool = False,
     finish_with_confirmed_stop: bool = False,
     extend_terminal_actor_trajectory: bool = False,
     empty_release_authorized: Callable[[], bool] | None = None,
+    planned_transition_stop_requested: Callable[[], bool] | None = None,
     observation_seed: int | None = None,
     failure_trace: R7FailureTraceCollector | None = None,
     observation_horizon_ticks: int | None = None,
@@ -1031,6 +1057,19 @@ def _run_profile_diagnostic(
                 continue
 
         if (
+            runtime is not None
+            and runtime.issuer is not None
+            and planned_transition_stop_requested is not None
+            and planned_transition_stop_requested()
+            and not stopping_after_loss
+        ):
+            if protective_stop is None:
+                raise RuntimeError("planned transition stop callback is missing")
+            protective_stop_started_tick = protective_stop_started_tick or tick
+            stopping_after_loss = True
+            stopping_after_loss_reason = "post_pass_transition"
+
+        if (
             stopping_after_loss
             or not release_input_usable
             or directional.prediction_set is None
@@ -1049,7 +1088,12 @@ def _run_profile_diagnostic(
             # is controller-usable only after a conservative post-pass proof.
             # Treat every phase-ineligible directional result as input loss and
             # do not substitute the circular fallback.
-            decision = hold(state, tick, snapshot, None)
+            decision = (
+                protective_stop(state, tick, snapshot, circular)
+                if stopping_after_loss_reason == "post_pass_transition"
+                and protective_stop is not None
+                else hold(state, tick, snapshot, None)
+            )
             gate_safe_frame_count = decision.consecutive_safe_frames
             state = _advance_state(state, decision.command)
             trace.append((tick, directional.status, gate.motion_state, gate.stop_epoch, state))

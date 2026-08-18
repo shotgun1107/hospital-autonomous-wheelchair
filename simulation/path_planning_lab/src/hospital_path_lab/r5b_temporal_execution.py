@@ -503,6 +503,7 @@ def _pre_release_hold_step(
     tick_id: int,
     snapshot: DynamicObservationSnapshot,
     prediction_set: ActorPredictionSet | None,
+    controller_requested_stop: bool = False,
 ):
     current_grid_snapshot = _grid_snapshot_for_observation(bundle, snapshot)
     metadata = current_grid_snapshot.metadata
@@ -520,6 +521,7 @@ def _pre_release_hold_step(
         observation_content_hash=(
             "observation-unavailable" if frame is None else frame.content_hash
         ),
+        controller_requested_stop=controller_requested_stop,
     )
     context = DynamicSafetyContext(
         tick_id=tick_id,

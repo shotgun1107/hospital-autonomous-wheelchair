@@ -325,12 +325,14 @@ class DynamicSafetyGate:
                 reason = DynamicHoldReason.UNAUTHORIZED
         elif self.motion_state is DynamicMotionState.HOLDING:
             self._record_safe_observation(context, evidence)
-            authorization_valid = self._authorization_is_valid(context)
+            authorization_failures = self._authorization_failures(context)
+            authorization_valid = not authorization_failures
             if context.resume_authorization is not None and not authorization_valid:
                 self._resume_authorizations_rejected += 1
             authority_failures: list[str] = []
             if not authorization_valid:
                 authority_failures.append("resume_authorization_invalid")
+                authority_failures.extend(authorization_failures)
                 if reason not in {
                     DynamicHoldReason.INVALID_SOURCE,
                     DynamicHoldReason.INVALID_REFERENCE,
@@ -445,24 +447,32 @@ class DynamicSafetyGate:
         self._last_safe_sequence = frame.sequence
 
     def _authorization_is_valid(self, context: DynamicSafetyContext) -> bool:
+        return not self._authorization_failures(context)
+
+    def _authorization_failures(self, context: DynamicSafetyContext) -> tuple[str, ...]:
         authorization = context.resume_authorization
-        if authorization is None or self.stop_confirmed_at_s is None:
-            return False
+        if authorization is None:
+            return ("resume_authorization_missing",)
+        if self.stop_confirmed_at_s is None:
+            return ("stop_confirmation_missing",)
         expected_hash = resume_authorization_content_hash(
             mission_id=authorization.mission_id,
             stop_epoch=authorization.stop_epoch,
             issued_or_revalidated_at_s=authorization.issued_or_revalidated_at_s,
             authorization_revision=authorization.authorization_revision,
         )
-        return all(
-            (
-                authorization.content_hash == expected_hash,
-                authorization.mission_id == context.mission_id,
-                authorization.stop_epoch == self.stop_epoch,
-                authorization.issued_or_revalidated_at_s >= self.stop_confirmed_at_s,
-                authorization.authorization_revision == context.authorization_revision,
-            )
-        )
+        failures: list[str] = []
+        if authorization.content_hash != expected_hash:
+            failures.append("resume_authorization_hash_mismatch")
+        if authorization.mission_id != context.mission_id:
+            failures.append("resume_authorization_mission_mismatch")
+        if authorization.stop_epoch != self.stop_epoch:
+            failures.append("resume_authorization_stop_epoch_mismatch")
+        if authorization.issued_or_revalidated_at_s < self.stop_confirmed_at_s:
+            failures.append("resume_authorization_predates_stop")
+        if authorization.authorization_revision != context.authorization_revision:
+            failures.append("resume_authorization_revision_mismatch")
+        return tuple(failures)
 
     def _decision(
         self,
@@ -593,8 +603,6 @@ def _source_reason(
     prediction = context.prediction_set
     if type(prediction) not in (ActorPredictionSet, DirectionalPredictionSet):
         return DynamicHoldReason.INVALID_SOURCE, ("prediction_type_invalid",)
-    if isinstance(prediction, DirectionalPredictionSet) and snapshot.last_event_was_no_frame:
-        return DynamicHoldReason.INVALID_SOURCE, ("directional_frame_dropout",)
     time_reason = _source_time_reason(context, frame, prediction)
     if time_reason is not None:
         return time_reason
