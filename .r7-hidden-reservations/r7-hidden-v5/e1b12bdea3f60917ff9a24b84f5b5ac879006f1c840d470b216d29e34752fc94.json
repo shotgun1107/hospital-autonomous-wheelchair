@@ -1,0 +1,23 @@
+{
+  "artifact_path": ".r7-hidden-reservations/r7-hidden-v5/e1b12bdea3f60917ff9a24b84f5b5ac879006f1c840d470b216d29e34752fc94.json",
+  "catalog_schema": "r7-hidden-v5-case-catalog-v1",
+  "content_hash": "9cc00c7529fcd39385b325f146f7c0e93c3cf8403d638b7cb685ea1bd1686f7f",
+  "designated_executor": "company-pc-r7-v5",
+  "execution_id": "e1b12bdea3f60917ff9a24b84f5b5ac879006f1c840d470b216d29e34752fc94",
+  "execution_namespace": "r7-hidden-v5-execution-v1",
+  "executor_machine": "7층PC167",
+  "head": "3c8eb5f48478ae9ab80e7c19c3720684189d9e1c",
+  "observation_namespace": "r7-hidden-observation-v5",
+  "packaging_source_freeze_hash": "afb5c7e57ecdf4be5fca7859d4a491cde38a136805c0bb23fa90801d9138d0a0",
+  "raw_root_seed_in_remote_artifact": false,
+  "receipt_content_hash": null,
+  "release_evidence_sha256": "6f0e8f5652792555c4d9fa9b6dcfcf44e618a2455201f5949e1c26821fc2f0c2",
+  "release_receipt_content_hash": "7002afcd55d204027e962c7c0edb01a01a8fdefc3bd3dd113b4e82098b504a5f",
+  "reservation_ref": "refs/heads/codex/r7-hidden-v5-reservation",
+  "reserved_at_utc": "2026-08-19T23:05:01.916645+00:00",
+  "schema": "r7-hidden-v5-remote-reservation-v1",
+  "seed_commitment": null,
+  "state": "reserved_before_seed",
+  "tree": "65928c4c3b2ca19d8ae1278d345c882b2dcbd2f0",
+  "updated_at_utc": "2026-08-19T23:05:01.916645+00:00"
+}
