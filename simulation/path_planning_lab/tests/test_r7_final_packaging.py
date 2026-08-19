@@ -392,7 +392,7 @@ def test_hidden_v4_schemas_are_separate_from_historical_runner() -> None:
     }
 
     assert len(v4_schemas) == 7
-    assert all("v4" in schema or schema == "r7-hidden-observation-v3" for schema in v4_schemas)
+    assert all("v4" in schema for schema in v4_schemas)
     assert "r7-hidden-preflight-v2" not in v4_schemas
     assert runner.R7_HIDDEN_V4_OBSERVATION_VERSION != historical.R7_HIDDEN_OBSERVATION_VERSION
 

@@ -142,8 +142,12 @@ def test_r7_source_freeze_and_machine_metadata_are_explicit() -> None:
     assert len(frozen_paths) > 18
     assert {
         "simulation/path_planning_lab/scripts/run_r7_hidden_v4.py",
+        "simulation/path_planning_lab/scripts/run_r7_hidden_v5.py",
         "simulation/path_planning_lab/src/hospital_path_lab/dynamic_safety.py",
+        "simulation/path_planning_lab/src/hospital_path_lab/r5c_observation_diagnostic.py",
+        "simulation/path_planning_lab/src/hospital_path_lab/r7_failure_trace.py",
         "simulation/path_planning_lab/src/hospital_path_lab/r7_hidden_v4_qualification.py",
+        "docs/research/dynamic-actor-experiment/43-r7-hidden-v5-corrective-qualification-2026-08-19.md",
         "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py",
     } <= frozen_paths
     assert len(frozen["content_hash"]) == 64

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from time import perf_counter
 
@@ -21,6 +22,7 @@ from hospital_path_lab.dynamic_observation import (
 from hospital_path_lab.dynamic_safety import (
     DYNAMIC_SAFE_OBSERVATION_FRAMES,
     DynamicMotionState,
+    resume_authorization_content_hash,
 )
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.r5c_observation_diagnostic import (
@@ -30,7 +32,9 @@ from hospital_path_lab.r5c_observation_diagnostic import (
 )
 from hospital_path_lab.r7_failure_trace import R7FailureTraceCollector
 
-R7_HIDDEN_V4_OBSERVATION_VERSION = "r7-hidden-observation-v3"
+# The historical hidden-v4 run is sealed under ``...-v3``.  Any fresh hidden
+# after the trace/evaluator correction must derive an independent seed stream.
+R7_HIDDEN_V4_OBSERVATION_VERSION = "r7-hidden-observation-v4"
 R7_HIDDEN_V4_REPLICA_COUNT = 5
 R7_HIDDEN_V4_REQUIRED_CASE_COUNT = 20
 R7_HIDDEN_V4_TICK_LIMIT = 1_600
@@ -441,9 +445,20 @@ def _trace_contract_proof(
     )
     release_violations = 0
     unauthorized_restarts = 0
+    consumed_authorization_hashes: set[str] = set()
     for record in release_records:
         stop_epoch = record.get("stop_epoch_after")
-        if not all(
+        authorization_valid = _release_authorization_evidence_is_valid(
+            record,
+            stop_epoch=stop_epoch,
+        )
+        temporal_valid = _temporal_authorization_evidence_is_valid(record)
+        authorization_hash = record.get("resume_authorization_content_hash")
+        authorization_reused = (
+            isinstance(authorization_hash, str)
+            and authorization_hash in consumed_authorization_hashes
+        )
+        release_valid = all(
             (
                 record.get("release_input_usable") is True,
                 record.get("last_event_was_no_frame") is False,
@@ -451,18 +466,20 @@ def _trace_contract_proof(
                 int(record.get("confirmed_safe_frame_count_after", 0))
                 >= DYNAMIC_SAFE_OBSERVATION_FRAMES,
                 record.get("gate_state_before") == "holding",
+                record.get("gate_state_after") == "moving",
                 record.get("runtime_present_before") is False,
                 record.get("runtime_present_after") is True,
                 record.get("reference_stop_epoch") == stop_epoch,
-                record.get("resume_authorization_revision") is not None,
+                authorization_valid,
+                temporal_valid,
+                not authorization_reused,
             )
-        ):
+        )
+        if not release_valid:
             release_violations += 1
-        if (
-            record.get("reference_stop_epoch") != stop_epoch
-            or record.get("resume_authorization_revision") is None
-        ):
             unauthorized_restarts += 1
+        elif isinstance(authorization_hash, str):
+            consumed_authorization_hashes.add(authorization_hash)
 
     release_ticks = tuple(int(record["tick"]) for record in release_records)
     if release_ticks != result.release_ticks:
@@ -533,6 +550,114 @@ def _trace_contract_proof(
             minimum_clearance + 1e-12 < R7_HIDDEN_V4_MINIMUM_CLEARANCE_M
         ),
     }
+
+
+def _release_authorization_evidence_is_valid(
+    record: dict[str, object],
+    *,
+    stop_epoch: object,
+) -> bool:
+    """Validate the immutable authorization input that the gate actually used.
+
+    The R5-C runtime deliberately clears the one-shot slot *after* the
+    pipeline step.  Its after-cleanup value is evidence of consumption, not a
+    precondition for the release that already happened.
+    """
+
+    mission_id = record.get("resume_authorization_mission_id")
+    authorization_stop_epoch = record.get("resume_authorization_stop_epoch")
+    issued_at_s = record.get("resume_authorization_issued_or_revalidated_at_s")
+    stop_confirmed_at_s = record.get("gate_stop_confirmed_at_s")
+    authorization_revision = record.get("resume_authorization_revision")
+    expected_revision = record.get("resume_authorization_expected_revision")
+    content_hash = record.get("resume_authorization_content_hash")
+    if not all(
+        (
+            record.get("resume_authorization_present_at_gate") is True,
+            record.get("resume_authorization_present_after_cleanup") is False,
+            record.get("resume_authorization_valid_at_release") is True,
+            record.get("resume_authorization_used_for_release") is True,
+            record.get("resume_authorization_consumed") is True,
+            _is_empty_serialized_sequence(
+                record.get("resume_authorization_validation_failures")
+            ),
+            isinstance(mission_id, str) and bool(mission_id),
+            _is_nonnegative_exact_int(authorization_stop_epoch),
+            _is_nonnegative_exact_int(authorization_revision),
+            _is_nonnegative_exact_int(expected_revision),
+            _is_nonnegative_exact_int(stop_epoch),
+            _is_finite_nonnegative_number(issued_at_s),
+            _is_finite_nonnegative_number(stop_confirmed_at_s),
+            isinstance(content_hash, str) and len(content_hash) == 64,
+            record.get("reference_mission_id") == mission_id,
+            record.get("reference_stop_epoch") == authorization_stop_epoch,
+            authorization_stop_epoch == stop_epoch,
+            authorization_revision == expected_revision,
+            authorization_revision == stop_epoch,
+            float(issued_at_s) >= float(stop_confirmed_at_s),
+        )
+    ):
+        return False
+    expected_hash = resume_authorization_content_hash(
+        mission_id=mission_id,
+        stop_epoch=authorization_stop_epoch,
+        issued_or_revalidated_at_s=float(issued_at_s),
+        authorization_revision=authorization_revision,
+    )
+    return content_hash == expected_hash
+
+
+def _temporal_authorization_evidence_is_valid(record: dict[str, object]) -> bool:
+    """Check session/reference binding when this release requires R5-B authority."""
+
+    required = record.get("reference_evidence_level") == "ground_truth_temporal"
+    if record.get("temporal_authorization_required") is not required:
+        return False
+    present = record.get("temporal_authorization_present")
+    if not required:
+        return present is False
+    if present is not True:
+        return False
+    content_hash = record.get("temporal_authorization_content_hash")
+    expected_content_hash = record.get("temporal_authorization_expected_content_hash")
+    return all(
+        (
+            isinstance(content_hash, str)
+            and len(content_hash) == 64
+            and content_hash == expected_content_hash,
+            record.get("temporal_authorization_phase") == "initial_release",
+            record.get("temporal_authorization_mission_id")
+            == record.get("reference_mission_id"),
+            record.get("temporal_authorization_stop_epoch")
+            == record.get("reference_stop_epoch"),
+            record.get("temporal_authorization_reference_session_id")
+            == record.get("reference_session_id"),
+            record.get("temporal_authorization_reference_content_hash")
+            == record.get("reference_content_hash"),
+            record.get("temporal_authorization_controller_tick") == record.get("tick"),
+            record.get("temporal_authorization_resume_authorization_revision")
+            == record.get("resume_authorization_revision"),
+        )
+    )
+
+
+def _is_nonnegative_exact_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_finite_nonnegative_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and isfinite(float(value))
+        and float(value) >= 0.0
+    )
+
+
+def _is_empty_serialized_sequence(value: object) -> bool:
+    """Accept the only two lossless empty forms used before/after JSONL."""
+
+    return isinstance(value, (list, tuple)) and not value
 
 
 def _is_limited_deceleration(before: object, after: object) -> bool:

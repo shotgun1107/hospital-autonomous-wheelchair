@@ -46,6 +46,9 @@ _PACKAGING_PATHS = (
 )
 _KNOWN_CONSUMED_ROOT_SEEDS = frozenset(
     {
+        # The sealed 2026-08-19 FAIL_ANALYZED v4 execution.  Keep this guard
+        # even though corrective work now uses the separate v5 runner.
+        6_564_067_906_066_881_700,
         8_488_859_258_265_267_075,
         5_041_993_867_976_238_990,
         8_164_808_726_104_920_337,

@@ -27,7 +27,7 @@ def test_hidden_v4_catalog_uses_a_new_paired_deterministic_namespace() -> None:
     assert len(first) == 20
     assert tuple(item.ordinal for item in first) == tuple(range(20))
     assert len({item.case_id for item in first}) == 20
-    assert R7_HIDDEN_V4_OBSERVATION_VERSION == "r7-hidden-observation-v3"
+    assert R7_HIDDEN_V4_OBSERVATION_VERSION == "r7-hidden-observation-v4"
     assert R7_HIDDEN_V4_OBSERVATION_VERSION != R7_HIDDEN_OBSERVATION_VERSION
     assert all(item.case_id.startswith("hidden-v4-") for item in first)
     assert all(

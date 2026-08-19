@@ -5,6 +5,33 @@
 > hidden 실행 commit: `1eb5011e84caffa346abd40aeda711fadfe169f7`
 > hidden 실행 tree: `d6edeed84652f53aabe1432bd7683ff5bb0c8e31`
 
+## 0. 2026-08-19 교정 작업 최신 상태
+
+- hidden-v4 `FAIL_ANALYZED` 증거와 root seed는 그대로 보존했다.
+- one-shot 재출발 권한을 실제 gate 입력에서 기록하도록 trace/evaluator를 교정했다.
+- 정지 확인 이전 발행, mission·epoch·revision·hash 불일치, temporal session/reference/tick/phase/hash
+  불일치와 같은 권한 hash 재사용을 모두 fail-closed로 거부한다.
+- 저장 JSONL 재읽기 회귀를 포함한 표적시험 `52 passed`, v5 lifecycle·포장시험
+  `21 passed`, 공개 안전 묶음 `131 passed`다.
+- 전체 회귀는 4개 독립 process에서 `206 + 255 + 283 + 296 = 1,040 passed`이며 실패·건너뜀은
+  없다. Ruff·compileall·`git diff --check`도 통과했다.
+- 교정 hidden은 `r7-hidden-observation-v5`, `hidden-v5-*`로 분리했고, GitHub의 고정 원격
+  reservation ref로 집·회사 clone 사이 두 번째 v5 실행을 막는다.
+- 교정 변경은 현재 작업 브랜치에 commit·push해 회사 PC에서 이어받는다. clean committed
+  source가 필수인 native parity·직렬 500회·v5 hidden은 아직 실행하지 않았다.
+
+### 정확한 재개점
+
+1. 회사 PC에서 해당 branch를 fast-forward pull하고 `HEAD == origin/<branch>`, clean tree를 확인한다.
+2. current HEAD에서 `run_r7_native_release_gate.py`를 rebuild 포함으로 실행한다.
+3. parity·계약시험·직렬 500회에서 50ms 초과 0이면 v5 preflight remote reservation을 만든다.
+4. 같은 지정 실행 PC에서 reservation을 claim한 뒤 v5 hidden을 정확히 한 번 실행한다.
+5. PASS/FAIL/BLOCKED 결과를 재실행 없이 문서·receipt·증거 ZIP으로 동결한다.
+
+교정 명세는
+[43-r7-hidden-v5-corrective-qualification-2026-08-19.md](../research/dynamic-actor-experiment/43-r7-hidden-v5-corrective-qualification-2026-08-19.md)를
+따른다.
+
 ## 1. 현재 결론
 
 - R7 포장 차단점 3개를 고쳤고 `41 passed`를 확인했다.
@@ -102,21 +129,23 @@ git status --porcelain=v1
 ## 7. 새 세션 시작 프롬프트
 
 ```text
-hospital-autonomous-wheelchair의 R7 FAIL_ANALYZED 후속 작업을 이어간다.
+hospital-autonomous-wheelchair의 R7 hidden-v5 교정 자격을 이어서 끝낸다.
 
-git pull이 끝났다는 전제에서 AGENTS.md, 인수인계.md 최상단과 다음 두 문서만 먼저 읽어라.
-1. docs/research/dynamic-actor-experiment/42-r7-hidden-v4-fail-analyzed-result-2026-08-19.md
-2. docs/reviews/r7-final-qualification-sync-handoff-2026-08-19.md
+먼저 AGENTS.md, 인수인계.md 최상단,
+docs/reviews/r7-final-qualification-sync-handoff-2026-08-19.md의 0절,
+docs/research/dynamic-actor-experiment/43-r7-hidden-v5-corrective-qualification-2026-08-19.md만 읽어라.
 
-git status -sb, git rev-parse HEAD, git rev-parse origin/codex/r7-final-qualification-20260819로
-동기화와 clean 상태를 간단히 확인한다. 기존 내용을 장황하게 재보고하지 마라.
+현재 집 로컬에는 전체 회귀 1,040 passed까지 검증된 미커밋 변경이 있다. 이를 pull/reset/restore로
+덮어쓰지 말고 git status와 git diff --check로 확인한 뒤 한 commit으로 보존하고 현재 branch를
+origin에 push하라. commit 전후에 소스가 바뀌지 않았다면 전체 회귀를 다시 반복하지 않는다.
 
-hidden-v4는 이미 한 번 소비됐고 공식 결과는 FAIL_ANALYZED다. 같은 seed를 다시 실행하거나
-결과를 PASS로 바꾸지 마라. 새 hidden, 제품 알고리즘, G1~G5, 제품 경로분석 7단계도 시작하지
-마라.
+clean committed HEAD에서 native release gate를 rebuild 포함으로 실행한다. parity·계약시험과 직렬
+500회에서 50ms 초과가 0이면, run_r7_hidden_v5.py의 고정 원격 reservation ref를 지정 실행 PC에서
+reserve하고 claim한 뒤 v5 hidden을 정확히 한 번 실행한다. 이 작업은 이미 사용자 승인됐으므로
+중간 재승인을 요구하지 않는다. 다른 clone이 reservation을 선점했거나 native gate가 실패하면
+우회하지 말고 BLOCKED로 닫는다.
 
-바로 공개 회귀에서 one-shot resume authorization을 소비 전에 trace evidence로 남기고 evaluator가
-그 evidence를 검증하도록 고쳐라. 무단 runtime 생성, stale authorization, epoch mismatch 거부는
-유지한다. 표적시험 뒤 공개시험 → 전체 회귀 → native parity·500회 자격 순서로 검증하되,
-새 hidden 실행은 별도 사용자 승인 전 금지한다.
+hidden-v4와 그 seed·FAIL_ANALYZED 증거는 수정하거나 재실행하지 않는다. v5 결과는 PASS/FAIL/BLOCKED
+중 실제 결과 그대로 receipt·증거 ZIP·상태 문서에 동결하고 재실행하지 않는다. 제품 알고리즘,
+G1~G5와 제품 경로분석 7단계는 시작하지 않는다.
 ```

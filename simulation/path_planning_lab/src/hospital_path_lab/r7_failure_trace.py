@@ -15,7 +15,9 @@ from typing import Any
 
 from hospital_path_lab.map_factory import canonical_content_hash
 
-R7_FAILURE_TRACE_SCHEMA_VERSION = "r7-failure-tick-trace-v1"
+# v2 records the immutable authorization input used by the gate separately
+# from the intentionally cleared one-shot runtime slot.
+R7_FAILURE_TRACE_SCHEMA_VERSION = "r7-failure-tick-trace-v2"
 R7_FAILURE_RUN_MANIFEST_SCHEMA_VERSION = "r7-failure-run-manifest-v1"
 _TRACE_START = "TRACE_START"
 
