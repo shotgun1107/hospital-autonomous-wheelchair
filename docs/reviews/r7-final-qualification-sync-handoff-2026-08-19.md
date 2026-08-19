@@ -4,7 +4,7 @@
 > 저장소: `https://github.com/shotgun1107/hospital-autonomous-wheelchair.git`
 > 작업 브랜치: `codex/r7-final-qualification-20260819`
 > 기준 commit: `54b4f04f06a22f6eebc05228a4f80abdfdd42615`
-> 동기화 WIP checkpoint: `e6723e6b5efc24b55a3a8ddfb28769604a7097b6`
+> 동기화 WIP checkpoint: `e6723e614d565594e10664af031ec8d958fa1c2f`
 > 이전 보존 checkpoint: `ee08150` (`wip: preserve r7 final logic and packaging`)
 
 이 문서는 회사 PC의 미완료 R7 최종 자격 작업을 다른 로컬 PC에서 그대로 이어가기 위한
@@ -167,7 +167,7 @@ git switch codex/r7-final-qualification-20260819
 git pull --ff-only origin codex/r7-final-qualification-20260819
 git rev-parse HEAD
 git rev-parse origin/codex/r7-final-qualification-20260819
-git merge-base --is-ancestor e6723e6b5efc24b55a3a8ddfb28769604a7097b6 HEAD
+git merge-base --is-ancestor e6723e614d565594e10664af031ec8d958fa1c2f HEAD
 git status --porcelain=v1
 ```
 
@@ -182,7 +182,7 @@ hospital-autonomous-wheelchair의 R7 최종 자격 작업을 다른 로컬 PC에
 저장소: https://github.com/shotgun1107/hospital-autonomous-wheelchair.git
 작업 브랜치: codex/r7-final-qualification-20260819
 기준 baseline: 54b4f04f06a22f6eebc05228a4f80abdfdd42615
-필수 WIP ancestor: e6723e6b5efc24b55a3a8ddfb28769604a7097b6
+필수 WIP ancestor: e6723e614d565594e10664af031ec8d958fa1c2f
 
 먼저 AGENTS.md와 다음 문서만 완전히 읽어라.
 1. 인수인계.md 최상단의 최신 R7 상태
@@ -210,7 +210,7 @@ git switch codex/r7-final-qualification-20260819
 git pull --ff-only origin codex/r7-final-qualification-20260819
 git rev-parse HEAD
 git rev-parse origin/codex/r7-final-qualification-20260819
-git merge-base --is-ancestor e6723e6b5efc24b55a3a8ddfb28769604a7097b6 HEAD
+git merge-base --is-ancestor e6723e614d565594e10664af031ec8d958fa1c2f HEAD
 git status --porcelain=v1
 
 branch/head가 일치하고 e6723e6이 ancestor이며 작업트리가 clean인지 확인한다.
