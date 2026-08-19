@@ -1,7 +1,7 @@
 {
   "artifact_path": ".r7-hidden-reservations/r7-hidden-v5/e1b12bdea3f60917ff9a24b84f5b5ac879006f1c840d470b216d29e34752fc94.json",
   "catalog_schema": "r7-hidden-v5-case-catalog-v1",
-  "content_hash": "9cc00c7529fcd39385b325f146f7c0e93c3cf8403d638b7cb685ea1bd1686f7f",
+  "content_hash": "0dbc98a4a4583a3b8911b0c9ac2c1875b044ba0d606fee540ac78121a74fb73d",
   "designated_executor": "company-pc-r7-v5",
   "execution_id": "e1b12bdea3f60917ff9a24b84f5b5ac879006f1c840d470b216d29e34752fc94",
   "execution_namespace": "r7-hidden-v5-execution-v1",
@@ -17,7 +17,7 @@
   "reserved_at_utc": "2026-08-19T23:05:01.916645+00:00",
   "schema": "r7-hidden-v5-remote-reservation-v1",
   "seed_commitment": null,
-  "state": "reserved_before_seed",
+  "state": "execution_started_before_seed",
   "tree": "65928c4c3b2ca19d8ae1278d345c882b2dcbd2f0",
-  "updated_at_utc": "2026-08-19T23:05:01.916645+00:00"
+  "updated_at_utc": "2026-08-19T23:06:20.199837+00:00"
 }
