@@ -122,7 +122,14 @@ def test_r7_source_freeze_and_machine_metadata_are_explicit() -> None:
     frozen = r7.source_freeze(repository_root)
     machine = r7.machine_metadata()
 
-    assert len(frozen["records"]) == 18
+    frozen_paths = {record["path"] for record in frozen["records"]}
+    assert len(frozen_paths) > 18
+    assert {
+        "simulation/path_planning_lab/scripts/run_r7_hidden_v4.py",
+        "simulation/path_planning_lab/src/hospital_path_lab/dynamic_safety.py",
+        "simulation/path_planning_lab/src/hospital_path_lab/r7_hidden_v4_qualification.py",
+        "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py",
+    } <= frozen_paths
     assert len(frozen["content_hash"]) == 64
     assert machine["logical_core_count"]
     assert machine["process_affinity"]

@@ -11,10 +11,10 @@ import sys
 import zipfile
 from pathlib import Path
 
-
 _EVIDENCE_FILES = (
     "run-manifest.json",
     "semantic-parity.json",
+    "contract-parity.json",
     "timing-qualification.json",
     "release-gate.json",
     "qualification-receipt.json",
@@ -143,6 +143,7 @@ def _main() -> int:
         machine_metadata,
         native_build_metadata,
         r7_snapshot_cases,
+        run_native_contract_parity,
         run_native_parity,
         run_native_timing,
         source_freeze,
@@ -158,7 +159,8 @@ def _main() -> int:
     cases = r7_snapshot_cases()
     case_catalog = [metadata for _, _, metadata in cases]
     parity = run_native_parity(cases)
-    if parity["passed"]:
+    contract_parity = run_native_contract_parity(lab_root)
+    if parity["passed"] and contract_parity["passed"]:
         timing = run_native_timing(
             cases,
             warmups=args.warmups,
@@ -192,6 +194,7 @@ def _main() -> int:
         "head_stable": git_before["head"] == git_after["head"],
         "tree_stable": git_before["tree"] == git_after["tree"],
         "parity": parity["passed"] is True,
+        "contract_parity": contract_parity["passed"] is True,
         "timing": timing["passed"] is True,
         "hidden_not_executed": True,
     }
@@ -229,6 +232,7 @@ def _main() -> int:
     }
     _write_json(output_dir / "run-manifest.json", manifest)
     _write_json(output_dir / "semantic-parity.json", parity)
+    _write_json(output_dir / "contract-parity.json", contract_parity)
     _write_json(output_dir / "timing-qualification.json", timing)
     _write_json(output_dir / "release-gate.json", gate)
 
@@ -243,6 +247,7 @@ def _main() -> int:
             "case_catalog_hash": manifest["case_catalog_hash"],
             "snapshot_set_hash": timing["snapshot_set_hash"],
             "semantic_parity_hash": parity["content_hash"],
+            "contract_parity_hash": contract_parity["content_hash"],
             "timing_result_hash": canonical_content_hash(timing),
             "native_full_library_sha256": build["full_core"]["library_sha256"],
             "native_safety_library_sha256": build["safety_core"]["library_sha256"],
@@ -262,6 +267,8 @@ def _main() -> int:
         "",
         f"- 판정: `{'PASS' if qualified else 'FAIL'}`",
         f"- Python↔C++ 동일성: `{'PASS' if parity['passed'] else 'FAIL'}`",
+        "- 안전 경계·terminal tie 동일성: "
+        f"`{'PASS' if contract_parity['passed'] else 'FAIL'}`",
         f"- 시간 측정: `{'PASS' if timing['passed'] else 'FAIL'}`",
         "- hidden: `미실행`",
     ]
@@ -292,6 +299,7 @@ def _main() -> int:
     evidence = None
     if qualified and evidence_zip is not None:
         evidence = _write_evidence_zip(output_dir, evidence_zip)
+        _write_json(output_dir / "evidence-package.json", evidence)
     print(
         json.dumps(
             {

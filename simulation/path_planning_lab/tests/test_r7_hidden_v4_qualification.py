@@ -163,6 +163,15 @@ def _base_result(spec, *, passed: bool, outcome: str) -> R7HiddenV4CaseResult:
         gate_override_count=0,
         hard_failures=(),
         trace_content_hash=f"trace-{spec.ordinal}",
+        trace_record_count=1,
+        minimum_release_confirmed_safe_frames=None,
+        release_contract_violation_count=0,
+        duplicate_safe_frame_violation_count=0,
+        stale_propulsion_violation_count=0,
+        unauthorized_restart_count=0,
+        actual_collision_count=0,
+        actual_forbidden_violation_count=0,
+        actual_clearance_violation_count=0,
         elapsed_s=1.0,
     )
 
@@ -176,10 +185,12 @@ def _passing_normal_result(spec) -> R7HiddenV4CaseResult:
         actual_release_tick=80,
         first_motion_tick=81,
         controller_call_count=500,
-        release_ticks=(80,),
-        session_stop_epochs=(1,),
+        release_ticks=(80, 700),
+        confirmed_stop_ticks=(650,),
+        session_stop_epochs=(1, 2),
         final_motion_state="completed",
-        final_stop_epoch=1,
+        final_stop_epoch=2,
+        minimum_release_confirmed_safe_frames=11,
         content_hash="",
     )
 
@@ -199,5 +210,6 @@ def _passing_stress_result(spec, *, released: bool) -> R7HiddenV4CaseResult:
         confirmed_stop_ticks=(502,),
         session_stop_epochs=(1,),
         final_stop_epoch=2,
+        minimum_release_confirmed_safe_frames=11,
         content_hash="",
     )

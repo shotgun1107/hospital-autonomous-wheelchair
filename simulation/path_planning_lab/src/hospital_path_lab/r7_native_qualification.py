@@ -6,6 +6,7 @@ import ctypes
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -53,26 +54,29 @@ R6_EXPECTED_RECEIPT_HASH = (
     "2d37f43b720ae1b6ed9050c4968c9a06e0123b8cfe0600ed88302c0f0452cbda"
 )
 
-_SOURCE_PATHS = (
+_EXPLICIT_SOURCE_PATHS = (
     "docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md",
+    "docs/research/dynamic-actor-experiment/40-r7-stress-conditional-release-policy-2026-08-19.md",
+    "docs/research/dynamic-actor-experiment/41-r7-hidden-v4-conditional-evaluator-2026-08-19.md",
+    "simulation/path_planning_lab/pyproject.toml",
     "simulation/path_planning_lab/native/dwb_full_core.cpp",
     "simulation/path_planning_lab/native/dwb_full_core.h",
     "simulation/path_planning_lab/native/dwb_safety_core.cpp",
     "simulation/path_planning_lab/native/dwb_safety_core.h",
     "simulation/path_planning_lab/scripts/build_cpp_dwb_full_core.py",
     "simulation/path_planning_lab/scripts/build_cpp_dwb_safety_core.py",
+    "simulation/path_planning_lab/scripts/run_r7_hidden_v4.py",
     "simulation/path_planning_lab/scripts/run_r7_native_release_gate.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/r7_native_qualification.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/cpp_full_core.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/cpp_dwb_safety_core.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/cpp_dwa_core.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/composition.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/adapter.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/contracts.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/critics.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/local_algorithms/dwb_reference/persistent_adapter.py",
-    "simulation/path_planning_lab/src/hospital_path_lab/dynamic_trajectory_constraints.py",
+    "simulation/path_planning_lab/tests/test_cpp_dwb_safety_core.py",
+    "simulation/path_planning_lab/tests/test_persistent_dwb_adapter.py",
 )
+
+_CONTRACT_PARITY_TESTS = (
+    "tests/test_cpp_dwb_safety_core.py::test_python_and_cpp_share_the_forbidden_clearance_boundary",
+    "tests/test_persistent_dwb_adapter.py::test_terminal_rotation_tie_only_applies_to_stopped_on_section_pre_endpoint_pose",
+    "tests/test_persistent_dwb_adapter.py::test_public_goal_gap_stopped_state_still_selects_forward_command",
+)
+_CONTRACT_PARITY_EXPECTED_TEST_COUNT = 13
 
 
 def r7_snapshot_cases() -> tuple[tuple[str, ControllerSnapshot, dict[str, object]], ...]:
@@ -338,7 +342,7 @@ def validate_r6_receipt(repository_root: Path, receipt_path: Path) -> dict[str, 
 
 def source_freeze(repository_root: Path) -> dict[str, object]:
     records = []
-    for relative in _SOURCE_PATHS:
+    for relative in _source_paths(repository_root):
         path = repository_root / relative
         if not path.is_file():
             raise FileNotFoundError(f"R7 source freeze input missing: {relative}")
@@ -353,6 +357,57 @@ def source_freeze(repository_root: Path) -> dict[str, object]:
         "records": records,
         "content_hash": canonical_content_hash(records),
     }
+
+
+def run_native_contract_parity(lab_root: Path) -> dict[str, object]:
+    """Run the frozen forbidden-boundary and terminal-tie parity tests."""
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "--disable-warnings",
+            *_CONTRACT_PARITY_TESTS,
+        ),
+        cwd=lab_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    combined = "\n".join(
+        part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+    )
+    matches = re.findall(r"(\d+) passed", combined)
+    passed_count = int(matches[-1]) if matches else 0
+    payload = {
+        "schema": "r7-native-contract-parity-v1",
+        "passed": bool(
+            completed.returncode == 0
+            and passed_count == _CONTRACT_PARITY_EXPECTED_TEST_COUNT
+        ),
+        "return_code": completed.returncode,
+        "expected_test_count": _CONTRACT_PARITY_EXPECTED_TEST_COUNT,
+        "passed_test_count": passed_count,
+        "test_node_ids": _CONTRACT_PARITY_TESTS,
+        "output": combined,
+    }
+    return {**payload, "content_hash": canonical_content_hash(payload)}
+
+
+def _source_paths(repository_root: Path) -> tuple[str, ...]:
+    source_root = (
+        repository_root / "simulation/path_planning_lab/src/hospital_path_lab"
+    )
+    python_sources = tuple(
+        path.relative_to(repository_root).as_posix()
+        for path in source_root.rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+    return tuple(sorted(set((*_EXPLICIT_SOURCE_PATHS, *python_sources))))
 
 
 def native_build_metadata(repository_root: Path) -> dict[str, object]:
@@ -686,6 +741,7 @@ __all__ = [
     "native_build_metadata",
     "r7_snapshot_cases",
     "retime_controller_snapshot",
+    "run_native_contract_parity",
     "run_native_parity",
     "run_native_timing",
     "source_freeze",

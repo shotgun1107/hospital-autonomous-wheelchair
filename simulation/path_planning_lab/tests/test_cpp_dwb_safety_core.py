@@ -282,6 +282,7 @@ def test_cpp_static_lower_bound_keeps_nearby_noncolliding_cell_in_minimum() -> N
     [
         ((114, 100), CppDwbSafetyFailure.STATIC_CLEARANCE, 0.06),
         ((115, 100), CppDwbSafetyFailure.SAFE, 0.08),
+        ((116, 100), CppDwbSafetyFailure.SAFE, 0.10),
     ],
 )
 def test_python_and_cpp_share_the_forbidden_clearance_boundary(

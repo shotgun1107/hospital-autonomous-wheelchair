@@ -17,14 +17,14 @@ from hospital_path_lab.dynamic_observation import (
 from hospital_path_lab.r5c_observation_diagnostic import (
     run_r5c_crossing_completion_diagnostic,
 )
-from hospital_path_lab.r7_hidden_v4_qualification import (
-    _stress_result_is_conditionally_safe,
-)
 from hospital_path_lab.r7_failure_trace import (
     R7_FAILURE_RUN_MANIFEST_SCHEMA_VERSION,
     R7_FAILURE_TRACE_SCHEMA_VERSION,
     R7FailureTraceCollector,
     write_r7_failure_run_manifest,
+)
+from hospital_path_lab.r7_hidden_v4_qualification import (
+    _stress_result_is_conditionally_safe,
 )
 
 _FULL_OBSERVATION_HORIZON_TICKS = 1_600

@@ -33,14 +33,33 @@ _RECEIPT_SCHEMA = "r7-hidden-v4-consumption-receipt-v1"
 _REQUIRED_EVIDENCE_FILES = (
     "run-manifest.json",
     "semantic-parity.json",
+    "contract-parity.json",
     "timing-qualification.json",
     "release-gate.json",
     "qualification-receipt.json",
+    "summary.md",
 )
 _PACKAGING_PATHS = (
     "simulation/path_planning_lab/scripts/run_r7_hidden_v4.py",
     "simulation/path_planning_lab/src/hospital_path_lab/"
     "r7_hidden_v4_qualification.py",
+)
+_KNOWN_CONSUMED_ROOT_SEEDS = frozenset(
+    {
+        8_488_859_258_265_267_075,
+        5_041_993_867_976_238_990,
+        8_164_808_726_104_920_337,
+    }
+)
+_KNOWN_PUBLIC_OBSERVATION_SEEDS = frozenset(
+    {
+        2_140_928_701_629_245_82,
+        4_097_001_075_006_799_098,
+        6_422_064_046_178_126_625,
+        8_970_341_022_568_507_592,
+        1_993_037_174_228_324_916,
+        4_525_333_994_236_990_214,
+    }
 )
 
 
@@ -92,36 +111,69 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if args.preflight_only:
         output.mkdir(parents=True)
-        _write_json(
-            output / "preflight-manifest.json",
-            {
-                "schema": _PREFLIGHT_SCHEMA,
-                "checked_at_utc": datetime.now(UTC).isoformat(),
-                **preflight,
-                "max_workers_if_approved": args.max_workers,
-                "hidden_seed_generated": False,
-                "hidden_executed": False,
-                "product_or_human_safety_claim": False,
-            },
+        preflight_receipt = _build_preflight_receipt(
+            preflight,
+            max_workers=args.max_workers,
         )
+        _write_json(output / "preflight-receipt.json", preflight_receipt)
         print("preflight_passed=true", flush=True)
         print("hidden_seed_generated=false", flush=True)
         return 0
 
-    root_seed = secrets.randbits(63)
-    commitment = hidden_v4_seed_commitment(root_seed)
+    ledger_path = _acquire_consumption_ledger(repository_root, output, preflight)
     output.mkdir(parents=True)
+    preflight_receipt = _build_preflight_receipt(
+        preflight,
+        max_workers=args.max_workers,
+    )
+    _write_json(output / "preflight-receipt.json", preflight_receipt)
+    root_seed = secrets.randbits(63)
+    if root_seed in _KNOWN_CONSUMED_ROOT_SEEDS:
+        error = RuntimeError("generated root seed was already consumed")
+        _record_infrastructure_failure(output, None, 0, error)
+        _seal_consumption_ledger(ledger_path, status="infrastructure_failure")
+        raise error
+    commitment = hidden_v4_seed_commitment(root_seed)
     started_at = datetime.now(UTC).isoformat()
     _write_json(
         output / "seed-commitment.json",
         {
             "schema": _SEED_COMMITMENT_SCHEMA,
             "seed_commitment": commitment,
-            "root_seed_disclosed_before_run": False,
+            "root_seed_disclosed_before_commitment": False,
+            "commitment_written_before_seed_derivation": True,
             "created_at_utc": started_at,
         },
     )
-    specs = build_hidden_v4_case_specs(root_seed)
+    _write_json(
+        output / "consumed-seed.json",
+        {
+            "schema": _CONSUMED_SEED_SCHEMA,
+            "root_seed": root_seed,
+            "seed_commitment": commitment,
+            "consumed_at_utc": started_at,
+            "reuse_as_final_hidden_after_code_change": False,
+        },
+    )
+    _seal_consumption_ledger(
+        ledger_path,
+        status="seed_consumed",
+        seed_commitment=commitment,
+    )
+    try:
+        specs = build_hidden_v4_case_specs(root_seed)
+        if any(
+            spec.observation_seed in _KNOWN_PUBLIC_OBSERVATION_SEEDS for spec in specs
+        ):
+            raise RuntimeError("generated observation seed was already public or consumed")
+    except BaseException as exc:
+        _record_infrastructure_failure(output, commitment, 0, exc)
+        _seal_consumption_ledger(
+            ledger_path,
+            status="infrastructure_failure",
+            seed_commitment=commitment,
+        )
+        raise
     pre_run = {
         "schema": R7_HIDDEN_V4_OBSERVATION_VERSION,
         "started_at_utc": started_at,
@@ -129,7 +181,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "tree": preflight["tree"],
         "working_tree_clean": True,
         "seed_commitment": commitment,
-        "root_seed_disclosed_before_run": False,
+        "root_seed_disclosed_before_commitment": False,
+        "commitment_written_before_seed_derivation": True,
         "case_count": len(specs),
         "case_catalog_hash": canonical_content_hash(
             tuple(item.content_hash for item in specs)
@@ -145,17 +198,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "product_or_human_safety_claim": False,
     }
     _write_json(output / "pre-run-manifest.json", pre_run)
-    _write_json(
-        output / "consumed-seed.json",
-        {
-            "schema": _CONSUMED_SEED_SCHEMA,
-            "root_seed": root_seed,
-            "seed_commitment": commitment,
-            "consumed_at_utc": started_at,
-            "reuse_as_final_hidden_after_code_change": False,
-        },
-    )
-
     partial = []
 
     def on_case(result) -> None:
@@ -182,33 +224,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             specs,
             max_workers=args.max_workers,
             on_case=on_case,
+            failure_trace_root=output / "failure-traces",
         )
+        postflight = _verify_execution_freeze(repository_root, preflight)
     except BaseException as exc:
-        _write_json(
-            output / "infrastructure-failure.json",
-            {
-                "schema": "r7-hidden-v4-infrastructure-failure-v1",
-                "completed": False,
-                "algorithm_verdict": None,
-                "seed_commitment": commitment,
-                "completed_case_count": len(partial),
-                "error_type": type(exc).__name__,
-                "error_message": str(exc),
-                "partial_is_final_evidence": False,
-            },
+        _record_infrastructure_failure(output, commitment, len(partial), exc)
+        _seal_consumption_ledger(
+            ledger_path,
+            status="infrastructure_failure",
+            seed_commitment=commitment,
         )
         raise
 
     audit = audit_hidden_v4_results(specs, results)
+    failure_trace_manifest = _failure_trace_manifest(
+        output / "failure-traces",
+        expected_failure_count=sum(not item.passed for item in results),
+    )
     _write_json(output / "case-results.json", results)
+    _write_json(output / "failure-trace-manifest.json", failure_trace_manifest)
     summary = {
         "schema": _SUMMARY_SCHEMA,
+        "final_status": "PASS_FINAL" if audit.passed else "FAIL_REQUIRES_ANALYSIS",
         "passed": audit.passed,
         "case_count": audit.result_count,
         "normal_completed_count": audit.normal_completed_count,
         "stress_conditionally_safe_count": audit.stress_conditionally_safe_count,
         "stress_release_count": audit.stress_release_count,
         "hard_failure_count": audit.hard_failure_count,
+        "release_contract_violation_count": audit.release_contract_violation_count,
+        "duplicate_safe_frame_violation_count": (
+            audit.duplicate_safe_frame_violation_count
+        ),
+        "stale_propulsion_violation_count": audit.stale_propulsion_violation_count,
+        "unauthorized_restart_count": audit.unauthorized_restart_count,
+        "actual_collision_count": audit.actual_collision_count,
+        "actual_forbidden_violation_count": audit.actual_forbidden_violation_count,
+        "actual_clearance_violation_count": audit.actual_clearance_violation_count,
         "failures": audit.failures,
         "result_set_hash": audit.result_set_hash,
         "seed_commitment": commitment,
@@ -216,6 +268,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "tree": preflight["tree"],
         "hidden_scope": "new_observation_noise_and_dropout_sequences_only",
         "product_or_human_safety_claim": False,
+        "postflight": postflight,
+        "failure_trace_manifest_hash": failure_trace_manifest["content_hash"],
     }
     _write_json(output / "summary.json", summary)
     (output / "summary.md").write_text(
@@ -235,6 +289,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "stress_conditionally_safe_count": audit.stress_conditionally_safe_count,
         "stress_release_count": audit.stress_release_count,
         "hard_failure_count": audit.hard_failure_count,
+        "release_contract_violation_count": audit.release_contract_violation_count,
+        "duplicate_safe_frame_violation_count": (
+            audit.duplicate_safe_frame_violation_count
+        ),
+        "stale_propulsion_violation_count": audit.stale_propulsion_violation_count,
+        "unauthorized_restart_count": audit.unauthorized_restart_count,
+        "actual_collision_count": audit.actual_collision_count,
+        "actual_forbidden_violation_count": audit.actual_forbidden_violation_count,
+        "actual_clearance_violation_count": audit.actual_clearance_violation_count,
+        "failure_trace_manifest_hash": failure_trace_manifest["content_hash"],
         "release_receipt_content_hash": preflight["release_evidence"][
             "receipt_content_hash"
         ],
@@ -242,10 +306,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "packaging_source_freeze_hash": preflight["packaging_source_freeze"][
             "content_hash"
         ],
+        "postflight_content_hash": canonical_content_hash(postflight),
+        "preflight_receipt_content_hash": preflight_receipt[
+            "receipt_content_hash"
+        ],
         "reuse_as_final_hidden_after_code_change": False,
     }
     receipt["receipt_content_hash"] = canonical_content_hash(receipt)
     _write_json(output / "hidden-v4-consumption-receipt.json", receipt)
+    _seal_consumption_ledger(
+        ledger_path,
+        status="completed_pass" if audit.passed else "completed_fail",
+        seed_commitment=commitment,
+        receipt_content_hash=receipt["receipt_content_hash"],
+    )
     (output / "partial-state.json").unlink(missing_ok=True)
     print(f"hidden_v4_passed={str(audit.passed).lower()}", flush=True)
     print(f"receipt={output / 'hidden-v4-consumption-receipt.json'}", flush=True)
@@ -254,6 +328,132 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _failure_trace_manifest(
+    root: Path,
+    *,
+    expected_failure_count: int,
+) -> dict[str, object]:
+    paths = tuple(sorted(root.rglob("tick-trace.jsonl"))) if root.exists() else ()
+    if len(paths) != expected_failure_count:
+        raise RuntimeError("hidden-v4 failure trace count does not match failed cases")
+    records = []
+    for path in paths:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not lines:
+            raise RuntimeError(f"hidden-v4 failure trace is empty: {path}")
+        last_record = json.loads(lines[-1])
+        records.append(
+            {
+                "relative_path": path.relative_to(root.parent).as_posix(),
+                "size_bytes": path.stat().st_size,
+                "sha256": _sha256(path),
+                "record_count": len(lines),
+                "last_record_hash": last_record["record_content_hash"],
+            }
+        )
+    payload = {
+        "schema": "r7-hidden-v4-failure-trace-manifest-v1",
+        "failed_case_count": expected_failure_count,
+        "records": records,
+    }
+    return {**payload, "content_hash": canonical_content_hash(payload)}
+
+
+def _build_preflight_receipt(
+    preflight: dict[str, object],
+    *,
+    max_workers: int,
+) -> dict[str, object]:
+    payload = {
+        "schema": _PREFLIGHT_SCHEMA,
+        "checked_at_utc": datetime.now(UTC).isoformat(),
+        **preflight,
+        "max_workers_if_approved": max_workers,
+        "hidden_seed_generated": False,
+        "hidden_executed": False,
+        "product_or_human_safety_claim": False,
+    }
+    return {**payload, "receipt_content_hash": canonical_content_hash(payload)}
+
+
+def _consumption_ledger_path(repository_root: Path) -> Path:
+    return (
+        repository_root
+        / "simulation/path_planning_lab/outputs"
+        / f"r7-hidden-v4-{_git(repository_root, 'rev-parse', 'HEAD')}-consumption-ledger.json"
+    )
+
+
+def _acquire_consumption_ledger(
+    repository_root: Path,
+    output: Path,
+    preflight: dict[str, object],
+) -> Path:
+    path = _consumption_ledger_path(repository_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": "r7-hidden-v4-consumption-ledger-v1",
+        "status": "reserved_before_seed",
+        "head": preflight["head"],
+        "tree": preflight["tree"],
+        "output": str(output),
+        "reserved_at_utc": datetime.now(UTC).isoformat(),
+        "seed_commitment": None,
+        "receipt_content_hash": None,
+    }
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+    except FileExistsError as exc:
+        raise RuntimeError(
+            "hidden-v4 was already reserved or consumed for this commit"
+        ) from exc
+    return path
+
+
+def _seal_consumption_ledger(
+    path: Path,
+    *,
+    status: str,
+    seed_commitment: str | None = None,
+    receipt_content_hash: str | None = None,
+) -> None:
+    current = json.loads(path.read_text(encoding="utf-8"))
+    current.update(
+        {
+            "status": status,
+            "seed_commitment": seed_commitment,
+            "receipt_content_hash": receipt_content_hash,
+            "updated_at_utc": datetime.now(UTC).isoformat(),
+        }
+    )
+    _write_json(path, current)
+
+
+def _record_infrastructure_failure(
+    output: Path,
+    seed_commitment: str | None,
+    completed_case_count: int,
+    error: BaseException,
+) -> None:
+    _write_json(
+        output / "infrastructure-failure.json",
+        {
+            "schema": "r7-hidden-v4-infrastructure-failure-v1",
+            "final_status": "BLOCKED_INFRASTRUCTURE",
+            "completed": False,
+            "algorithm_verdict": None,
+            "seed_commitment": seed_commitment,
+            "completed_case_count": completed_case_count,
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "partial_is_final_evidence": False,
+        },
+    )
 
 
 def _preflight(
@@ -302,6 +502,7 @@ def _verify_release_evidence(
         manifest = json.loads(archive.read("run-manifest.json"))
         receipt = json.loads(archive.read("qualification-receipt.json"))
         parity = json.loads(archive.read("semantic-parity.json"))
+        contract_parity = json.loads(archive.read("contract-parity.json"))
         timing = json.loads(archive.read("timing-qualification.json"))
         release_gate = json.loads(archive.read("release-gate.json"))
 
@@ -310,6 +511,24 @@ def _verify_release_evidence(
     }
     if receipt.get("receipt_content_hash") != canonical_content_hash(receipt_payload):
         raise RuntimeError("R7 release receipt content hash mismatch")
+    timing_cases = timing.get("cases", ())
+    expected_case_ids = (
+        "actor-0-free",
+        "actor-1-active",
+        "actor-2-active",
+        "corner-static-forbidden",
+        "staggered-risk-multisegment",
+    )
+    formal_cases_pass = bool(
+        tuple(item.get("case_id") for item in timing_cases) == expected_case_ids
+        and all(
+            item.get("sample_count") == 100
+            and item.get("deadline_miss_count") == 0
+            and item.get("deadline_ns") == 50_000_000
+            and item.get("maximum_ns", 50_000_001) <= 50_000_000
+            for item in timing_cases
+        )
+    )
     if not all(
         (
             release_gate.get("qualified") is True,
@@ -319,9 +538,22 @@ def _verify_release_evidence(
             receipt.get("hidden_executed") is False,
             timing.get("passed") is True,
             timing.get("sample_count") == 500,
+            timing.get("deadline_ns") == 50_000_000,
+            timing.get("warmups_per_case") == 30,
+            timing.get("repeats_per_case") == 100,
+            timing.get("parallelized") is False,
+            timing.get("execution_mode") == "serial_parent_no_worker",
             timing.get("aggregate", {}).get("deadline_miss_count") == 0,
+            timing.get("aggregate", {}).get("maximum_ns", 50_000_001)
+            <= 50_000_000,
             receipt.get("sample_count") == 500,
             receipt.get("deadline_miss_count") == 0,
+            receipt.get("deadline_ns") == 50_000_000,
+            manifest.get("warmups") == 30,
+            manifest.get("repeats") == 100,
+            manifest.get("build_executed") is True,
+            all(release_gate.get("checks", {}).values()),
+            formal_cases_pass,
         )
     ):
         raise RuntimeError("R7 release or timing gate is not passing")
@@ -334,6 +566,16 @@ def _verify_release_evidence(
         raise RuntimeError("R7 semantic parity is not 5/5")
     if receipt.get("semantic_parity_hash") != parity.get("content_hash"):
         raise RuntimeError("R7 semantic parity receipt binding mismatch")
+    if not all(
+        (
+            contract_parity.get("passed") is True,
+            contract_parity.get("expected_test_count") == 13,
+            contract_parity.get("passed_test_count") == 13,
+            receipt.get("contract_parity_hash")
+            == contract_parity.get("content_hash"),
+        )
+    ):
+        raise RuntimeError("R7 boundary and terminal contract parity is not passing")
     if receipt.get("timing_result_hash") != canonical_content_hash(timing):
         raise RuntimeError("R7 timing receipt binding mismatch")
 
@@ -343,6 +585,10 @@ def _verify_release_evidence(
         raise RuntimeError("R7 executable source changed during qualification")
     if receipt.get("source_freeze_hash") != source_after.get("content_hash"):
         raise RuntimeError("R7 source freeze receipt binding mismatch")
+    if source_after.get("content_hash") != canonical_content_hash(
+        source_after.get("records", ())
+    ):
+        raise RuntimeError("R7 source freeze content hash mismatch")
     evidence_head = manifest.get("git_after", {}).get("head")
     evidence_tree = manifest.get("git_after", {}).get("tree")
     if (
@@ -354,16 +600,23 @@ def _verify_release_evidence(
         or receipt.get("tree") != evidence_tree
     ):
         raise RuntimeError("R7 release Git identity is inconsistent")
-    _git(repository_root, "cat-file", "-e", f"{evidence_head}^{{commit}}")
-    _git(repository_root, "merge-base", "--is-ancestor", evidence_head, "HEAD")
-    for record in source_after.get("records", ()):
+    current_head = _git(repository_root, "rev-parse", "HEAD")
+    current_tree = _git(repository_root, "rev-parse", "HEAD^{tree}")
+    if evidence_head != current_head or evidence_tree != current_tree:
+        raise RuntimeError("R7 release evidence must match the hidden execution commit")
+    records = source_after.get("records", ())
+    paths = tuple(record.get("path") for record in records)
+    if len(paths) != len(set(paths)):
+        raise RuntimeError("R7 source freeze contains duplicate paths")
+    for record in records:
         relative_path = record.get("path")
         if not isinstance(relative_path, str):
             raise RuntimeError("R7 source freeze record path is invalid")
         current = repository_root / relative_path
+        expected_size = record.get("size_bytes", record.get("size"))
         if (
             not current.is_file()
-            or current.stat().st_size != record.get("size_bytes")
+            or current.stat().st_size != expected_size
             or _sha256(current) != record.get("sha256")
         ):
             raise RuntimeError(f"R7 frozen executable source changed: {relative_path}")
@@ -377,10 +630,43 @@ def _verify_release_evidence(
         "sample_count": 500,
         "deadline_miss_count": 0,
         "semantic_parity_case_count": 5,
+        "contract_parity_test_count": 13,
         "receipt_content_hash": receipt["receipt_content_hash"],
         "source_freeze_hash": receipt["source_freeze_hash"],
         "native_full_library_sha256": receipt["native_full_library_sha256"],
         "native_safety_library_sha256": receipt["native_safety_library_sha256"],
+    }
+
+
+def _verify_execution_freeze(
+    repository_root: Path,
+    preflight: dict[str, object],
+) -> dict[str, object]:
+    if _git(repository_root, "status", "--porcelain=v1"):
+        raise RuntimeError("hidden-v4 working tree changed during execution")
+    head = _git(repository_root, "rev-parse", "HEAD")
+    tree = _git(repository_root, "rev-parse", "HEAD^{tree}")
+    if head != preflight["head"] or tree != preflight["tree"]:
+        raise RuntimeError("hidden-v4 Git identity changed during execution")
+    release_before = preflight["release_evidence"]
+    release_after = _verify_release_evidence(
+        repository_root,
+        Path(str(release_before["path"])),
+        str(release_before["sha256"]),
+    )
+    if release_after != release_before:
+        raise RuntimeError("R7 release evidence changed during hidden-v4 execution")
+    packaging_after = _packaging_source_freeze(repository_root)
+    if packaging_after != preflight["packaging_source_freeze"]:
+        raise RuntimeError("hidden-v4 packaging source changed during execution")
+    _verify_native_libraries(repository_root, release_after)
+    return {
+        "head": head,
+        "tree": tree,
+        "working_tree_clean": True,
+        "release_evidence_sha256": release_after["sha256"],
+        "packaging_source_freeze_hash": packaging_after["content_hash"],
+        "native_libraries_match_release": True,
     }
 
 
@@ -390,7 +676,12 @@ def _packaging_source_freeze(repository_root: Path) -> dict[str, object]:
         path = repository_root / relative_path
         if not path.is_file():
             raise RuntimeError(f"hidden-v4 packaging source is missing: {relative_path}")
-        if _git_bytes(repository_root, "show", f"HEAD:{relative_path}") != path.read_bytes():
+        _git(repository_root, "ls-files", "--error-unmatch", relative_path)
+        if subprocess.run(
+            ("git", "diff", "--quiet", "HEAD", "--", relative_path),
+            cwd=repository_root,
+            check=False,
+        ).returncode != 0:
             raise RuntimeError(f"hidden-v4 packaging source is not committed: {relative_path}")
         records.append(
             {

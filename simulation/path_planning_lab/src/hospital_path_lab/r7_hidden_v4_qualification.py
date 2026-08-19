@@ -18,13 +18,17 @@ from hospital_path_lab.dynamic_observation import (
     NORMAL_OBSERVATION_PROFILE,
     STRESS_OBSERVATION_PROFILE,
 )
-from hospital_path_lab.dynamic_safety import DynamicMotionState
+from hospital_path_lab.dynamic_safety import (
+    DYNAMIC_SAFE_OBSERVATION_FRAMES,
+    DynamicMotionState,
+)
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.r5c_observation_diagnostic import (
     R5CDiagnosticOutcome,
     R5CObservationDiagnosticResult,
     run_r5c_crossing_completion_diagnostic,
 )
+from hospital_path_lab.r7_failure_trace import R7FailureTraceCollector
 
 R7_HIDDEN_V4_OBSERVATION_VERSION = "r7-hidden-observation-v3"
 R7_HIDDEN_V4_REPLICA_COUNT = 5
@@ -81,6 +85,15 @@ class R7HiddenV4CaseResult:
     gate_override_count: int
     hard_failures: tuple[str, ...]
     trace_content_hash: str
+    trace_record_count: int
+    minimum_release_confirmed_safe_frames: int | None
+    release_contract_violation_count: int
+    duplicate_safe_frame_violation_count: int
+    stale_propulsion_violation_count: int
+    unauthorized_restart_count: int
+    actual_collision_count: int
+    actual_forbidden_violation_count: int
+    actual_clearance_violation_count: int
     elapsed_s: float
     content_hash: str = ""
 
@@ -105,6 +118,13 @@ class R7HiddenV4Audit:
     stress_conditionally_safe_count: int
     stress_release_count: int
     hard_failure_count: int
+    release_contract_violation_count: int
+    duplicate_safe_frame_violation_count: int
+    stale_propulsion_violation_count: int
+    unauthorized_restart_count: int
+    actual_collision_count: int
+    actual_forbidden_violation_count: int
+    actual_clearance_violation_count: int
     failures: tuple[str, ...]
     result_set_hash: str
 
@@ -167,6 +187,7 @@ def build_hidden_v4_case_specs(root_seed: int) -> tuple[R7HiddenV4CaseSpec, ...]
 def run_hidden_v4_case(
     _repository_root: Path,
     spec: R7HiddenV4CaseSpec,
+    failure_trace_root: Path | None = None,
 ) -> R7HiddenV4CaseResult:
     started = perf_counter()
     profile = (
@@ -174,18 +195,51 @@ def run_hidden_v4_case(
         if spec.profile_name == "normal"
         else STRESS_OBSERVATION_PROFILE
     )
-    result = run_r5c_crossing_completion_diagnostic(
-        side_index=spec.side_index,
-        profile=profile,
-        tick_limit=spec.tick_limit,
-        observation_seed=spec.observation_seed,
+    failure_trace = R7FailureTraceCollector()
+    try:
+        result = run_r5c_crossing_completion_diagnostic(
+            side_index=spec.side_index,
+            profile=profile,
+            tick_limit=spec.tick_limit,
+            observation_seed=spec.observation_seed,
+            failure_trace=failure_trace,
+        )
+    except BaseException:
+        if failure_trace.records and failure_trace_root is not None:
+            failure_trace.write_jsonl(
+                failure_trace_root / spec.case_id / "infrastructure-tick-trace.jsonl"
+            )
+        raise
+    contract_proof = _trace_contract_proof(failure_trace.records, result)
+    contract_passed = all(
+        contract_proof[name] == 0
+        for name in (
+            "release_contract_violation_count",
+            "duplicate_safe_frame_violation_count",
+            "stale_propulsion_violation_count",
+            "unauthorized_restart_count",
+            "actual_collision_count",
+            "actual_forbidden_violation_count",
+            "actual_clearance_violation_count",
+        )
     )
-    passed = (
+    passed = contract_passed and (
         _normal_result_passes(result)
         if spec.profile_name == "normal"
         else _stress_result_is_conditionally_safe(result)
     )
-    return _case_result(spec, result, passed=passed, elapsed_s=perf_counter() - started)
+    case_result = _case_result(
+        spec,
+        result,
+        passed=passed,
+        elapsed_s=perf_counter() - started,
+        contract_proof=contract_proof,
+    )
+    if not passed and failure_trace is not None:
+        failure_trace.write_jsonl(
+            failure_trace_root / spec.case_id / "tick-trace.jsonl"
+        )
+    return case_result
 
 
 def evaluate_hidden_v4_cases(
@@ -194,13 +248,14 @@ def evaluate_hidden_v4_cases(
     *,
     max_workers: int,
     on_case: Callable[[R7HiddenV4CaseResult], None] | None = None,
+    failure_trace_root: Path | None = None,
 ) -> tuple[R7HiddenV4CaseResult, ...]:
     if max_workers <= 0:
         raise ValueError("max_workers must be positive")
     if max_workers == 1:
         results = []
         for spec in specs:
-            result = run_hidden_v4_case(repository_root, spec)
+            result = run_hidden_v4_case(repository_root, spec, failure_trace_root)
             results.append(result)
             if on_case is not None:
                 on_case(result)
@@ -209,7 +264,13 @@ def evaluate_hidden_v4_cases(
     completed: dict[int, R7HiddenV4CaseResult] = {}
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(run_hidden_v4_case, repository_root, spec): spec for spec in specs
+            pool.submit(
+                run_hidden_v4_case,
+                repository_root,
+                spec,
+                failure_trace_root,
+            ): spec
+            for spec in specs
         }
         for future in as_completed(futures):
             result = future.result()
@@ -251,12 +312,27 @@ def audit_hidden_v4_results(
         item.profile_name == "stress" and bool(item.release_ticks) for item in results
     )
     hard_failure_count = sum(bool(item.hard_failures) for item in results)
+    proof_totals = {
+        name: sum(getattr(item, name) for item in results)
+        for name in (
+            "release_contract_violation_count",
+            "duplicate_safe_frame_violation_count",
+            "stale_propulsion_violation_count",
+            "unauthorized_restart_count",
+            "actual_collision_count",
+            "actual_forbidden_violation_count",
+            "actual_clearance_violation_count",
+        )
+    }
     if normal_completed != 10:
         failures.append("normal_completion_count_mismatch")
     if stress_safe != 10:
         failures.append("stress_conditionally_safe_count_mismatch")
     if hard_failure_count:
         failures.append("hidden_v4_hard_failure_nonzero")
+    for name, count in proof_totals.items():
+        if count:
+            failures.append(f"hidden_v4_{name}_nonzero")
 
     return R7HiddenV4Audit(
         passed=not failures,
@@ -266,6 +342,7 @@ def audit_hidden_v4_results(
         stress_conditionally_safe_count=stress_safe,
         stress_release_count=stress_release_count,
         hard_failure_count=hard_failure_count,
+        **proof_totals,
         failures=tuple(dict.fromkeys(failures)),
         result_set_hash=canonical_content_hash(
             tuple((item.case_id, item.content_hash) for item in results)
@@ -279,6 +356,7 @@ def _case_result(
     *,
     passed: bool,
     elapsed_s: float,
+    contract_proof: dict[str, int | None],
 ) -> R7HiddenV4CaseResult:
     return R7HiddenV4CaseResult(
         ordinal=spec.ordinal,
@@ -308,15 +386,174 @@ def _case_result(
         gate_override_count=result.gate_override_count,
         hard_failures=result.hard_failures,
         trace_content_hash=result.trace_content_hash,
+        trace_record_count=int(contract_proof["trace_record_count"] or 0),
+        minimum_release_confirmed_safe_frames=contract_proof[
+            "minimum_release_confirmed_safe_frames"
+        ],
+        release_contract_violation_count=int(
+            contract_proof["release_contract_violation_count"] or 0
+        ),
+        duplicate_safe_frame_violation_count=int(
+            contract_proof["duplicate_safe_frame_violation_count"] or 0
+        ),
+        stale_propulsion_violation_count=int(
+            contract_proof["stale_propulsion_violation_count"] or 0
+        ),
+        unauthorized_restart_count=int(
+            contract_proof["unauthorized_restart_count"] or 0
+        ),
+        actual_collision_count=int(contract_proof["actual_collision_count"] or 0),
+        actual_forbidden_violation_count=int(
+            contract_proof["actual_forbidden_violation_count"] or 0
+        ),
+        actual_clearance_violation_count=int(
+            contract_proof["actual_clearance_violation_count"] or 0
+        ),
         elapsed_s=elapsed_s,
     )
 
 
+def _trace_contract_proof(
+    records: tuple[dict[str, object], ...],
+    result: R5CObservationDiagnosticResult,
+) -> dict[str, int | None]:
+    release_records = tuple(
+        record for record in records if record.get("release_permitted") is True
+    )
+    release_safe_counts = tuple(
+        int(record.get("confirmed_safe_frame_count_after", 0))
+        for record in release_records
+    )
+    release_violations = 0
+    unauthorized_restarts = 0
+    for record in release_records:
+        stop_epoch = record.get("stop_epoch_after")
+        if not all(
+            (
+                record.get("release_input_usable") is True,
+                record.get("last_event_was_no_frame") is False,
+                record.get("observation_status") == "fresh",
+                int(record.get("confirmed_safe_frame_count_after", 0))
+                >= DYNAMIC_SAFE_OBSERVATION_FRAMES,
+                record.get("gate_state_before") == "holding",
+                record.get("runtime_present_before") is False,
+                record.get("runtime_present_after") is True,
+                record.get("reference_stop_epoch") == stop_epoch,
+                record.get("resume_authorization_revision") is not None,
+            )
+        ):
+            release_violations += 1
+        if (
+            record.get("reference_stop_epoch") != stop_epoch
+            or record.get("resume_authorization_revision") is None
+        ):
+            unauthorized_restarts += 1
+
+    release_ticks = tuple(int(record["tick"]) for record in release_records)
+    if release_ticks != result.release_ticks:
+        release_violations += 1
+    for record in records:
+        if (
+            record.get("runtime_present_before") is False
+            and record.get("runtime_present_after") is True
+            and record.get("release_permitted") is not True
+        ):
+            unauthorized_restarts += 1
+
+    counted_frames: set[tuple[int, int]] = set()
+    duplicate_safe_frame_violations = 0
+    for record in records:
+        before = int(record.get("confirmed_safe_frame_count_before", 0))
+        after = int(record.get("confirmed_safe_frame_count_after", 0))
+        if after <= before:
+            continue
+        sequence = record.get("observation_sequence")
+        epoch = record.get("stop_epoch_after")
+        if (
+            after != before + 1
+            or isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or isinstance(epoch, bool)
+            or not isinstance(epoch, int)
+            or (epoch, sequence) in counted_frames
+        ):
+            duplicate_safe_frame_violations += 1
+            continue
+        counted_frames.add((epoch, sequence))
+
+    stale_propulsion_violations = 0
+    for record in records:
+        if record.get("release_input_usable") is True:
+            continue
+        command = record.get("command_after_gate")
+        before = record.get("robot_twist_before")
+        if command is None or before is None:
+            continue
+        if record.get("controller_called") is True or not _is_limited_deceleration(
+            before,
+            command,
+        ):
+            stale_propulsion_violations += 1
+
+    actor_clearance = result.minimum_actor_clearance_m
+    minimum_clearance = (
+        result.minimum_static_clearance_m
+        if actor_clearance is None
+        else min(result.minimum_static_clearance_m, actor_clearance)
+    )
+    return {
+        "trace_record_count": len(records),
+        "minimum_release_confirmed_safe_frames": (
+            min(release_safe_counts) if release_safe_counts else None
+        ),
+        "release_contract_violation_count": release_violations,
+        "duplicate_safe_frame_violation_count": duplicate_safe_frame_violations,
+        "stale_propulsion_violation_count": stale_propulsion_violations,
+        "unauthorized_restart_count": unauthorized_restarts,
+        "actual_collision_count": int(minimum_clearance <= 0.0),
+        "actual_forbidden_violation_count": int(
+            result.minimum_static_clearance_m <= 0.0
+        ),
+        "actual_clearance_violation_count": int(
+            minimum_clearance + 1e-12 < R7_HIDDEN_V4_MINIMUM_CLEARANCE_M
+        ),
+    }
+
+
+def _is_limited_deceleration(before: object, after: object) -> bool:
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return False
+    return all(
+        _component_moves_toward_zero(
+            float(before[before_name]),
+            float(after[after_name]),
+        )
+        for before_name, after_name in (
+            ("linear_mps", "linear_mps"),
+            ("angular_radps", "angular_radps"),
+        )
+    )
+
+
+def _component_moves_toward_zero(before: float, after: float) -> bool:
+    tolerance = 1e-12
+    if abs(after) <= tolerance:
+        return True
+    return before * after > 0.0 and abs(after) <= abs(before) + tolerance
+
+
 def _normal_result_passes(result: R5CObservationDiagnosticResult) -> bool:
+    follow_release = result.follow_original_release_tick
     return all(
         (
             result.outcome is R5CDiagnosticOutcome.COMPLETED,
             _normal_progress_is_ordered(result),
+            bool(result.confirmed_stop_ticks),
+            follow_release is not None,
+            any(tick < follow_release for tick in result.confirmed_stop_ticks),
+            len(result.release_ticks) == len(result.session_stop_epochs),
+            len(result.session_stop_epochs) >= 2,
+            result.session_stop_epochs[-1] > result.session_stop_epochs[0],
             result.final_motion_state is DynamicMotionState.COMPLETED,
             _clearances_pass(result),
             not result.hard_failures,
