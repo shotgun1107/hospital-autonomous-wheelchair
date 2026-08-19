@@ -68,24 +68,24 @@ R7 native qualification + hidden-v4 + packaging
 - 새 root seed commitment와 hidden-v4 실제 1회 실행
 - `PASS_FINAL` 또는 `FAIL_ANALYZED` 결과 문서
 
-## 4. 다음 PC에서 먼저 해결할 일
+## 4. 이번 PC에서 해결한 포장 차단점
 
-1. R6 선행 receipt가 Git에서 재현 가능한지 정리한다.
-   - 기존 runner 기본 경로는 clean checkout에 없는 ignored output을 가리킬 수 있다.
-   - 현재 유효한 recovered receipt를 immutable tracked artifact로 둘지, 명시 CLI 입력으로
-     받을지를 결정·시험해야 한다.
-2. historical hidden runner 시험을 바로잡는다.
-   - 현 source가 바뀌었으므로 과거 evidence를 현 source에서 허용하면 안 된다.
-   - 과거 commit에서는 검증 가능하고, 현 HEAD에서는 source mismatch로 거부되는지를 분리해
-     시험해야 한다.
-3. 새 runner의 실패 처리 범위를 마지막까지 점검한다.
-   - commitment 이후 어떤 infrastructure 오류가 나도 `BLOCKED_INFRASTRUCTURE` 기록이 남아야
-     한다.
-   - JSONL trace SHA·record count·마지막 record hash가 case result → summary → receipt까지
-     실제로 결박되는지 시험한다.
-4. 위를 끝내고 코드 동결 전 읽기 전용 감사를 한다.
-5. 그 다음에만 공개 관련 시험 → 전체 회귀 1회 → native qualification → preflight-only →
-   hidden-v4 1회 순서로 진행한다.
+1. R6 선행 receipt를
+   `simulation/path_planning_lab/evidence/r6-public-end-to-end-qualification-receipt-20260817-64df95f.json`
+   으로 추적하고, native runner의 기본 입력으로 연결했다. 필요하면 `--r6-receipt`로 다른
+   불변 receipt를 명시할 수 있고, 기존 `--r6-output`도 호환용으로 남겼다.
+2. historical hidden-v4 evidence는 기준 commit의 frozen source에서는 유효하지만 현재 HEAD의
+   변경된 source에서는 mismatch로 거부되는 시험으로 분리했다.
+3. hidden-v4는 모든 case의 JSONL trace를 쓰고 SHA-256·record count·마지막 record hash를
+   case result, summary, receipt에 연결한다. stale result binding은 거부한다.
+4. commitment 뒤 준비·실행·최종 포장 어느 위치에서 기반시설 오류가 나도
+   `BLOCKED_INFRASTRUCTURE` summary·receipt와 소비 ledger 결박을 남긴다.
+5. 관련 시험 `41 passed`, Ruff·compileall·`git diff --check`를 통과했고 읽기 전용 범위
+   감사에서 안전 수치·경로 로직 변경과 새 P0/P1은 발견하지 못했다.
+
+다음 순서는 현재 변경을 commit해 clean source를 만든 뒤 공개 관련 시험 → 전체 회귀 1회 →
+native qualification → preflight-only다. 이 네 조건이 모두 통과한 뒤에만 hidden-v4 1회를
+실행한다.
 
 hidden 실패 뒤에는 코드를 바로 고치지 않는다. 이미 만든 trace로 먼저 root-cause report를
 작성하고 `FAIL_ANALYZED`로 끝낸다.

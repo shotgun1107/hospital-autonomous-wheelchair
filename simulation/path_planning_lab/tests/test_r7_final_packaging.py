@@ -4,7 +4,7 @@ import importlib.util
 import json
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -395,3 +395,158 @@ def test_hidden_v4_schemas_are_separate_from_historical_runner() -> None:
     assert all("v4" in schema or schema == "r7-hidden-observation-v3" for schema in v4_schemas)
     assert "r7-hidden-preflight-v2" not in v4_schemas
     assert runner.R7_HIDDEN_V4_OBSERVATION_VERSION != historical.R7_HIDDEN_OBSERVATION_VERSION
+
+
+def test_hidden_v4_infrastructure_failure_writes_terminal_receipt_and_trace_manifest(
+    tmp_path: Path,
+) -> None:
+    runner = _load_script("r7_hidden_v4_infrastructure_test", HIDDEN_V4_PATH)
+    output = tmp_path / "blocked"
+    trace = output / "failure-traces/case-00/infrastructure-tick-trace.jsonl"
+    trace.parent.mkdir(parents=True)
+    trace.write_text(
+        json.dumps({"record_content_hash": "a" * 64}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    receipt_hash = runner._record_infrastructure_failure(
+        output,
+        "b" * 64,
+        0,
+        RuntimeError("worker failed"),
+    )
+
+    failure = json.loads((output / "infrastructure-failure.json").read_text())
+    summary = json.loads((output / "summary.json").read_text())
+    receipt = json.loads(
+        (output / "hidden-v4-consumption-receipt.json").read_text()
+    )
+    manifest = json.loads((output / "partial-trace-manifest.json").read_text())
+    assert failure["final_status"] == "BLOCKED_INFRASTRUCTURE"
+    assert summary["final_status"] == "BLOCKED_INFRASTRUCTURE"
+    assert receipt["final_status"] == "BLOCKED_INFRASTRUCTURE"
+    assert receipt["completed"] is False
+    assert receipt["algorithm_verdict"] is None
+    assert receipt["receipt_content_hash"] == receipt_hash
+    assert manifest["trace_file_count"] == 1
+    assert manifest["records"][0]["sha256"] == runner._sha256(trace)
+    assert manifest["records"][0]["record_count"] == 1
+    assert manifest["records"][0]["last_record_hash"] == "a" * 64
+
+
+def test_hidden_v4_case_trace_manifest_rejects_stale_result_binding(
+    tmp_path: Path,
+) -> None:
+    runner = _load_script("r7_hidden_v4_trace_binding_test", HIDDEN_V4_PATH)
+    root = tmp_path / "failure-traces"
+    trace = root / "case-00/tick-trace.jsonl"
+    trace.parent.mkdir(parents=True)
+    trace.write_text(
+        json.dumps({"record_content_hash": "c" * 64}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    result = SimpleNamespace(
+        case_id="case-00",
+        trace_content_hash="d" * 64,
+        trace_file_sha256=runner._sha256(trace),
+        trace_record_count=1,
+        trace_last_record_hash="c" * 64,
+    )
+
+    manifest = runner._failure_trace_manifest(root, results=(result,))
+    assert manifest["case_count"] == 1
+    assert manifest["records"][0]["case_id"] == "case-00"
+    assert len(runner._case_trace_set_hash((result,))) == 64
+
+    trace.write_text(
+        json.dumps({"record_content_hash": "e" * 64}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="case trace binding mismatch"):
+        runner._failure_trace_manifest(root, results=(result,))
+
+
+@pytest.mark.parametrize("failure_stage", ("prepare", "evaluate", "finalize"))
+def test_hidden_v4_post_commitment_errors_are_sealed_as_infrastructure_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+) -> None:
+    runner = _load_script(f"r7_hidden_v4_{failure_stage}_failure_test", HIDDEN_V4_PATH)
+    repository_root = tmp_path / "repository"
+    repository_root.mkdir()
+    output = tmp_path / f"blocked-{failure_stage}"
+
+    def fake_git(_root: Path, *args: str) -> str:
+        if args == ("status", "--porcelain=v1"):
+            return ""
+        if args == ("rev-parse", "HEAD"):
+            return "a" * 40
+        return "b" * 40
+
+    monkeypatch.setattr(runner, "_repository_root", lambda: repository_root)
+    monkeypatch.setattr(runner, "_git", fake_git)
+    monkeypatch.setattr(
+        runner,
+        "_preflight",
+        lambda *_args: {
+            "head": "a" * 40,
+            "tree": "b" * 40,
+            "working_tree_clean": True,
+            "release_evidence": {"receipt_content_hash": "c" * 64},
+            "packaging_source_freeze": {"content_hash": "d" * 64},
+            "machine": {"logical_cpu_count": 8},
+        },
+    )
+    monkeypatch.setattr(runner.secrets, "randbits", lambda _bits: 123_456)
+    if failure_stage == "prepare":
+        monkeypatch.setattr(
+            runner,
+            "build_hidden_v4_case_specs",
+            lambda _seed: (_ for _ in ()).throw(RuntimeError("prepare failed")),
+        )
+    elif failure_stage == "evaluate":
+        monkeypatch.setattr(
+            runner,
+            "evaluate_hidden_v4_cases",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("evaluate failed")
+            ),
+        )
+    else:
+        monkeypatch.setattr(runner, "evaluate_hidden_v4_cases", lambda *_a, **_k: ())
+        monkeypatch.setattr(
+            runner,
+            "_verify_execution_freeze",
+            lambda *_args: {"content_hash": "e" * 64},
+        )
+        monkeypatch.setattr(
+            runner,
+            "_finalize_hidden_v4",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("finalize failed")),
+        )
+
+    with pytest.raises(RuntimeError, match=f"{failure_stage} failed"):
+        runner.main(
+            [
+                "--output",
+                str(output),
+                "--qualification-evidence",
+                str(tmp_path / "evidence.zip"),
+                "--qualification-sha256",
+                "f" * 64,
+                "--execute-approved",
+            ]
+        )
+
+    assert (output / "seed-commitment.json").is_file()
+    receipt = json.loads(
+        (output / "hidden-v4-consumption-receipt.json").read_text()
+    )
+    assert receipt["final_status"] == "BLOCKED_INFRASTRUCTURE"
+    ledger_path = next(
+        (repository_root / "simulation/path_planning_lab/outputs").glob("*ledger.json")
+    )
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger["status"] == "infrastructure_failure"
+    assert ledger["receipt_content_hash"] == receipt["receipt_content_hash"]

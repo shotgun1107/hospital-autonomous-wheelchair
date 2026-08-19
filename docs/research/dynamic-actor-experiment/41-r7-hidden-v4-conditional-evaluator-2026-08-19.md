@@ -93,3 +93,14 @@ tests/test_r7_hidden_v4_qualification.py
 7. 이전 hidden-v1/v2/v3와 공개 회귀 seed 미사용
 
 이 조건이 하나라도 미완료면 actual hidden-v4는 실행하지 않는다.
+
+## 6. 실행 증거와 기반시설 실패
+
+- 각 case는 첫 실행의 JSONL trace를 남긴다.
+- trace SHA-256, record count, 마지막 record hash와 semantic hash를 case result에 넣고,
+  case trace set과 manifest hash를 summary·consumption receipt까지 연결한다.
+- result에 기록된 trace 정보와 실제 파일이 다르면 최종 포장을 거부한다.
+- commitment 뒤 준비, case 실행 또는 최종 포장에서 기반시설 오류가 나면 알고리즘 FAIL로
+  판정하지 않는다. `BLOCKED_INFRASTRUCTURE` summary·receipt를 쓰고 소비 ledger에 그 receipt
+  hash를 기록한다.
+- 중단 trace는 원인 분석 자료일 뿐 `PASS_FINAL` 증거가 아니다.

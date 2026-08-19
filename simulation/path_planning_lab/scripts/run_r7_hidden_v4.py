@@ -130,74 +130,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     root_seed = secrets.randbits(63)
     if root_seed in _KNOWN_CONSUMED_ROOT_SEEDS:
         error = RuntimeError("generated root seed was already consumed")
-        _record_infrastructure_failure(output, None, 0, error)
-        _seal_consumption_ledger(ledger_path, status="infrastructure_failure")
+        receipt_hash = _record_infrastructure_failure(output, None, 0, error)
+        _seal_consumption_ledger(
+            ledger_path,
+            status="infrastructure_failure",
+            receipt_content_hash=receipt_hash,
+        )
         raise error
     commitment = hidden_v4_seed_commitment(root_seed)
-    started_at = datetime.now(UTC).isoformat()
-    _write_json(
-        output / "seed-commitment.json",
-        {
-            "schema": _SEED_COMMITMENT_SCHEMA,
-            "seed_commitment": commitment,
-            "root_seed_disclosed_before_commitment": False,
-            "commitment_written_before_seed_derivation": True,
-            "created_at_utc": started_at,
-        },
-    )
-    _write_json(
-        output / "consumed-seed.json",
-        {
-            "schema": _CONSUMED_SEED_SCHEMA,
-            "root_seed": root_seed,
-            "seed_commitment": commitment,
-            "consumed_at_utc": started_at,
-            "reuse_as_final_hidden_after_code_change": False,
-        },
-    )
-    _seal_consumption_ledger(
-        ledger_path,
-        status="seed_consumed",
-        seed_commitment=commitment,
-    )
     try:
-        specs = build_hidden_v4_case_specs(root_seed)
-        if any(
-            spec.observation_seed in _KNOWN_PUBLIC_OBSERVATION_SEEDS for spec in specs
-        ):
-            raise RuntimeError("generated observation seed was already public or consumed")
+        started_at, specs, pre_run = _prepare_committed_hidden_v4(
+            output=output,
+            ledger_path=ledger_path,
+            root_seed=root_seed,
+            commitment=commitment,
+            preflight=preflight,
+            max_workers=args.max_workers,
+        )
     except BaseException as exc:
-        _record_infrastructure_failure(output, commitment, 0, exc)
+        receipt_hash = _record_infrastructure_failure(output, commitment, 0, exc)
         _seal_consumption_ledger(
             ledger_path,
             status="infrastructure_failure",
             seed_commitment=commitment,
+            receipt_content_hash=receipt_hash,
         )
         raise
-    pre_run = {
-        "schema": R7_HIDDEN_V4_OBSERVATION_VERSION,
-        "started_at_utc": started_at,
-        "head": preflight["head"],
-        "tree": preflight["tree"],
-        "working_tree_clean": True,
-        "seed_commitment": commitment,
-        "root_seed_disclosed_before_commitment": False,
-        "commitment_written_before_seed_derivation": True,
-        "case_count": len(specs),
-        "case_catalog_hash": canonical_content_hash(
-            tuple(item.content_hash for item in specs)
-        ),
-        "normal_case_count": sum(item.profile_name == "normal" for item in specs),
-        "stress_case_count": sum(item.profile_name == "stress" for item in specs),
-        "max_workers": args.max_workers,
-        "python_wall_clock_is_qualification": False,
-        "release_evidence": preflight["release_evidence"],
-        "packaging_source_freeze": preflight["packaging_source_freeze"],
-        "hidden_seed_generated": True,
-        "hidden_executed": True,
-        "product_or_human_safety_claim": False,
-    }
-    _write_json(output / "pre-run-manifest.json", pre_run)
     partial = []
 
     def on_case(result) -> None:
@@ -228,19 +186,68 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         postflight = _verify_execution_freeze(repository_root, preflight)
     except BaseException as exc:
-        _record_infrastructure_failure(output, commitment, len(partial), exc)
+        receipt_hash = _record_infrastructure_failure(
+            output,
+            commitment,
+            len(partial),
+            exc,
+        )
         _seal_consumption_ledger(
             ledger_path,
             status="infrastructure_failure",
             seed_commitment=commitment,
+            receipt_content_hash=receipt_hash,
         )
         raise
 
-    audit = audit_hidden_v4_results(specs, results)
+    try:
+        return _finalize_hidden_v4(
+            output=output,
+            specs=specs,
+            results=results,
+            postflight=postflight,
+            commitment=commitment,
+            preflight=preflight,
+            expected_sha=expected_sha,
+            pre_run=pre_run,
+            preflight_receipt=preflight_receipt,
+            ledger_path=ledger_path,
+        )
+    except BaseException as exc:
+        receipt_hash = _record_infrastructure_failure(
+            output,
+            commitment,
+            len(partial),
+            exc,
+        )
+        _seal_consumption_ledger(
+            ledger_path,
+            status="infrastructure_failure",
+            seed_commitment=commitment,
+            receipt_content_hash=receipt_hash,
+        )
+        raise
+
+
+def _finalize_hidden_v4(
+    *,
+    output: Path,
+    specs: Sequence[object],
+    results: Sequence[object],
+    postflight: dict[str, object],
+    commitment: str,
+    preflight: dict[str, object],
+    expected_sha: str,
+    pre_run: dict[str, object],
+    preflight_receipt: dict[str, object],
+    ledger_path: Path,
+) -> int:
+    audit = audit_hidden_v4_results(tuple(specs), tuple(results))
     failure_trace_manifest = _failure_trace_manifest(
         output / "failure-traces",
-        expected_failure_count=sum(not item.passed for item in results),
+        results=results,
     )
+    case_trace_set_hash = _case_trace_set_hash(results)
     _write_json(output / "case-results.json", results)
     _write_json(output / "failure-trace-manifest.json", failure_trace_manifest)
     summary = {
@@ -270,6 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "product_or_human_safety_claim": False,
         "postflight": postflight,
         "failure_trace_manifest_hash": failure_trace_manifest["content_hash"],
+        "case_trace_set_hash": case_trace_set_hash,
     }
     _write_json(output / "summary.json", summary)
     (output / "summary.md").write_text(
@@ -299,6 +307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "actual_forbidden_violation_count": audit.actual_forbidden_violation_count,
         "actual_clearance_violation_count": audit.actual_clearance_violation_count,
         "failure_trace_manifest_hash": failure_trace_manifest["content_hash"],
+        "case_trace_set_hash": case_trace_set_hash,
         "release_receipt_content_hash": preflight["release_evidence"][
             "receipt_content_hash"
         ],
@@ -326,6 +335,71 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0 if audit.passed else 1
 
 
+def _prepare_committed_hidden_v4(
+    *,
+    output: Path,
+    ledger_path: Path,
+    root_seed: int,
+    commitment: str,
+    preflight: dict[str, object],
+    max_workers: int,
+) -> tuple[str, tuple[object, ...], dict[str, object]]:
+    started_at = datetime.now(UTC).isoformat()
+    _write_json(
+        output / "seed-commitment.json",
+        {
+            "schema": _SEED_COMMITMENT_SCHEMA,
+            "seed_commitment": commitment,
+            "root_seed_disclosed_before_commitment": False,
+            "commitment_written_before_seed_derivation": True,
+            "created_at_utc": started_at,
+        },
+    )
+    _write_json(
+        output / "consumed-seed.json",
+        {
+            "schema": _CONSUMED_SEED_SCHEMA,
+            "root_seed": root_seed,
+            "seed_commitment": commitment,
+            "consumed_at_utc": started_at,
+            "reuse_as_final_hidden_after_code_change": False,
+        },
+    )
+    _seal_consumption_ledger(
+        ledger_path,
+        status="seed_consumed",
+        seed_commitment=commitment,
+    )
+    specs = build_hidden_v4_case_specs(root_seed)
+    if any(spec.observation_seed in _KNOWN_PUBLIC_OBSERVATION_SEEDS for spec in specs):
+        raise RuntimeError("generated observation seed was already public or consumed")
+    pre_run = {
+        "schema": R7_HIDDEN_V4_OBSERVATION_VERSION,
+        "started_at_utc": started_at,
+        "head": preflight["head"],
+        "tree": preflight["tree"],
+        "working_tree_clean": True,
+        "seed_commitment": commitment,
+        "root_seed_disclosed_before_commitment": False,
+        "commitment_written_before_seed_derivation": True,
+        "case_count": len(specs),
+        "case_catalog_hash": canonical_content_hash(
+            tuple(item.content_hash for item in specs)
+        ),
+        "normal_case_count": sum(item.profile_name == "normal" for item in specs),
+        "stress_case_count": sum(item.profile_name == "stress" for item in specs),
+        "max_workers": max_workers,
+        "python_wall_clock_is_qualification": False,
+        "release_evidence": preflight["release_evidence"],
+        "packaging_source_freeze": preflight["packaging_source_freeze"],
+        "hidden_seed_generated": True,
+        "hidden_executed": True,
+        "product_or_human_safety_claim": False,
+    }
+    _write_json(output / "pre-run-manifest.json", pre_run)
+    return started_at, specs, pre_run
+
+
 def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -333,32 +407,61 @@ def _repository_root() -> Path:
 def _failure_trace_manifest(
     root: Path,
     *,
-    expected_failure_count: int,
+    results: Sequence[object],
 ) -> dict[str, object]:
     paths = tuple(sorted(root.rglob("tick-trace.jsonl"))) if root.exists() else ()
-    if len(paths) != expected_failure_count:
-        raise RuntimeError("hidden-v4 failure trace count does not match failed cases")
+    if len(paths) != len(results):
+        raise RuntimeError("hidden-v4 case trace count does not match case results")
+    results_by_id = {str(item.case_id): item for item in results}
+    if len(results_by_id) != len(results):
+        raise RuntimeError("hidden-v4 case results contain duplicate case IDs")
     records = []
     for path in paths:
+        case_id = path.parent.name
+        result = results_by_id.get(case_id)
+        if result is None:
+            raise RuntimeError(f"hidden-v4 case trace has no result: {case_id}")
         lines = path.read_text(encoding="utf-8").splitlines()
         if not lines:
             raise RuntimeError(f"hidden-v4 failure trace is empty: {path}")
         last_record = json.loads(lines[-1])
-        records.append(
-            {
-                "relative_path": path.relative_to(root.parent).as_posix(),
-                "size_bytes": path.stat().st_size,
-                "sha256": _sha256(path),
-                "record_count": len(lines),
-                "last_record_hash": last_record["record_content_hash"],
-            }
-        )
+        record = {
+            "case_id": case_id,
+            "relative_path": path.relative_to(root.parent).as_posix(),
+            "size_bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+            "record_count": len(lines),
+            "last_record_hash": last_record["record_content_hash"],
+            "trace_content_hash": result.trace_content_hash,
+        }
+        if (
+            record["sha256"] != result.trace_file_sha256
+            or record["record_count"] != result.trace_record_count
+            or record["last_record_hash"] != result.trace_last_record_hash
+        ):
+            raise RuntimeError(f"hidden-v4 case trace binding mismatch: {case_id}")
+        records.append(record)
     payload = {
-        "schema": "r7-hidden-v4-failure-trace-manifest-v1",
-        "failed_case_count": expected_failure_count,
+        "schema": "r7-hidden-v4-case-trace-manifest-v1",
+        "case_count": len(results),
         "records": records,
     }
     return {**payload, "content_hash": canonical_content_hash(payload)}
+
+
+def _case_trace_set_hash(results: Sequence[object]) -> str:
+    return canonical_content_hash(
+        tuple(
+            (
+                item.case_id,
+                item.trace_content_hash,
+                item.trace_file_sha256,
+                item.trace_record_count,
+                item.trace_last_record_hash,
+            )
+            for item in results
+        )
+    )
 
 
 def _build_preflight_receipt(
@@ -439,21 +542,96 @@ def _record_infrastructure_failure(
     seed_commitment: str | None,
     completed_case_count: int,
     error: BaseException,
-) -> None:
-    _write_json(
-        output / "infrastructure-failure.json",
-        {
-            "schema": "r7-hidden-v4-infrastructure-failure-v1",
-            "final_status": "BLOCKED_INFRASTRUCTURE",
-            "completed": False,
-            "algorithm_verdict": None,
-            "seed_commitment": seed_commitment,
-            "completed_case_count": completed_case_count,
-            "error_type": type(error).__name__,
-            "error_message": str(error),
-            "partial_is_final_evidence": False,
-        },
-    )
+) -> str:
+    trace_manifest = _partial_trace_manifest(output / "failure-traces")
+    failure_payload = {
+        "schema": "r7-hidden-v4-infrastructure-failure-v1",
+        "final_status": "BLOCKED_INFRASTRUCTURE",
+        "completed": False,
+        "algorithm_verdict": None,
+        "seed_commitment": seed_commitment,
+        "completed_case_count": completed_case_count,
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "partial_is_final_evidence": False,
+        "partial_trace_manifest_hash": trace_manifest["content_hash"],
+    }
+    failure = {
+        **failure_payload,
+        "content_hash": canonical_content_hash(failure_payload),
+    }
+    _write_json(output / "infrastructure-failure.json", failure)
+    _write_json(output / "partial-trace-manifest.json", trace_manifest)
+    summary_payload = {
+        "schema": _SUMMARY_SCHEMA,
+        "final_status": "BLOCKED_INFRASTRUCTURE",
+        "completed": False,
+        "passed": False,
+        "algorithm_verdict": None,
+        "seed_commitment": seed_commitment,
+        "completed_case_count": completed_case_count,
+        "infrastructure_failure_hash": failure["content_hash"],
+        "partial_trace_manifest_hash": trace_manifest["content_hash"],
+        "partial_is_final_evidence": False,
+    }
+    summary = {
+        **summary_payload,
+        "content_hash": canonical_content_hash(summary_payload),
+    }
+    _write_json(output / "summary.json", summary)
+    receipt_payload = {
+        "schema": _RECEIPT_SCHEMA,
+        "final_status": "BLOCKED_INFRASTRUCTURE",
+        "completed": False,
+        "passed": False,
+        "algorithm_verdict": None,
+        "seed_commitment": seed_commitment,
+        "completed_case_count": completed_case_count,
+        "infrastructure_failure_hash": failure["content_hash"],
+        "summary_content_hash": summary["content_hash"],
+        "partial_trace_manifest_hash": trace_manifest["content_hash"],
+        "reuse_as_final_hidden_after_code_change": False,
+    }
+    receipt = {
+        **receipt_payload,
+        "receipt_content_hash": canonical_content_hash(receipt_payload),
+    }
+    _write_json(output / "hidden-v4-consumption-receipt.json", receipt)
+    return receipt["receipt_content_hash"]
+
+
+def _partial_trace_manifest(root: Path) -> dict[str, object]:
+    records = []
+    paths = tuple(sorted(root.rglob("*.jsonl"))) if root.exists() else ()
+    for path in paths:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        last_record_hash = None
+        integrity_readable = False
+        if lines:
+            try:
+                last_record = json.loads(lines[-1])
+                candidate = last_record.get("record_content_hash")
+                if isinstance(candidate, str):
+                    last_record_hash = candidate
+                    integrity_readable = True
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        records.append(
+            {
+                "relative_path": path.relative_to(root.parent).as_posix(),
+                "size_bytes": path.stat().st_size,
+                "sha256": _sha256(path),
+                "record_count": len(lines),
+                "last_record_hash": last_record_hash,
+                "integrity_readable": integrity_readable,
+            }
+        )
+    payload = {
+        "schema": "r7-hidden-v4-partial-trace-manifest-v1",
+        "trace_file_count": len(records),
+        "records": records,
+    }
+    return {**payload, "content_hash": canonical_content_hash(payload)}
 
 
 def _preflight(

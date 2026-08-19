@@ -24,7 +24,10 @@ R7 통과는 새 hidden을 자동 실행하는 허가가 아니다. 통과하면
 - native DLL SHA-256: `dfa167abd8294f6a4ad0e74ce7208cc046a786db39596f55d6461a040cba6bbe`
 
 R7 실행기는 R6 receipt의 자체 hash, 사례 수, hard failure, hidden 미실행, 기준 commit의 조상
-관계를 확인한다. R6 output을 찾지 못하거나 변조됐으면 시간 측정을 시작하지 않는다.
+관계를 확인한다. 기본 입력은 Git에 추적된
+`simulation/path_planning_lab/evidence/r6-public-end-to-end-qualification-receipt-20260817-64df95f.json`
+이고, `--r6-receipt`로 다른 불변 receipt를 명시할 수 있다. receipt를 찾지 못하거나
+변조됐으면 시간 측정을 시작하지 않는다.
 
 ## 3. 고정 측정 입력
 

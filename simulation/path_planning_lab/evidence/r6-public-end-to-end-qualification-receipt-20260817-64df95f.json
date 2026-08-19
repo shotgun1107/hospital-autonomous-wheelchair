@@ -1,0 +1,14 @@
+{
+  "case_catalog_hash": "c284005f40683904f2cedecfddd5b9d74edabe5116ae0025e8cfa9264201fd5a",
+  "hard_failure_count": 0,
+  "head": "64df95f91e1c514e9407b1eac772afaf697359d6",
+  "hidden_executed": false,
+  "native_dwb_full_core_sha256": "dfa167abd8294f6a4ad0e74ce7208cc046a786db39596f55d6461a040cba6bbe",
+  "receipt_content_hash": "2d37f43b720ae1b6ed9050c4968c9a06e0123b8cfe0600ed88302c0f0452cbda",
+  "required_case_count": 17,
+  "result_set_hash": "e1c086fc836c44d7b793aaccae1a834cff4bdb8b386f39a4f13af2b133168151",
+  "schema": "r6-public-end-to-end-receipt-v1",
+  "source_freeze_hash": "fcbc6ce253c4c15b7a071ad9b651b9148b4074ca97992b0faef514ed49bc169d",
+  "tree": "759cec40c5bc9cd406aaba5987efb6c7eaafc526",
+  "wall_clock_is_qualification": false
+}

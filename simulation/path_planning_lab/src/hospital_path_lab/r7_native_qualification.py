@@ -53,12 +53,17 @@ R6_EXPECTED_RESULT_HASH = (
 R6_EXPECTED_RECEIPT_HASH = (
     "2d37f43b720ae1b6ed9050c4968c9a06e0123b8cfe0600ed88302c0f0452cbda"
 )
+R6_TRACKED_RECEIPT_RELATIVE_PATH = Path(
+    "simulation/path_planning_lab/evidence/"
+    "r6-public-end-to-end-qualification-receipt-20260817-64df95f.json"
+)
 
 _EXPLICIT_SOURCE_PATHS = (
     "docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md",
     "docs/research/dynamic-actor-experiment/40-r7-stress-conditional-release-policy-2026-08-19.md",
     "docs/research/dynamic-actor-experiment/41-r7-hidden-v4-conditional-evaluator-2026-08-19.md",
     "simulation/path_planning_lab/pyproject.toml",
+    R6_TRACKED_RECEIPT_RELATIVE_PATH.as_posix(),
     "simulation/path_planning_lab/native/dwb_full_core.cpp",
     "simulation/path_planning_lab/native/dwb_full_core.h",
     "simulation/path_planning_lab/native/dwb_safety_core.cpp",

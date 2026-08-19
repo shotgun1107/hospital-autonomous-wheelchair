@@ -116,6 +116,22 @@ def test_r7_r6_receipt_validation_rejects_tamper(
     assert r7.validate_r6_receipt(repository_root, path)["passed"] is False
 
 
+def test_r7_tracked_r6_receipt_is_available_in_a_clean_checkout() -> None:
+    repository_root = Path(__file__).resolve().parents[3]
+    receipt_path = repository_root / r7.R6_TRACKED_RECEIPT_RELATIVE_PATH
+
+    assert receipt_path.is_file()
+    assert subprocess.run(
+        ["git", "check-ignore", str(receipt_path.relative_to(repository_root))],
+        cwd=repository_root,
+        capture_output=True,
+        check=False,
+    ).returncode == 1
+    result = r7.validate_r6_receipt(repository_root, receipt_path)
+    assert result["passed"] is True
+    assert result["receipt_content_hash"] == r7.R6_EXPECTED_RECEIPT_HASH
+
+
 def test_r7_source_freeze_and_machine_metadata_are_explicit() -> None:
     repository_root = Path(__file__).resolve().parents[3]
 

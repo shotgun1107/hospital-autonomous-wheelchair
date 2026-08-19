@@ -76,7 +76,17 @@ def _write_evidence_zip(output_dir: Path, destination: Path) -> dict[str, object
 def _main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--r6-output", type=Path)
+    r6_source = parser.add_mutually_exclusive_group()
+    r6_source.add_argument(
+        "--r6-receipt",
+        type=Path,
+        help="Use an explicit immutable R6 qualification receipt.",
+    )
+    r6_source.add_argument(
+        "--r6-output",
+        type=Path,
+        help="Legacy compatibility: read qualification-receipt.json from this output.",
+    )
     parser.add_argument("--warmups", type=int, default=30)
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument("--skip-rebuild", action="store_true")
@@ -90,12 +100,6 @@ def _main() -> int:
     repository_root = Path(__file__).resolve().parents[3]
     lab_root = repository_root / "simulation/path_planning_lab"
     output_dir = args.output_dir.resolve()
-    r6_output = (
-        args.r6_output.resolve()
-        if args.r6_output is not None
-        else repository_root
-        / "simulation/path_planning_lab/outputs/r6-public-end-to-end-20260817-64df95f"
-    )
     if output_dir.exists() and any(output_dir.iterdir()):
         raise RuntimeError("R7 output directory must be new or empty")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +139,7 @@ def _main() -> int:
     sys.path.insert(0, str(lab_root / "src"))
     from hospital_path_lab.map_factory import canonical_content_hash
     from hospital_path_lab.r7_native_qualification import (
+        R6_TRACKED_RECEIPT_RELATIVE_PATH,
         R7_GATE_SCHEMA,
         R7_RECEIPT_SCHEMA,
         R7_STANDARD_REPEATS,
@@ -150,11 +155,21 @@ def _main() -> int:
         validate_r6_receipt,
     )
 
+    r6_receipt_path = (
+        args.r6_receipt.resolve()
+        if args.r6_receipt is not None
+        else (
+            args.r6_output.resolve() / "qualification-receipt.json"
+            if args.r6_output is not None
+            else repository_root / R6_TRACKED_RECEIPT_RELATIVE_PATH
+        )
+    )
+
     git_before = git_metadata(repository_root)
     source_before = source_freeze(repository_root)
     r6_receipt = validate_r6_receipt(
         repository_root,
-        r6_output / "qualification-receipt.json",
+        r6_receipt_path,
     )
     cases = r7_snapshot_cases()
     case_catalog = [metadata for _, _, metadata in cases]

@@ -85,7 +85,9 @@ class R7HiddenV4CaseResult:
     gate_override_count: int
     hard_failures: tuple[str, ...]
     trace_content_hash: str
+    trace_file_sha256: str | None
     trace_record_count: int
+    trace_last_record_hash: str | None
     minimum_release_confirmed_safe_frames: int | None
     release_contract_violation_count: int
     duplicate_safe_frame_violation_count: int
@@ -228,17 +230,26 @@ def run_hidden_v4_case(
         if spec.profile_name == "normal"
         else _stress_result_is_conditionally_safe(result)
     )
+    trace_file_sha256 = None
+    trace_last_record_hash = None
+    if failure_trace_root is not None:
+        trace_path = failure_trace_root / spec.case_id / "tick-trace.jsonl"
+        failure_trace.write_jsonl(trace_path)
+        trace_file_sha256 = sha256(trace_path.read_bytes()).hexdigest()
+        trace_last_record_hash = (
+            failure_trace.records[-1]["record_content_hash"]
+            if failure_trace.records
+            else None
+        )
     case_result = _case_result(
         spec,
         result,
         passed=passed,
         elapsed_s=perf_counter() - started,
         contract_proof=contract_proof,
+        trace_file_sha256=trace_file_sha256,
+        trace_last_record_hash=trace_last_record_hash,
     )
-    if not passed and failure_trace is not None:
-        failure_trace.write_jsonl(
-            failure_trace_root / spec.case_id / "tick-trace.jsonl"
-        )
     return case_result
 
 
@@ -357,6 +368,8 @@ def _case_result(
     passed: bool,
     elapsed_s: float,
     contract_proof: dict[str, int | None],
+    trace_file_sha256: str | None,
+    trace_last_record_hash: str | None,
 ) -> R7HiddenV4CaseResult:
     return R7HiddenV4CaseResult(
         ordinal=spec.ordinal,
@@ -386,7 +399,9 @@ def _case_result(
         gate_override_count=result.gate_override_count,
         hard_failures=result.hard_failures,
         trace_content_hash=result.trace_content_hash,
+        trace_file_sha256=trace_file_sha256,
         trace_record_count=int(contract_proof["trace_record_count"] or 0),
+        trace_last_record_hash=trace_last_record_hash,
         minimum_release_confirmed_safe_frames=contract_proof[
             "minimum_release_confirmed_safe_frames"
         ],
