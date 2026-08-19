@@ -271,6 +271,7 @@ flowchart TD
 | [R7 Stress 조건부 재출발 정책](40-r7-stress-conditional-release-policy-2026-08-19.md) | gate-confirmed distinct safe frame 11개 뒤 조건부 출발과 누락 시 재정지 정책 |
 | [R7 hidden-v4 조건부 evaluator](41-r7-hidden-v4-conditional-evaluator-2026-08-19.md) | 새 commitment namespace, 조건부 Stress 판정과 실제 hidden 전 차단 조건 |
 | [R7 hidden-v5 교정 자격](43-r7-hidden-v5-corrective-qualification-2026-08-19.md) | 역사 v4 보존, one-shot 권한 trace 교정, 원격 1회 실행 reservation과 재검증 게이트 |
+| [R7 hidden-v5 최종 결과](44-r7-hidden-v5-final-result-2026-08-20.md) | 새 v5 1회 실행 `PASS_FINAL`, native 재자격과 20개 trace·receipt·evidence ZIP |
 | `dynamic_prediction.py` | 관측 age와 가속 편차를 포함한 Actor tube |
 | `dynamic_safety.py` | swept clearance, 제한 감속, hold, `stop_epoch`, resume gate |
 | 기존 `followers/pure_pursuit.py` | 동결 PP 규칙에 맞춘 adapter/명령 생성 |
