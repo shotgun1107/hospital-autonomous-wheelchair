@@ -1,7 +1,8 @@
 # R7 hidden-v4 조건부 Stress evaluator
 
-- 상태: evaluator·공개시험 구현, 실제 hidden 미실행
+- 상태: evaluator·공개시험 구현 뒤 actual hidden-v4 1회 소비, `FAIL_ANALYZED`
 - 기준 정책: [40-r7-stress-conditional-release-policy-2026-08-19.md](./40-r7-stress-conditional-release-policy-2026-08-19.md)
+- 실행 결과: [42-r7-hidden-v4-fail-analyzed-result-2026-08-19.md](./42-r7-hidden-v4-fail-analyzed-result-2026-08-19.md)
 - 적용 범위: offline·simulation 관측 순서 평가
 - 비적용 범위: 실제 카메라·사람 안전, 제품 알고리즘 채택
 

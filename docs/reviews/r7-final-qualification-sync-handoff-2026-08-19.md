@@ -1,224 +1,122 @@
 # R7 최종 자격 작업 동기화 인수인계
 
-> 작성일: 2026-08-19 (Asia/Seoul)
-> 저장소: `https://github.com/shotgun1107/hospital-autonomous-wheelchair.git`
+> 갱신일: 2026-08-19 (Asia/Seoul)
 > 작업 브랜치: `codex/r7-final-qualification-20260819`
-> 기준 commit: `54b4f04f06a22f6eebc05228a4f80abdfdd42615`
-> 동기화 WIP checkpoint: `e6723e614d565594e10664af031ec8d958fa1c2f`
-> 이전 보존 checkpoint: `ee08150` (`wip: preserve r7 final logic and packaging`)
+> hidden 실행 commit: `1eb5011e84caffa346abd40aeda711fadfe169f7`
+> hidden 실행 tree: `d6edeed84652f53aabe1432bd7683ff5bb0c8e31`
 
-이 문서는 회사 PC의 미완료 R7 최종 자격 작업을 다른 로컬 PC에서 그대로 이어가기 위한
-인수인계다. 이 문서는 `PASS_FINAL` 결과가 아니며, 새 hidden을 실행하거나 새 seed를 만든
-기록도 아니다.
+## 1. 현재 결론
 
-## 1. 지금까지 확인된 사실
+- R7 포장 차단점 3개를 고쳤고 `41 passed`를 확인했다.
+- R7 공개 회귀 `65 passed`, 전체 회귀 `1,035 passed`다.
+- native parity `5 case`, 계약시험 `13`, 직렬 `500회`의 50ms 초과 `0`으로 통과했다.
+- hidden-v4 20개를 정확히 한 번 실행했다.
+- Normal 10개는 모두 완료했고 Stress는 8개 무출발 정지, 2개 출발 뒤 안전 재정지다.
+- 실제 충돌·금지구역·`0.08m` 거리 위반·stale 추진·hard failure는 0이다.
+- 공식 결과는 `PASS_FINAL`이 아니라 `FAIL_ANALYZED`다.
 
-이미 보존된 경로·안전 로직은 다시 설계하지 않는다.
+실패 원인은 재출발 승인 객체를 pipeline이 사용하고 지운 다음 trace를 만들지만 evaluator가
+지워진 사후 `resume_authorization_revision`을 요구한 것이다. release 39건의 다른 조건은 모두
+통과했고 이 필드만 39/39 누락됐다. 같은 누락을 release 계약 위반과 unauthorized restart로
+각각 세어 두 수치가 모두 39가 됐다.
 
-- forbidden 구역을 포함한 실제 clearance가 `0.08m` 미만이면 거부하고, 정확히 `0.08m`는
-  허용하는 P0 수정이 있다.
-- 목표 앞 `0.05m` 초과·`0.10m` 이하에서만 허용되는 terminal forward tie P1 수정이 있다.
-- Stress라는 이름만으로 출발을 막지 않는다. fresh safe frame 11개를 gate가 확인한 뒤에만
-  조건부 출발하고, dropout/stale 뒤에는 감속·실제 정지·새 epoch·새 허가가 필요하다.
-- historical hidden-v1/v2/v3와 그 FAIL 기록은 보존한다. 이미 알려진 공개 seed는 새 hidden에
-  재사용하지 않는다.
+상세 근거는
+[42-r7-hidden-v4-fail-analyzed-result-2026-08-19.md](../research/dynamic-actor-experiment/42-r7-hidden-v4-fail-analyzed-result-2026-08-19.md)를
+정본으로 사용한다.
 
-이번 WIP는 위 경로 로직을 바꾸지 않았다. 남은 것은 clean checkout에서 재현 가능한
-qualification/hidden 포장·검증 연결이다.
+## 2. 이번 작업에서 완료한 변경
 
-## 2. 이번 동기화에 포함한 WIP
+commit `1eb5011e84caffa346abd40aeda711fadfe169f7`:
 
-### 새로 보강한 부분
+- R6 receipt를 tracked immutable evidence로 연결
+- 과거 hidden evidence를 과거 source에서만 검증하고 현재 source에서는 mismatch 거부
+- 20개 모든 case의 JSONL trace와 SHA·record count·마지막 record hash 결박
+- commitment 이후 준비·실행·포장 오류의 `BLOCKED_INFRASTRUCTURE` receipt/ledger 결박
 
-- native qualification source freeze를 현재 Python 실행 경로와 R7 실행 스크립트까지 넓혔다.
-- native release evidence ZIP에 contract parity 증거와 deterministic ZIP 생성 규칙을 추가했다.
-- 새 hidden-v4 runner가 release evidence의 HEAD/tree, source hash, native DLL hash, timing
-  `500회·0 miss`를 확인하도록 보강했다.
-- hidden 실행 전 preflight receipt, one-use 소비 ledger, 새 seed commitment 순서를 추가했다.
-- hidden 첫 실행부터 case별 JSONL trace를 남기고, release 11-frame·중복 frame·stale propulsion·
-  unauthorized restart·collision·forbidden·clearance 위반 수를 결과/receipt에 묶기 시작했다.
-- Python/native forbidden 경계 시험에 `0.10m` 안전 사례를 추가했다.
-- 새 packaging 단위시험을 추가했다.
+숨은 실행 뒤에는 코드를 수정하거나 시험을 다시 실행하지 않았다. 결과 분석과 문서·증거 포장만
+수행했다.
 
-### 이번 동기화 전 직접 확인한 검증
+## 3. 보존 증거
 
 ```text
-Ruff                                               PASS
-compileall                                         PASS
-git diff --check                                   PASS
-R7 native qualification + hidden-v4 + packaging
-  + C++ safety 직접 영향권                         35 passed, 21.05s
+simulation/path_planning_lab/outputs/r7-hidden-v4-fail-analyzed-evidence-20260819-1eb5011.zip
+size: 9,835,156 bytes
+SHA-256: 0df82eb0f5eb184c1f2e65190361d917a4b8ba9c2fb04ed675a4be15eab538c5
+entries: 318
 ```
 
-첫 pytest 호출은 Windows 공용 임시폴더 권한 때문에 7개 setup error가 났다. 같은 시험을
-`simulation/path_planning_lab/outputs/test-runs/` 아래의 프로젝트 전용 `--basetemp`로
-다시 실행해 `35 passed`를 확인했다. 이는 코드 실패가 아니라 PC 임시폴더 권한 문제다.
+포함 범위는 hidden 20개 전체 trace·case 결과·summary·receipt, one-use ledger, native release
+evidence, 전체 회귀 shard 로그다. ZIP 내부 manifest 317개는 payload와 exact-set·SHA-256가
+일치한다.
 
-## 3. 아직 하지 않은 것
+주요 hash:
 
-다음은 **미실행**이며 PASS라고 부르면 안 된다.
+```text
+seed commitment: 24c8345635d953356e5b3a980f1803200aa9d87471f7419285e47afcf551e2cc
+result set:      381fe8f2ccdb6b63b139864ecc4110c26df697cc627501c9895bc47f5d83ae19
+case trace set:  49e61b598e556570580317226e0aef73f10e44167773e55967353e25290bd23c
+trace manifest:  8a85d91f86a6dd03d96d4c3f09b2bfc89152207a3f0dd2bb902a84548d027302
+receipt:         5596c93d3a279f2a5ef4b5832e99276c818890a07eedade11b8aa6d8acbca348
+```
 
-- R7 관련 기존 public regression 전체
-- clean 환경 전체 pytest 1회
-- clean native build
-- Python↔native parity와 계약 parity의 최종 증거 생성
-- 직렬 `5 case × 100 = 500` timing qualification
-- 새 release evidence ZIP 생성
-- 새 hidden-v4 preflight-only
-- 새 root seed commitment와 hidden-v4 실제 1회 실행
-- `PASS_FINAL` 또는 `FAIL_ANALYZED` 결과 문서
+## 4. 다음 작업의 정확한 시작점
 
-## 4. 이번 PC에서 해결한 포장 차단점
+1. `test_r7_hidden_v4_qualification.py`에 실제 one-shot authorization 소비 순서를 재현하는 공개
+   회귀를 추가한다.
+2. `r5c_observation_diagnostic.py`에서 authorization revision·hash·epoch를 소비 전에 별도 trace
+   evidence로 저장한다.
+3. `r7_hidden_v4_qualification.py`가 사후 runtime 객체 대신 그 불변 evidence를 검증하게 한다.
+4. 무단 runtime 생성, stale authorization과 epoch mismatch mutation은 계속 거부한다.
+5. 수정 뒤 공개시험 → 전체 회귀 → native parity·500회 자격 순서로 다시 검증한다.
 
-1. R6 선행 receipt를
-   `simulation/path_planning_lab/evidence/r6-public-end-to-end-qualification-receipt-20260817-64df95f.json`
-   으로 추적하고, native runner의 기본 입력으로 연결했다. 필요하면 `--r6-receipt`로 다른
-   불변 receipt를 명시할 수 있고, 기존 `--r6-output`도 호환용으로 남겼다.
-2. historical hidden-v4 evidence는 기준 commit의 frozen source에서는 유효하지만 현재 HEAD의
-   변경된 source에서는 mismatch로 거부되는 시험으로 분리했다.
-3. hidden-v4는 모든 case의 JSONL trace를 쓰고 SHA-256·record count·마지막 record hash를
-   case result, summary, receipt에 연결한다. stale result binding은 거부한다.
-4. commitment 뒤 준비·실행·최종 포장 어느 위치에서 기반시설 오류가 나도
-   `BLOCKED_INFRASTRUCTURE` summary·receipt와 소비 ledger 결박을 남긴다.
-5. 관련 시험 `41 passed`, Ruff·compileall·`git diff --check`를 통과했고 읽기 전용 범위
-   감사에서 안전 수치·경로 로직 변경과 새 P0/P1은 발견하지 못했다.
-
-다음 순서는 현재 변경을 commit해 clean source를 만든 뒤 공개 관련 시험 → 전체 회귀 1회 →
-native qualification → preflight-only다. 이 네 조건이 모두 통과한 뒤에만 hidden-v4 1회를
-실행한다.
-
-hidden 실패 뒤에는 코드를 바로 고치지 않는다. 이미 만든 trace로 먼저 root-cause report를
-작성하고 `FAIL_ANALYZED`로 끝낸다.
+새 hidden namespace/seed 설계와 실행은 위 공개 수정이 끝나도 자동으로 시작하지 않는다. 별도
+사용자 승인이 필요하다.
 
 ## 5. 금지선
 
-- `0.08m`, goal `0.05m`, distinct safe frame `11`, stale/dropout, stop epoch, session,
-  authorization 조건을 완화하지 않는다.
-- hidden-v1/v2/v3, historical FAIL, 기존 evidence를 삭제하거나 PASS로 바꾸지 않는다.
-- 새 hidden을 두 번 실행하거나 seed를 다시 뽑지 않는다.
-- main에 직접 병합하거나 force push, reset --hard, clean, rebase, 무단 stash를 하지 않는다.
-- 사용자 제공 ZIP은 stage/commit/delete하지 않는다.
+- 소비된 hidden-v4 seed 재실행 금지
+- hidden 결과를 사후 `PASS_FINAL`로 변경 금지
+- `0.08m`, goal `0.05m`, distinct safe frame `11`, stale/dropout, stop epoch/session 기준 완화 금지
+- 과거 hidden-v1/v2/v3/v4 FAIL과 evidence 삭제·덮어쓰기 금지
+- 제품 알고리즘, `G1~G5`, 제품 경로분석 7단계 자동 시작 금지
+- 실제 카메라·사람·환자·제품 안전 주장 금지
 
-## 6. 주요 경로
+## 6. 환경·동기화
 
-```text
-simulation/path_planning_lab/scripts/run_r7_native_release_gate.py
-simulation/path_planning_lab/scripts/run_r7_hidden_v4.py
-simulation/path_planning_lab/src/hospital_path_lab/r7_native_qualification.py
-simulation/path_planning_lab/src/hospital_path_lab/r7_hidden_v4_qualification.py
-simulation/path_planning_lab/tests/test_r7_native_qualification.py
-simulation/path_planning_lab/tests/test_r7_hidden_v4_qualification.py
-simulation/path_planning_lab/tests/test_r7_final_packaging.py
-simulation/path_planning_lab/tests/test_r7_hidden_runner.py
-docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md
-docs/research/dynamic-actor-experiment/29-r7-failure-trace-and-public-regression-spec.md
-docs/research/dynamic-actor-experiment/40-r7-stress-conditional-release-policy-2026-08-19.md
-docs/research/dynamic-actor-experiment/41-r7-hidden-v4-conditional-evaluator-2026-08-19.md
-```
+Python 정본은 `simulation/path_planning_lab/pyproject.toml`이다. `.venv`, DLL, pytest temp는
+Git에 넣지 않는다. Windows 공용 temp가 막히면 프로젝트의 ignored `outputs/test-runs` 아래에
+고유 `--basetemp`를 사용한다.
 
-## 7. 환경 복원
-
-확인한 Python은 `3.12`다. 다른 PC에서 먼저:
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".\simulation\path_planning_lab[dev]"
-```
-
-native build가 필요할 때만:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install ziglang
-.\.venv\Scripts\python.exe .\simulation\path_planning_lab\scripts\build_cpp_dwb_safety_core.py
-.\.venv\Scripts\python.exe .\simulation\path_planning_lab\scripts\build_cpp_dwb_full_core.py
-```
-
-Windows 공용 temp 접근이 막히면 pytest에 프로젝트 내부 basetemp를 준다.
-
-```powershell
-$testRun = ".\simulation\path_planning_lab\outputs\test-runs\handoff-$([guid]::NewGuid())"
-.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider `
-  --basetemp=$testRun `
-  -c .\simulation\path_planning_lab\pyproject.toml `
-  .\simulation\path_planning_lab\tests\test_r7_native_qualification.py `
-  .\simulation\path_planning_lab\tests\test_r7_hidden_v4_qualification.py `
-  .\simulation\path_planning_lab\tests\test_r7_final_packaging.py
-```
-
-Docker, VM, DB, 외부 서비스, 비밀 환경변수는 이 R7 연구 실험에 없다. `.venv`, native DLL,
-pytest temp/output은 PC별 산출물이라 Git에 넣지 않는다.
-
-## 8. 동기화 방법
-
-집 PC에 먼저 미보존 변경이 있으면 민감 파일을 제외한 안전한 파일만 local backup branch에
-commit하고 원격에는 push하지 않는다. 그 뒤 작업 브랜치를 fast-forward한다.
+다른 PC에서는 기존 변경을 삭제하지 말고 다음만 확인한다.
 
 ```powershell
 git status -sb
-git status --short
-git remote -v
-git branch -vv
-git stash list
-git log --oneline --branches --not --remotes
-
 git fetch origin --prune
 git switch codex/r7-final-qualification-20260819
 git pull --ff-only origin codex/r7-final-qualification-20260819
 git rev-parse HEAD
 git rev-parse origin/codex/r7-final-qualification-20260819
-git merge-base --is-ancestor e6723e614d565594e10664af031ec8d958fa1c2f HEAD
 git status --porcelain=v1
 ```
 
-fast-forward가 실패하거나 local branch와 remote branch가 갈라지면 reset/rebase/merge로
-임의 해결하지 말고 local/remote HEAD와 차이 파일을 보고한다.
-
-## 9. 새 세션 시작 프롬프트
+## 7. 새 세션 시작 프롬프트
 
 ```text
-hospital-autonomous-wheelchair의 R7 최종 자격 작업을 다른 로컬 PC에서 이어간다.
+hospital-autonomous-wheelchair의 R7 FAIL_ANALYZED 후속 작업을 이어간다.
 
-저장소: https://github.com/shotgun1107/hospital-autonomous-wheelchair.git
-작업 브랜치: codex/r7-final-qualification-20260819
-기준 baseline: 54b4f04f06a22f6eebc05228a4f80abdfdd42615
-필수 WIP ancestor: e6723e614d565594e10664af031ec8d958fa1c2f
-
-먼저 AGENTS.md와 다음 문서만 완전히 읽어라.
-1. 인수인계.md 최상단의 최신 R7 상태
+git pull이 끝났다는 전제에서 AGENTS.md, 인수인계.md 최상단과 다음 두 문서만 먼저 읽어라.
+1. docs/research/dynamic-actor-experiment/42-r7-hidden-v4-fail-analyzed-result-2026-08-19.md
 2. docs/reviews/r7-final-qualification-sync-handoff-2026-08-19.md
-3. docs/research/dynamic-actor-experiment/26-r7-native-release-gate.md
-4. docs/research/dynamic-actor-experiment/29-r7-failure-trace-and-public-regression-spec.md
-5. docs/research/dynamic-actor-experiment/40-r7-stress-conditional-release-policy-2026-08-19.md
-6. docs/research/dynamic-actor-experiment/41-r7-hidden-v4-conditional-evaluator-2026-08-19.md
 
-현재 로컬 상태를 읽기 전용으로 확인한다.
-git status -sb
-git status --short
-git remote -v
-git branch -vv
-git stash list
-git log --oneline --branches --not --remotes
+git status -sb, git rev-parse HEAD, git rev-parse origin/codex/r7-final-qualification-20260819로
+동기화와 clean 상태를 간단히 확인한다. 기존 내용을 장황하게 재보고하지 마라.
 
-미보존 변경은 삭제·덮어쓰기 하지 말고, 민감 파일이 아닌 경우에만 local backup branch와
-backup commit으로 보존한다. backup branch는 push하지 않는다.
-reset --hard, clean, rebase, force push, 무단 stash는 금지한다.
+hidden-v4는 이미 한 번 소비됐고 공식 결과는 FAIL_ANALYZED다. 같은 seed를 다시 실행하거나
+결과를 PASS로 바꾸지 마라. 새 hidden, 제품 알고리즘, G1~G5, 제품 경로분석 7단계도 시작하지
+마라.
 
-그 다음:
-git fetch origin --prune
-git switch codex/r7-final-qualification-20260819
-git pull --ff-only origin codex/r7-final-qualification-20260819
-git rev-parse HEAD
-git rev-parse origin/codex/r7-final-qualification-20260819
-git merge-base --is-ancestor e6723e614d565594e10664af031ec8d958fa1c2f HEAD
-git status --porcelain=v1
-
-branch/head가 일치하고 e6723e6이 ancestor이며 작업트리가 clean인지 확인한다.
-갈라짐 또는 fast-forward 실패 시 임의로 해결하지 말고 보고한다.
-
-현재 상태는 R7 final packaging/runner WIP다. hidden, 새 seed, 전체 회귀, 500회 timing,
-native release evidence는 아직 실행하지 않았다. 먼저 R6 tracked prerequisite, historical
-runner test, failure-trace/receipt binding을 고치고 표적시험과 읽기 전용 감사를 통과시켜라.
-그 뒤에만 전체 회귀 1회 → native qualification → preflight-only → hidden-v4 1회 순서로
-진행한다. hidden을 두 번 실행하거나 실패 뒤 즉시 튜닝하지 마라.
+바로 공개 회귀에서 one-shot resume authorization을 소비 전에 trace evidence로 남기고 evaluator가
+그 evidence를 검증하도록 고쳐라. 무단 runtime 생성, stale authorization, epoch mismatch 거부는
+유지한다. 표적시험 뒤 공개시험 → 전체 회귀 → native parity·500회 자격 순서로 검증하되,
+새 hidden 실행은 별도 사용자 승인 전 금지한다.
 ```
