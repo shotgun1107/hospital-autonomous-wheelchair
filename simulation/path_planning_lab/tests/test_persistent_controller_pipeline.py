@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from math import atan2, cos, hypot, sin
 
 import pytest
 
@@ -17,10 +18,16 @@ from hospital_path_lab.dynamic_observation import (
 )
 from hospital_path_lab.dynamic_prediction import ActorPredictionSet
 from hospital_path_lab.dynamic_safety import DynamicSafetyGate
+from hospital_path_lab.local_algorithms.dwb_reference.cpp_full_core import (
+    CPP_DWB_FULL_CORE_AVAILABLE,
+)
 from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
     PersistentSourceDerivedDwbController,
 )
-from hospital_path_lab.local_reference_contracts import ReferenceTravelDirection
+from hospital_path_lab.local_reference_contracts import (
+    ReferenceSectionKind,
+    ReferenceTravelDirection,
+)
 from hospital_path_lab.local_reference_reporting import (
     evaluate_local_reference_public_case,
     public_local_reference_cases,
@@ -32,6 +39,11 @@ from hospital_path_lab.persistent_controller_pipeline import (
     persistent_result_to_dynamic_proposal,
 )
 from hospital_path_lab.persistent_rpp_controller import PersistentRppController
+from hospital_path_lab.r5b_restop_execution import build_world_follow_reference
+from hospital_path_lab.r5b_temporal_reference import (
+    R5B_REFERENCE_MISSION_ID,
+    build_r5b_crossing_reference_bundles,
+)
 
 
 @pytest.fixture(scope="module")
@@ -477,3 +489,183 @@ def test_pipeline_applies_gate_output_on_next_tick_not_current_interval(
     observation1, prediction1 = _fresh_empty(public_wide_left.build_context, 1)
     second = pipeline.step(observation_snapshot=observation1, prediction_set=prediction1)
     assert second.robot_state_after.pose == expected_next_pose
+
+
+@pytest.fixture(scope="module")
+def terminal_follow_bundle():
+    source = build_r5b_crossing_reference_bundles()[1]
+    world = source.source.world
+    goal = source.reference.knots[-1].pose
+    stalled_pose = Pose2D(4.314218, 2.306159, 0.239733)
+    travel_yaw = atan2(goal.y - stalled_pose.y, goal.x - stalled_pose.x)
+    start = Pose2D(
+        goal.x - 0.50 * cos(travel_yaw),
+        goal.y - 0.50 * sin(travel_yaw),
+        travel_yaw,
+    )
+    bundle = build_world_follow_reference(
+        world,
+        mission_id=R5B_REFERENCE_MISSION_ID,
+        current_pose=start,
+        stop_epoch=3,
+        valid_from_tick=422,
+        identity={"public_regression": "high_speed_terminal_closed_loop"},
+        generation_reason_codes=("high_speed_terminal_closed_loop",),
+        goal_pose=goal,
+    )
+    assert tuple(section.section_kind for section in bundle.reference.sections) == (
+        ReferenceSectionKind.FOLLOW_ORIGINAL,
+        ReferenceSectionKind.ROTATE,
+    )
+    return bundle, travel_yaw
+
+
+def _terminal_pipeline(bundle, travel_yaw: float, *, distance_m: float, speed_mps: float):
+    terminal = bundle.reference.knots[bundle.reference.sections[0].last_knot_index].pose
+    pose = Pose2D(
+        terminal.x - distance_m * cos(travel_yaw),
+        terminal.y - distance_m * sin(travel_yaw),
+        travel_yaw,
+    )
+    return PersistentControllerPipeline(
+        controller=PersistentSourceDerivedDwbController(
+            use_cpp_safety_core=True,
+            use_cpp_full_core=True,
+        ),
+        build_context=bundle.build_context,
+        full_reference=bundle.reference,
+        validation=bundle.validation,
+        initial_robot_state=RobotState(pose, Twist2D(speed_mps, 0.0)),
+        initial_tick=422,
+    )
+
+
+def _run_terminal_pipeline(pipeline, build_context, *, tick_count: int):
+    records = []
+    for _ in range(tick_count):
+        observation, prediction = _fresh_empty(build_context, pipeline.tick_id)
+        record = pipeline.step(
+            observation_snapshot=observation,
+            prediction_set=prediction,
+        )
+        records.append(record)
+        if record.safety_decision.motion_state in {
+            DynamicMotionState.COMPLETED,
+            DynamicMotionState.HOLDING,
+        }:
+            break
+    return tuple(records)
+
+
+@pytest.mark.skipif(
+    not CPP_DWB_FULL_CORE_AVAILABLE,
+    reason="optional C++ full DWB core has not been built",
+)
+def test_max_speed_terminal_approach_decelerates_rotates_and_completes(
+    terminal_follow_bundle,
+) -> None:
+    bundle, travel_yaw = terminal_follow_bundle
+    pipeline = _terminal_pipeline(
+        bundle,
+        travel_yaw,
+        distance_m=0.30,
+        speed_mps=0.30,
+    )
+    records = _run_terminal_pipeline(
+        pipeline,
+        bundle.build_context,
+        tick_count=180,
+    )
+    terminal = bundle.reference.knots[bundle.reference.sections[0].last_knot_index].pose
+
+    assert records[-1].safety_decision.motion_state is DynamicMotionState.COMPLETED
+    assert any(
+        record.controller_result is not None
+        and record.controller_result.status is PersistentControllerStatus.PLANNED_STOP
+        for record in records
+    )
+    rotation_records = tuple(
+        record
+        for record in records
+        if record.controller_result is not None
+        and record.controller_result.active_section_kind is ReferenceSectionKind.ROTATE
+    )
+    assert rotation_records
+    first_rotation = rotation_records[0]
+    assert hypot(
+        first_rotation.robot_state_before.pose.x - terminal.x,
+        first_rotation.robot_state_before.pose.y - terminal.y,
+    ) <= 0.05 + 1e-12
+    assert all(
+        "static_clearance_below_minimum" not in record.safety_decision.failure_reasons
+        and "forbidden_zone_entry" not in record.safety_decision.failure_reasons
+        and "actor_clearance_below_minimum" not in record.safety_decision.failure_reasons
+        for record in records
+    )
+    deceleration_steps = tuple(
+        record
+        for record in records
+        if abs(record.safety_decision.command.linear)
+        < abs(record.robot_state_before.twist.linear) - 1e-12
+    )
+    assert deceleration_steps
+    assert all(
+        abs(record.robot_state_before.twist.linear)
+        - abs(record.safety_decision.command.linear)
+        <= 0.025 + 1e-12
+        for record in deceleration_steps
+    )
+    assert pipeline.robot_state.twist == Twist2D()
+
+
+@pytest.mark.skipif(
+    not CPP_DWB_FULL_CORE_AVAILABLE,
+    reason="optional C++ full DWB core has not been built",
+)
+def test_unstoppable_close_terminal_approach_fails_closed_instead_of_forcing_completion(
+    terminal_follow_bundle,
+) -> None:
+    bundle, travel_yaw = terminal_follow_bundle
+    pipeline = _terminal_pipeline(
+        bundle,
+        travel_yaw,
+        distance_m=0.08,
+        speed_mps=0.30,
+    )
+    records = _run_terminal_pipeline(
+        pipeline,
+        bundle.build_context,
+        tick_count=40,
+    )
+
+    assert records[-1].safety_decision.motion_state is DynamicMotionState.HOLDING
+    assert all(
+        record.safety_decision.motion_state is not DynamicMotionState.COMPLETED
+        for record in records
+    )
+    braking = tuple(
+        record
+        for record in records
+        if record.safety_decision.motion_state is DynamicMotionState.BRAKING
+    )
+    assert braking
+    assert all(
+        abs(record.safety_decision.command.linear)
+        <= abs(record.robot_state_before.twist.linear) + 1e-12
+        for record in braking
+    )
+    assert all(
+        abs(record.robot_state_before.twist.linear)
+        - abs(record.safety_decision.command.linear)
+        <= 0.025 + 1e-12
+        for record in braking
+        if abs(record.safety_decision.command.linear)
+        < abs(record.robot_state_before.twist.linear) - 1e-12
+    )
+    assert all(
+        "static_clearance_below_minimum" not in record.safety_decision.failure_reasons
+        and "forbidden_zone_entry" not in record.safety_decision.failure_reasons
+        and "actor_clearance_below_minimum" not in record.safety_decision.failure_reasons
+        for record in records
+    )
+    assert pipeline.robot_state.twist == Twist2D()

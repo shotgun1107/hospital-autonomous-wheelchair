@@ -59,7 +59,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _snapshot(*, actor_x: float = 2.80):
+def _snapshot(
+    *,
+    actor_x: float = 2.80,
+    forbidden_cells: frozenset[tuple[int, int]] = frozenset(),
+    robot_twist: Twist2D | None = None,
+):
+    if robot_twist is None:
+        robot_twist = Twist2D(0.20, 0.0)
     tick = 7
     simulation_time_s = tick * 0.05
     track = ActorTrack(
@@ -101,13 +108,13 @@ def _snapshot(*, actor_x: float = 2.80):
             content_hash="cpp-dwb-grid",
         ),
         grid=GridMap(np.zeros((220, 300), dtype=np.bool_), resolution_m=0.02),
-        forbidden_cells=frozenset(),
+        forbidden_cells=forbidden_cells,
     )
     return build_controller_snapshot(
         tick_id=tick,
         simulation_time_s=simulation_time_s,
         mission_id="cpp-dwb-mission",
-        robot_state=RobotState(Pose2D(2.0, 2.0), Twist2D(0.20, 0.0)),
+        robot_state=RobotState(Pose2D(2.0, 2.0), robot_twist),
         goal_pose=Pose2D(4.0, 2.0),
         reference_path=(Pose2D(2.0, 2.0), Pose2D(4.0, 2.0)),
         static_grid_snapshot=grid,
@@ -268,3 +275,59 @@ def test_cpp_static_lower_bound_keeps_nearby_noncolliding_cell_in_minimum() -> N
         rel_tol=0.0,
         abs_tol=2e-12,
     )
+
+
+@pytest.mark.parametrize(
+    ("forbidden_cell", "expected_failure", "expected_clearance_m"),
+    [
+        ((114, 100), CppDwbSafetyFailure.STATIC_CLEARANCE, 0.06),
+        ((115, 100), CppDwbSafetyFailure.SAFE, 0.08),
+    ],
+)
+def test_python_and_cpp_share_the_forbidden_clearance_boundary(
+    forbidden_cell: tuple[int, int],
+    expected_failure: CppDwbSafetyFailure,
+    expected_clearance_m: float,
+) -> None:
+    snapshot = _snapshot(
+        actor_x=5.0,
+        forbidden_cells=frozenset({forbidden_cell}),
+        robot_twist=Twist2D(),
+    )
+    trajectory = DwbTrajectory(
+        command=DwbTwist2D(0.0, 0.0),
+        poses=(DwbPose2D(2.0, 2.0, 0.0),) * 41,
+        integration_step_s=0.05,
+    )
+    checkers = build_dynamic_trajectory_safety_checkers(
+        grid_snapshot=snapshot.static_grid_snapshot,
+        profile=snapshot.vehicle_profile,
+    )
+
+    native = evaluate_dwb_safety_batch(
+        trajectories=(trajectory,),
+        snapshot=snapshot,
+        checkers=checkers,
+    )
+    python_evidence = evaluate_dynamic_trajectory_safety(
+        _proposal_from_trajectory(snapshot, trajectory),
+        robot_state=snapshot.robot_state,
+        grid_snapshot=snapshot.static_grid_snapshot,
+        prediction_set=snapshot.actor_tubes,
+        profile=snapshot.vehicle_profile,
+        checkers=checkers,
+    )
+
+    assert native is not None
+    assert native[0].failure is expected_failure
+    assert native[0].minimum_static_clearance_m == pytest.approx(
+        expected_clearance_m, abs=2e-12
+    )
+    assert python_evidence.minimum_static_clearance_m == pytest.approx(
+        expected_clearance_m, abs=2e-12
+    )
+    assert python_evidence.safe is (expected_failure is CppDwbSafetyFailure.SAFE)
+    if expected_failure is CppDwbSafetyFailure.STATIC_CLEARANCE:
+        assert python_evidence.failures == ("static_clearance_below_minimum",)
+    else:
+        assert python_evidence.failures == ()

@@ -600,6 +600,21 @@ def _process_affinity() -> tuple[int, ...]:
 
 
 def _process_memory_snapshot() -> dict[str, int | None]:
+    if sys.platform.startswith("linux"):
+        try:
+            import resource
+
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            statm = Path("/proc/self/statm").read_text(encoding="ascii").split()
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            return {
+                "working_set_bytes": int(statm[1]) * page_size,
+                "peak_working_set_bytes": int(usage.ru_maxrss) * 1024,
+                "private_usage_bytes": None,
+                "page_fault_count": int(usage.ru_minflt + usage.ru_majflt),
+            }
+        except (IndexError, OSError, ValueError):
+            pass
     if sys.platform != "win32":
         return {
             "working_set_bytes": None,

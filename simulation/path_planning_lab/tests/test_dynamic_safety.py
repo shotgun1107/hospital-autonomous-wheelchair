@@ -36,10 +36,12 @@ from hospital_path_lab.dynamic_observation import (
 )
 from hospital_path_lab.dynamic_prediction import ActorPredictionSet, ActorPredictionTube
 from hospital_path_lab.dynamic_safety import (
+    DYNAMIC_SAFE_OBSERVATION_FRAMES,
     DynamicSafetyContext,
     DynamicSafetyGate,
     _normalized_rollout,
     build_dynamic_command_proposal,
+    build_resume_authorization,
     evaluate_dynamic_trajectory_safety,
 )
 from hospital_path_lab.grid import GridMap
@@ -373,6 +375,139 @@ def test_actor_tube_static_obstacle_and_forbidden_cell_are_all_rejected() -> Non
     assert "forbidden_zone_entry" in forbidden.failure_reasons or (
         "static_clearance_below_minimum" in forbidden.failure_reasons
     )
+
+
+@pytest.mark.parametrize(
+    ("forbidden_cell", "expected_clearance_m", "expected_safe"),
+    (
+        ((114, 100), 0.06, False),
+        ((115, 100), 0.08, True),
+        ((116, 100), 0.10, True),
+    ),
+)
+def test_forbidden_clearance_uses_the_frozen_008m_boundary_without_overlap(
+    forbidden_cell: tuple[int, int],
+    expected_clearance_m: float,
+    expected_safe: bool,
+) -> None:
+    observation, prediction = _fresh_observation(sequence=0, simulation_time_s=0.0)
+    grid_snapshot = _grid_snapshot(
+        sequence=0,
+        forbidden_cells=frozenset({forbidden_cell}),
+    )
+    context = _context(
+        tick_id=0,
+        observation=observation,
+        prediction=prediction,
+        grid_snapshot=grid_snapshot,
+    )
+
+    decision = DynamicSafetyGate().step(
+        _proposal(context, Twist2D()),
+        robot_state=RobotState(Pose2D(2.0, 2.0)),
+        context=context,
+    )
+
+    assert decision.minimum_static_clearance_m == pytest.approx(expected_clearance_m)
+    assert "forbidden_zone_entry" not in decision.failure_reasons
+    if expected_safe:
+        assert decision.proposal_accepted
+        assert decision.motion_state is DynamicMotionState.MOVING
+        assert "static_clearance_below_minimum" not in decision.failure_reasons
+    else:
+        assert not decision.proposal_accepted
+        assert decision.motion_state is DynamicMotionState.BRAKING
+        assert decision.primary_hold_reason is DynamicHoldReason.GATE_REJECTION
+        assert decision.failure_reasons == ("static_clearance_below_minimum",)
+
+
+def test_forward_command_from_forbidden_boundary_is_rejected_before_under_clearance() -> None:
+    observation, prediction = _fresh_observation(sequence=0, simulation_time_s=0.0)
+    context = _context(
+        tick_id=0,
+        observation=observation,
+        prediction=prediction,
+        grid_snapshot=_grid_snapshot(
+            sequence=0,
+            forbidden_cells=frozenset({(115, 100)}),
+        ),
+    )
+
+    decision = DynamicSafetyGate().step(
+        _proposal(context, Twist2D(0.20, 0.0)),
+        robot_state=RobotState(Pose2D(2.0, 2.0), Twist2D()),
+        context=context,
+    )
+
+    assert decision.minimum_static_clearance_m < 0.08
+    assert not decision.proposal_accepted
+    assert decision.motion_state is DynamicMotionState.BRAKING
+    assert decision.primary_hold_reason is DynamicHoldReason.GATE_REJECTION
+    assert "static_clearance_below_minimum" in decision.failure_reasons
+
+
+def test_forbidden_under_clearance_never_accumulates_resume_safe_frames() -> None:
+    gate = DynamicSafetyGate()
+    robot_state = RobotState(Pose2D(2.0, 2.0), Twist2D())
+    unavailable = DynamicObservationSnapshot(
+        availability=DynamicObservationAvailability.UNAVAILABLE,
+        frame=None,
+        age_s=None,
+        failures=(),
+        last_event_was_no_frame=True,
+    )
+    for tick in range(3):
+        context = _context(
+            tick_id=tick,
+            observation=unavailable,
+            prediction=None,
+            grid_snapshot=_grid_snapshot(sequence=tick),
+        )
+        gate.step(
+            _proposal(context, Twist2D()),
+            robot_state=robot_state,
+            context=context,
+        )
+
+    assert gate.motion_state is DynamicMotionState.HOLDING
+    assert gate.stop_epoch == 1
+    assert gate.stop_confirmed_at_s is not None
+    authorization = build_resume_authorization(
+        mission_id="mission-v1",
+        stop_epoch=gate.stop_epoch,
+        issued_or_revalidated_at_s=gate.stop_confirmed_at_s,
+        authorization_revision=1,
+    )
+
+    for offset in range(DYNAMIC_SAFE_OBSERVATION_FRAMES):
+        tick = 3 + offset
+        simulation_time_s = tick * DYNAMIC_CONTROL_PERIOD_S
+        observation, prediction = _fresh_observation(
+            sequence=tick,
+            simulation_time_s=simulation_time_s,
+        )
+        context = replace(
+            _context(
+                tick_id=tick,
+                observation=observation,
+                prediction=prediction,
+                grid_snapshot=_grid_snapshot(
+                    sequence=tick,
+                    forbidden_cells=frozenset({(114, 100)}),
+                ),
+            ),
+            resume_authorization=authorization,
+        )
+        decision = gate.step(
+            _proposal(context, Twist2D()),
+            robot_state=robot_state,
+            context=context,
+        )
+
+        assert decision.motion_state is DynamicMotionState.HOLDING
+        assert not decision.resume_allowed
+        assert decision.consecutive_safe_frames == 0
+        assert "static_clearance_below_minimum" in decision.failure_reasons
 
 
 def test_legacy_circle_prediction_keeps_historical_apply_clearance() -> None:

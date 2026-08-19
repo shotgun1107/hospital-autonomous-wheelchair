@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
+
+
+_EVIDENCE_FILES = (
+    "run-manifest.json",
+    "semantic-parity.json",
+    "timing-qualification.json",
+    "release-gate.json",
+    "qualification-receipt.json",
+    "summary.md",
+)
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -17,6 +29,50 @@ def _write_json(path: Path, payload: object) -> None:
     )
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_evidence_zip(output_dir: Path, destination: Path) -> dict[str, object]:
+    """Package a qualified release directory without changing its evidence."""
+
+    if destination.exists():
+        raise RuntimeError("R7 evidence ZIP destination must not already exist")
+    missing = [name for name in _EVIDENCE_FILES if not (output_dir / name).is_file()]
+    if missing:
+        raise RuntimeError(f"R7 evidence files are incomplete: {missing}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    if temporary.exists():
+        raise RuntimeError("R7 evidence ZIP temporary path already exists")
+    try:
+        with zipfile.ZipFile(
+            temporary,
+            mode="x",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=9,
+        ) as archive:
+            for name in _EVIDENCE_FILES:
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, (output_dir / name).read_bytes())
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return {
+        "path": str(destination),
+        "size_bytes": destination.stat().st_size,
+        "sha256": _sha256(destination),
+        "files": list(_EVIDENCE_FILES),
+    }
+
+
 def _main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -24,6 +80,11 @@ def _main() -> int:
     parser.add_argument("--warmups", type=int, default=30)
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument("--skip-rebuild", action="store_true")
+    parser.add_argument(
+        "--evidence-zip",
+        type=Path,
+        help="Write a deterministic ZIP only when the formal release gate passes.",
+    )
     args = parser.parse_args()
 
     repository_root = Path(__file__).resolve().parents[3]
@@ -38,6 +99,9 @@ def _main() -> int:
     if output_dir.exists() and any(output_dir.iterdir()):
         raise RuntimeError("R7 output directory must be new or empty")
     output_dir.mkdir(parents=True, exist_ok=True)
+    evidence_zip = args.evidence_zip.resolve() if args.evidence_zip is not None else None
+    if evidence_zip is not None and evidence_zip.exists():
+        raise RuntimeError("R7 evidence ZIP destination must not already exist")
 
     for name in (
         "OMP_NUM_THREADS",
@@ -225,7 +289,19 @@ def _main() -> int:
         "\n".join(summary_lines) + "\n",
         encoding="utf-8",
     )
-    print(json.dumps({"qualified": qualified, "output": str(output_dir)}, ensure_ascii=False))
+    evidence = None
+    if qualified and evidence_zip is not None:
+        evidence = _write_evidence_zip(output_dir, evidence_zip)
+    print(
+        json.dumps(
+            {
+                "qualified": qualified,
+                "output": str(output_dir),
+                "evidence_zip": evidence,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0 if qualified else 2
 
 

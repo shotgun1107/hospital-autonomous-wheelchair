@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter as persistent_adapter
 from hospital_path_lab.contracts import Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
     DynamicMotionState,
@@ -50,12 +51,16 @@ from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import 
     _active_translation_dwb_path,
     _active_translation_dwb_scoring_path,
     _aligned_forward_section,
+    _bind_stack_travel_direction,
     _connector_tightened_forward_section,
+    _terminal_rotation_approach,
 )
 from hospital_path_lab.local_algorithms.dwb_reference.trajectory_generator import (
     DwbReferenceTrajectoryGenerator,
 )
 from hospital_path_lab.local_reference_contracts import (
+    LOCAL_REFERENCE_WINDOW_SCHEMA_VERSION,
+    LocalReferenceWindow,
     ReferenceSectionKind,
     ReferenceTravelDirection,
 )
@@ -63,7 +68,10 @@ from hospital_path_lab.local_reference_reporting import (
     evaluate_local_reference_public_case,
     public_local_reference_cases,
 )
-from hospital_path_lab.local_reference_window import LocalReferenceWindowManager
+from hospital_path_lab.local_reference_window import (
+    LocalReferenceWindowManager,
+    ReferenceCursorProjection,
+)
 from hospital_path_lab.persistent_controller_contracts import (
     PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION,
     PersistentControllerStatus,
@@ -73,14 +81,18 @@ from hospital_path_lab.persistent_controller_contracts import (
 from hospital_path_lab.persistent_controller_pipeline import (
     persistent_result_to_dynamic_proposal,
 )
+from hospital_path_lab.r5b_restop_execution import build_world_follow_reference
 from hospital_path_lab.r5b_temporal_evidence import frozen_r2_archive_path
 from hospital_path_lab.r5b_temporal_reference import (
+    R5B_REFERENCE_MISSION_ID,
+    build_r5b_crossing_reference_bundles,
     build_r5b_temporal_reference_bundles,
 )
 from hospital_path_lab.reference_section_executor import (
     R5_CONTROL_PERIOD_S,
     ReferenceSectionExecutor,
 )
+from hospital_path_lab.vehicle import VIRTUAL_DOLL_WHEELCHAIR_V0_1
 
 
 @pytest.fixture(scope="module")
@@ -733,3 +745,249 @@ def test_persistent_dwb_adapter_has_no_corpus_or_evaluator_label_channel() -> No
 
     assert forbidden.isdisjoint(names | attributes)
     assert not any(any(token in module for token in forbidden) for module in imported_modules)
+
+
+def _terminal_rotation_reference_fixture():
+    return SimpleNamespace(
+        sections=(
+            SimpleNamespace(
+                section_index=0,
+                section_kind=ReferenceSectionKind.FOLLOW_ORIGINAL,
+                travel_direction=ReferenceTravelDirection.FORWARD,
+                first_knot_index=0,
+                last_knot_index=1,
+                entry_requires_stopped=False,
+                exit_requires_stopped=True,
+            ),
+            SimpleNamespace(
+                section_index=1,
+                section_kind=ReferenceSectionKind.ROTATE,
+                travel_direction=ReferenceTravelDirection.NONE,
+                first_knot_index=2,
+                last_knot_index=3,
+                entry_requires_stopped=True,
+                exit_requires_stopped=True,
+            ),
+        ),
+        knots=(
+            SimpleNamespace(pose=Pose2D(0.0, 0.0, 0.0), cumulative_translation_arc_m=0.0),
+            SimpleNamespace(pose=Pose2D(1.0, 0.0, 0.0), cumulative_translation_arc_m=1.0),
+            SimpleNamespace(pose=Pose2D(1.0, 0.0, 0.0), cumulative_translation_arc_m=1.0),
+            SimpleNamespace(pose=Pose2D(1.0, 0.0, 0.5), cumulative_translation_arc_m=1.0),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "pose",
+        "twist",
+        "projection",
+        "expected",
+    ),
+    [
+        (
+            Pose2D(0.94, 0.0, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(0.94, 0.0, 0, 0, False, None),
+            True,
+        ),
+        (
+            Pose2D(1.06, 0.0, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(1.0, 0.06, 0, 0, False, None),
+            False,
+        ),
+        (
+            Pose2D(0.94, 0.06, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(0.94, 0.06, 0, 0, False, None),
+            False,
+        ),
+        (
+            Pose2D(0.94, 0.0, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(0.94, 0.0, 0, 0, True, "equal_projection"),
+            False,
+        ),
+        (
+            Pose2D(0.94, 0.0, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(0.94, 0.0, 1, 2, False, None),
+            False,
+        ),
+        (
+            Pose2D(0.96, 0.0, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(0.96, 0.0, 0, 0, False, None),
+            False,
+        ),
+        (
+            Pose2D(0.89, 0.0, 0.0),
+            Twist2D(),
+            ReferenceCursorProjection(0.89, 0.0, 0, 0, False, None),
+            False,
+        ),
+        (
+            Pose2D(0.94, 0.0, 0.0),
+            Twist2D(0.02, 0.0),
+            ReferenceCursorProjection(0.94, 0.0, 0, 0, False, None),
+            False,
+        ),
+        (
+            Pose2D(0.94, 0.0, 0.0),
+            Twist2D(0.0, 0.03),
+            ReferenceCursorProjection(0.94, 0.0, 0, 0, False, None),
+            False,
+        ),
+    ],
+)
+def test_terminal_rotation_tie_only_applies_to_stopped_on_section_pre_endpoint_pose(
+    monkeypatch: pytest.MonkeyPatch,
+    pose: Pose2D,
+    twist: Twist2D,
+    projection: ReferenceCursorProjection,
+    expected: bool,
+) -> None:
+    reference = _terminal_rotation_reference_fixture()
+    monkeypatch.setattr(
+        persistent_adapter,
+        "project_reference_cursor",
+        lambda *_args, **_kwargs: projection,
+    )
+    monkeypatch.setattr(
+        persistent_adapter,
+        "translation_completion_tolerance_m",
+        lambda *_args, **_kwargs: 0.05,
+    )
+
+    assert _terminal_rotation_approach(
+        reference,
+        0,
+        RobotState(pose, twist),
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    ("twist", "expected_enabled"),
+    [(Twist2D(), True), (Twist2D(0.02, 0.0), False)],
+)
+def test_terminal_rotation_guard_overrides_generic_aligned_forward_tie_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    twist: Twist2D,
+    expected_enabled: bool,
+) -> None:
+    reference = _terminal_rotation_reference_fixture()
+    monkeypatch.setattr(
+        persistent_adapter,
+        "project_reference_cursor",
+        lambda *_args, **_kwargs: ReferenceCursorProjection(
+            0.94, 0.0, 0, 0, False, None
+        ),
+    )
+    monkeypatch.setattr(
+        persistent_adapter,
+        "translation_completion_tolerance_m",
+        lambda *_args, **_kwargs: 0.05,
+    )
+
+    generator = SimpleNamespace(
+        set_travel_direction=lambda value: setattr(generator, "direction", value),
+        set_prefer_forward_progress_on_exact_ties=lambda value: setattr(
+            generator, "prefer", value
+        ),
+    )
+    adapter = SimpleNamespace(
+        set_command_linear_bounds=lambda low, high: setattr(
+            adapter, "bounds", (low, high)
+        )
+    )
+    goal_align = SimpleNamespace(
+        set_projection_sign=lambda value: setattr(goal_align, "projection", value),
+        set_disable_near_goal=lambda value: setattr(goal_align, "disabled", value),
+    )
+    path_align = SimpleNamespace(
+        set_projection_sign=lambda value: setattr(path_align, "projection", value),
+        set_disable_near_goal=lambda value: setattr(path_align, "disabled", value),
+    )
+    stack = SimpleNamespace(
+        generator=generator,
+        adapter=adapter,
+        goal_align_critic=goal_align,
+        path_align_critic=path_align,
+    )
+    tick_input = SimpleNamespace(
+        full_reference=reference,
+        robot_state=RobotState(Pose2D(0.94, 0.0, 0.0), twist),
+        vehicle_profile=VIRTUAL_DOLL_WHEELCHAIR_V0_1,
+    )
+
+    _bind_stack_travel_direction(
+        stack,
+        ReferenceTravelDirection.FORWARD,
+        tick_input,
+        0,
+    )
+
+    assert generator.prefer is expected_enabled
+    assert goal_align.disabled is expected_enabled
+
+
+def test_public_goal_gap_stopped_state_still_selects_forward_command() -> None:
+    source = build_r5b_crossing_reference_bundles()[1]
+    stalled_pose = Pose2D(4.314218, 2.306159, 0.239733)
+    terminal_goal = source.reference.knots[-1].pose
+    follow = build_world_follow_reference(
+        source.source.world,
+        mission_id=R5B_REFERENCE_MISSION_ID,
+        current_pose=stalled_pose,
+        stop_epoch=3,
+        valid_from_tick=422,
+        identity={"public_regression": "hidden_v3_goal_gap_stopped_state"},
+        generation_reason_codes=("public_goal_gap_regression",),
+        goal_pose=terminal_goal,
+    )
+    reference = follow.reference
+    window = LocalReferenceWindow(
+        schema_version=LOCAL_REFERENCE_WINDOW_SCHEMA_VERSION,
+        reference_session_id=reference.reference_session_id,
+        maneuver_revision=reference.maneuver_revision,
+        path_revision=reference.path_revision,
+        subgoal_revision=0,
+        full_reference_hash=reference.reference_content_hash,
+        source_control_tick=422,
+        start_knot_index=0,
+        end_knot_index=reference.knots[-1].knot_index,
+        knots=reference.knots,
+        sections=reference.sections,
+        terminal_rejoin_included=True,
+    )
+    tick_input = _fresh_empty_input(
+        follow.build_context,
+        reference,
+        window,
+        tick=422,
+        pose=stalled_pose,
+        twist=Twist2D(),
+    )
+    python_controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=False,
+        use_cpp_full_core=False,
+    )
+    native_controller = PersistentSourceDerivedDwbController(
+        use_cpp_safety_core=True,
+        use_cpp_full_core=True,
+    )
+
+    python_result = python_controller.step(tick_input)
+    native_result = native_controller.step(tick_input)
+
+    assert native_result.status is PersistentControllerStatus.COMMAND_FOUND
+    assert native_result.requested_twist.linear > 0.0
+    assert "goal_align_disabled_near_scoring_goal=true" in native_result.decision_trace
+    assert native_result.status is python_result.status
+    assert native_result.requested_twist == python_result.requested_twist
+    assert native_result.predicted_trajectory == python_result.predicted_trajectory
+    assert native_result.failure_reason == python_result.failure_reason
+    assert native_result.decision_trace == python_result.decision_trace
+    assert native_result.candidate_diagnostics == python_result.candidate_diagnostics

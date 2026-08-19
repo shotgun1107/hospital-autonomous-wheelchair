@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 import hospital_path_lab.r5c_observation_diagnostic as r5c_diagnostic
+from hospital_path_lab.dynamic_contracts import DynamicMotionState
 from hospital_path_lab.dynamic_directional_prediction import (
     DirectionalPredictionStatus,
 )
@@ -15,6 +16,9 @@ from hospital_path_lab.dynamic_observation import (
 )
 from hospital_path_lab.r5c_observation_diagnostic import (
     run_r5c_crossing_completion_diagnostic,
+)
+from hospital_path_lab.r7_hidden_v4_qualification import (
+    _stress_result_is_conditionally_safe,
 )
 from hospital_path_lab.r7_failure_trace import (
     R7_FAILURE_RUN_MANIFEST_SCHEMA_VERSION,
@@ -353,3 +357,61 @@ def test_completion_extension_does_not_emit_empty_at_old_world_boundary() -> Non
     assert directional is not None
     assert directional.status.value != "empty_frame"
     assert directional.prediction_set is not None
+
+
+def test_stress_left_seed_214092870162924582_conditionally_releases_then_restops() -> None:
+    trace = R7FailureTraceCollector()
+    result = run_r5c_crossing_completion_diagnostic(
+        side_index=0,
+        profile=STRESS_OBSERVATION_PROFILE,
+        tick_limit=503,
+        observation_horizon_ticks=_FULL_OBSERVATION_HORIZON_TICKS,
+        observation_seed=214092870162924582,
+        failure_trace=trace,
+    )
+
+    assert result.hard_failures == ()
+    assert result.outcome.value == "conservative_hold"
+    assert result.final_motion_state is DynamicMotionState.HOLDING
+    assert result.release_ticks == (497,)
+    assert result.first_motion_tick == 498
+    assert result.controller_call_count == 2
+    assert result.confirmed_stop_ticks == (502,)
+    assert result.minimum_static_clearance_m >= 0.08
+    assert result.minimum_actor_clearance_m is not None
+    assert result.minimum_actor_clearance_m >= 0.08
+    assert _stress_result_is_conditionally_safe(result)
+
+    release = trace.records[497]
+    assert release["release_permitted"] is True
+    assert release["confirmed_safe_frame_count_before"] >= 11
+    assert release["release_input_usable"] is True
+    assert release["last_event_was_no_frame"] is False
+    assert release["gate_state_before"] == "holding"
+    assert release["gate_state_after"] == "moving"
+    assert release["runtime_present_before"] is False
+    assert release["runtime_present_after"] is True
+    assert release["reference_stop_epoch"] == release["stop_epoch_after"]
+
+    first_motion = trace.records[498]
+    assert first_motion["controller_called"] is True
+    assert first_motion["command_after_gate"] != {
+        "linear_mps": 0.0,
+        "angular_radps": 0.0,
+    }
+
+    dropout = trace.records[499]
+    assert dropout["observation_status"] == "stale"
+    assert dropout["last_event_was_no_frame"] is True
+    assert dropout["release_input_usable"] is False
+    assert dropout["controller_called"] is False
+    assert dropout["gate_state_before"] == "moving"
+    assert dropout["gate_state_after"] == "braking"
+    assert dropout["recovery_reason"] == "prediction_loss"
+
+    stopped = trace.records[502]
+    assert stopped["actual_stop_confirmed"] is True
+    assert stopped["gate_state_before"] == "braking"
+    assert stopped["gate_state_after"] == "holding"
+    assert stopped["stop_epoch_after"] == stopped["stop_epoch_before"] + 1
+    assert stopped["runtime_present_after"] is False

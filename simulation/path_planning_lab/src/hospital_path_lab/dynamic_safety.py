@@ -998,7 +998,7 @@ def _pose_safety(
     failures: list[str] = []
     if forbidden_entry:
         failures.append("forbidden_zone_entry")
-    if physical_clearance < profile.minimum_clearance_m - _GEOMETRY_TOLERANCE:
+    elif static_clearance < profile.minimum_clearance_m - _GEOMETRY_TOLERANCE:
         failures.append("static_clearance_below_minimum")
     if actor_clearance is not None and actor_clearance < (
         profile.minimum_clearance_m - _GEOMETRY_TOLERANCE
