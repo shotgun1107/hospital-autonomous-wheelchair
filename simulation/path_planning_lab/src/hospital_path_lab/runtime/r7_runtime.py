@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isclose
 
 from hospital_path_lab.contracts import GridSnapshot, RobotState, Twist2D
@@ -48,8 +48,10 @@ from .contracts import (
     RuntimeControllerKind,
     RuntimeDiagnostics,
     RuntimeMission,
+    RuntimePose,
     RuntimeStepInput,
 )
+from .global_planning import plan_runtime_reference_path
 from .reference import RuntimeReferenceError, build_runtime_follow_reference
 
 
@@ -97,6 +99,13 @@ class R7Runtime:
     @property
     def mission_started(self) -> bool:
         return self._session is not None
+
+    @property
+    def reference_path(self) -> tuple[RuntimePose, ...] | None:
+        """Return the resolved immutable path for integration diagnostics."""
+
+        session = self._session
+        return None if session is None else session.mission.reference_path
 
     @property
     def diagnostics(self) -> RuntimeDiagnostics:
@@ -159,12 +168,22 @@ class R7Runtime:
                 "a reset runtime requires a new mission id or mission revision; "
                 "it cannot reuse a stopped mission's reference or authority"
             )
+        grid_snapshot = build_runtime_grid_snapshot(mission)
+        if mission.reference_path is None:
+            mission = replace(
+                mission,
+                reference_path=plan_runtime_reference_path(
+                    mission,
+                    grid_snapshot=grid_snapshot,
+                    planner_kind=self.config.global_planner_kind,
+                ),
+            )
         controller = self._build_controller()
         profile = observation_profile_for(self.config.observation_profile)
         source = build_observation_source(mission)
         self._session = _RuntimeSession(
             mission=mission,
-            grid_snapshot=build_runtime_grid_snapshot(mission),
+            grid_snapshot=grid_snapshot,
             validator=DynamicObservationValidator(source, profile),
             predictor=DirectionalActorPredictor(),
             gate=DynamicSafetyGate(),

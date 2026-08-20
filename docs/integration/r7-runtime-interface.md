@@ -10,8 +10,9 @@
 같은 프로세스 안에서 호출할 수 있게 하는 얇은 연결층이다.
 
 ```text
-서버의 미션·지도·처리된 사람 관측
+서버의 미션·지도·시작·목적지·처리된 사람 관측
   → R7Runtime
+  → 기존 Grid A* → 기존 reference builder/validator
   → 기존 관측 검증 → 사람 이동 예측 → persistent controller → shared safety gate
   → 선속도·각속도 명령
 ```
@@ -64,10 +65,6 @@ mission = RuntimeMission(
     runtime_map=runtime_map,
     start_pose=RuntimePose(0.5, 0.5, 0.0),
     goal_pose=RuntimePose(2.0, 0.5, 0.0),
-    reference_path=(
-        RuntimePose(0.5, 0.5, 0.0),
-        RuntimePose(2.0, 0.5, 0.0),
-    ),
     observation_stream_id="camera-pipeline-1",
     observation_session_seed=101,
 )
@@ -82,9 +79,10 @@ command = runtime.step(
 )
 ```
 
-`reference_path`는 서버가 이미 선택한 알려진 지도 위 경로다. 이 runtime은 전역 경로를
-새로 찾지 않는다. 입력 경로를 기존 R7 `FOLLOW_ORIGINAL` reference로 바꾸고 기존 독립
-validator를 통과한 경우에만 controller를 시작한다.
+서버는 `reference_path`를 만들지 않는다. runtime은 기존 점유격자 A*로 지도 전체를 탐색한
+뒤 결과를 기존 R7 `FOLLOW_ORIGINAL` reference로 바꾸고, 기존 독립 validator를 통과한
+경우에만 controller를 시작한다. 연구·회귀시험은 `reference_path`를 선택적으로 직접 넣을
+수 있다.
 
 ## 입력 규칙
 
@@ -127,8 +125,9 @@ tick에는 `observation=None`을 넣는다.
 
 runtime은 재출발 권한을 만들지 않는다. backend/authority 계층에서 만든
 `RuntimeResumeAuthorization`을 전달할 수는 있지만, 보호정지 후 기존 reference는
-`stop_epoch`가 달라져 무효다. 이 v1 runtime은 자동 재계획·자동 rebind·자동 재출발을 하지
-않는다. 새로 검증된 reference와 새 미션/session은 backend가 명시적으로 시작해야 한다.
+`stop_epoch`가 달라져 무효다. 시작 시 전역 경로 자동 생성과 보호정지 뒤 자동 재출발은
+다른 기능이다. 이 runtime은 보호정지 뒤 자동 rebind·자동 재출발을 하지 않는다. 새 미션이나
+새 revision/session은 backend가 명시적으로 시작해야 한다.
 
 ## 출력
 
@@ -158,13 +157,15 @@ CPU 경쟁이 없는 상태로 직렬 측정해야 한다.
   shared gate가 최신 차체 상태로 실제 정지를 확인할 때까지 invalid-source 정지 tick만 처리한다.
 - `reset()`은 BRAKING 중에는 거부된다. reset 뒤 같은 `mission_id + mission_revision`은 다시
   시작할 수 없으며, backend가 새 mission 또는 새 revision·reference/session·재개 권한을
-  제공해야 한다. runtime은 재출발 권한이나 경로를 만들지 않는다.
+  제공해야 한다. runtime은 재출발 권한을 만들지 않는다.
 - 이 모듈은 hidden runner, corpus, evaluator를 import하지 않는다.
 
 ## 확인 명령
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q simulation\path_planning_lab\tests\test_runtime_r7_runtime.py
+.\.venv\Scripts\python.exe -m pytest -q `
+  simulation\path_planning_lab\tests\test_runtime_global_planning.py `
+  simulation\path_planning_lab\tests\test_runtime_r7_runtime.py
 .\.venv\Scripts\python.exe -m ruff check simulation\path_planning_lab\src\hospital_path_lab\runtime
 ```
 

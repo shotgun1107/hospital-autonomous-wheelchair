@@ -50,10 +50,10 @@ def build_runtime_follow_reference(
     grid_snapshot: GridSnapshot,
     valid_from_tick: int = 0,
 ) -> tuple[ReferenceBuildContext, LocalManeuverReference, LocalReferenceValidation]:
-    """Adapt an already selected global path to a validated R7 FOLLOW reference.
+    """Adapt a resolved global path to a validated R7 FOLLOW reference.
 
     This function does not plan a new global path and does not claim temporal
-    Actor evidence.  It only binds the backend-supplied known-map reference to
+    Actor evidence.  It only binds the runtime-resolved known-map reference to
     the existing R7 contracts, then calls the existing independent validator.
     """
 
@@ -98,8 +98,11 @@ def build_runtime_follow_reference(
         forbidden_region_hash=canonical_content_hash(forbidden),
         vehicle_profile=VIRTUAL_DOLL_WHEELCHAIR_V0_1,
         vehicle_profile_hash=canonical_content_hash(VIRTUAL_DOLL_WHEELCHAIR_V0_1),
-        original_reference=path,
-        original_reference_hash=canonical_content_hash(path),
+        # The frozen local validator defines ``original_reference`` as the
+        # two-point mission request line.  The actual planned route is carried
+        # by the reference knots below and is independently swept in full.
+        original_reference=(path[0], path[-1]),
+        original_reference_hash=canonical_content_hash((path[0], path[-1])),
         current_robot_pose=start,
         control_tick=valid_from_tick,
         simulation_time_s=valid_from_tick * DYNAMIC_CONTROL_PERIOD_S,
@@ -120,6 +123,8 @@ def build_runtime_follow_reference(
 
 
 def _translation_path(mission: RuntimeMission) -> tuple[Pose2D, ...]:
+    if mission.reference_path is None:  # pragma: no cover - start_mission resolves it
+        raise RuntimeReferenceError("runtime_reference_path_unresolved")
     raw = tuple(to_pose(point) for point in mission.reference_path)
     result: list[Pose2D] = []
     for index, pose in enumerate(raw):
@@ -232,6 +237,7 @@ def _build_reference(
         "map_id": context.map_id,
         "map_revision": context.map_revision,
         "original_reference_hash": context.original_reference_hash,
+        "resolved_path_hash": canonical_content_hash(path),
         "valid_from_tick": valid_from_tick,
     }
     return LocalManeuverReference(

@@ -23,17 +23,26 @@ class RuntimeControllerKind(StrEnum):
     RPP = "rpp"
 
 
+class RuntimeGlobalPlannerKind(StrEnum):
+    """Existing known-map planner exposed by the runtime integration."""
+
+    GRID_ASTAR = "grid_astar"
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     """Runtime-wide choices that do not change frozen R7 controller values."""
 
     controller_kind: RuntimeControllerKind = RuntimeControllerKind.DWB
+    global_planner_kind: RuntimeGlobalPlannerKind = RuntimeGlobalPlannerKind.GRID_ASTAR
     observation_profile: DynamicObservationProfileName = DynamicObservationProfileName.NORMAL
     require_native_dwb: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.controller_kind, RuntimeControllerKind):
             raise TypeError("controller_kind must be a RuntimeControllerKind")
+        if not isinstance(self.global_planner_kind, RuntimeGlobalPlannerKind):
+            raise TypeError("global_planner_kind must be a RuntimeGlobalPlannerKind")
         if not isinstance(self.observation_profile, DynamicObservationProfileName):
             raise TypeError("observation_profile must be a DynamicObservationProfileName")
         if self.observation_profile not in {
@@ -210,10 +219,10 @@ class RuntimeMission:
     runtime_map: RuntimeMap
     start_pose: RuntimePose
     goal_pose: RuntimePose
-    reference_path: tuple[RuntimePose, ...]
     observation_stream_id: str
     observation_session_seed: int
     authorization_revision: int = 0
+    reference_path: tuple[RuntimePose, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.mission_id, str) or not self.mission_id:
@@ -230,6 +239,8 @@ class RuntimeMission:
             raise ValueError("observation_stream_id must be a non-empty string")
         _require_exact_nonnegative_int(self.observation_session_seed, "observation_session_seed")
         _require_exact_nonnegative_int(self.authorization_revision, "authorization_revision")
+        if self.reference_path is None:
+            return
         path = tuple(self.reference_path)
         if len(path) < 2 or any(not isinstance(pose, RuntimePose) for pose in path):
             raise ValueError("reference_path must contain at least two RuntimePose values")

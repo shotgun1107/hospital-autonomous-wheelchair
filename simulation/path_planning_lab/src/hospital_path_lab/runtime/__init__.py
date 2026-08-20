@@ -6,6 +6,7 @@ from .contracts import (
     RuntimeConfig,
     RuntimeControllerKind,
     RuntimeDiagnostics,
+    RuntimeGlobalPlannerKind,
     RuntimeMap,
     RuntimeMission,
     RuntimeObservation,
@@ -14,6 +15,7 @@ from .contracts import (
     RuntimeRobotState,
     RuntimeStepInput,
 )
+from .global_planning import RuntimePlanningError
 from .r7_runtime import R7Runtime, RuntimeStateError
 
 __all__ = [
@@ -23,10 +25,12 @@ __all__ = [
     "RuntimeConfig",
     "RuntimeControllerKind",
     "RuntimeDiagnostics",
+    "RuntimeGlobalPlannerKind",
     "RuntimeMap",
     "RuntimeMission",
     "RuntimeObservation",
     "RuntimePose",
+    "RuntimePlanningError",
     "RuntimeResumeAuthorization",
     "RuntimeRobotState",
     "RuntimeStateError",

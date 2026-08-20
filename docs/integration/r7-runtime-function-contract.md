@@ -9,7 +9,9 @@
 현재 구현이 제공하는 기능은 다음과 같다.
 
 ```text
-이미 선택·검증된 reference path
+알려진 지도 + 시작 자세 + 목적지 자세
+  → 기존 Grid A*가 전역 reference path 생성
+  → 기존 reference builder/validator
 + 현재 차체 위치·속도
 + 처리된 사람 위치·속도
   → R7Runtime.step(...)
@@ -18,14 +20,14 @@
 
 현재 구현이 제공하지 않는 기능은 다음과 같다.
 
-- 시작점과 목적지만 받아 전역 경로를 새로 찾는 단일 함수
 - raw 카메라 영상에서 사람을 검출·추적하는 함수
 - HTTP API, 사용자 인증과 DB 저장
 - 실제 모터 드라이버로 명령을 전송하는 함수
 - 보호정지 뒤 재출발 권한을 자동 생성하는 함수
 
-따라서 서버가 `RuntimeMission.reference_path`를 제공해야 한다. 전역 경로 선택 함수는 제품
-경로 전략과 `G1~G5`가 결정되기 전까지 이 명세에 임의로 추가하지 않는다.
+서버의 기본 입력은 지도, 시작 자세와 목적지 자세다. runtime은 저장소의 기존
+`BoundedGridAStarPlanner`를 지도 전체 범위에서 실행해 reference path를 만든다. 이 선택은
+simulation runtime 연결 기본값이며 제품 알고리즘 채택이나 `G1~G5` 결정을 뜻하지 않는다.
 
 이 계약은 현재 개인 승인된 simulation-only 연결 계약이며 팀 전체 합의나 제품 알고리즘
 채택을 뜻하지 않는다.
@@ -48,6 +50,7 @@ from hospital_path_lab.runtime import (
     RuntimeMap,
     RuntimeMission,
     RuntimeObservation,
+    RuntimePlanningError,
     RuntimePose,
     RuntimeRobotState,
     RuntimeStepInput,
@@ -62,6 +65,25 @@ simulation/path_planning_lab/src/hospital_path_lab/runtime/
 
 서버는 hidden runner, corpus, evaluator나 연구 case ID를 import하지 않는다.
 
+### 2.1 전체 데이터 흐름
+
+```text
+Backend: mission_id + map + start_pose + goal_pose
+  → R7Runtime.start_mission()
+  → 기존 Grid A*
+  → reference path
+  → 기존 reference builder / validator
+  → persistent R7 pipeline
+
+매 50ms: 최신 robot state + 새로 도착한 processed Actor observation
+  → R7Runtime.step()
+  → observation validator
+  → direction predictor
+  → DWB
+  → shared safety gate
+  → RuntimeCommand
+```
+
 ## 3. 공개 함수
 
 ### 3.1 생성
@@ -75,6 +97,7 @@ runtime = R7Runtime(config: RuntimeConfig | None = None)
 | 필드 | 기본값 | 뜻 |
 |---|---|---|
 | `controller_kind` | `RuntimeControllerKind.DWB` | 기존 persistent DWB controller 사용 |
+| `global_planner_kind` | `RuntimeGlobalPlannerKind.GRID_ASTAR` | 기존 점유격자 A*로 전역 reference 생성 |
 | `observation_profile` | `NORMAL` | 동결된 Normal 관측 규칙 사용 |
 | `require_native_dwb` | `True` | C++ full core와 safety core가 없으면 시작 거부 |
 
@@ -88,6 +111,10 @@ runtime.start_mission(mission: RuntimeMission) -> None
 
 한 runtime 인스턴스에는 동시에 한 미션만 존재한다. 이미 미션이 있으면
 `RuntimeStateError`를 발생시킨다.
+
+이 함수는 지도 변환 → 기존 Grid A* → endpoint 복원 → 기존 reference builder/validator →
+persistent controller 준비 순서로 실행한다. 경로를 찾지 못하면 `RuntimePlanningError`를
+발생시키며 직선 fallback을 만들지 않는다.
 
 ### 3.3 한 control tick 실행
 
@@ -125,10 +152,10 @@ RuntimeMission(
     runtime_map: RuntimeMap,
     start_pose: RuntimePose,
     goal_pose: RuntimePose,
-    reference_path: tuple[RuntimePose, ...],
     observation_stream_id: str,
     observation_session_seed: int,
     authorization_revision: int = 0,
+    reference_path: tuple[RuntimePose, ...] | None = None,
 )
 ```
 
@@ -139,15 +166,27 @@ RuntimeMission(
 | `runtime_map` | `RuntimeMap` | 알려진 정적 지도와 금지 cell |
 | `start_pose` | `RuntimePose` | 미션 시작 자세 |
 | `goal_pose` | `RuntimePose` | 목적지 자세 |
-| `reference_path` | `tuple[RuntimePose, ...]` | 서버가 제공한 2개 이상 path pose |
+| `reference_path` | `tuple[RuntimePose, ...] | None` | 기본 `None`: 자동 계획, 명시값: 연구·시험 override |
 | `observation_stream_id` | non-empty `str` | 처리된 카메라 관측 stream 식별자 |
 | `observation_session_seed` | `int >= 0` | 관측 session 결박값 |
 | `authorization_revision` | `int >= 0` | 현재 이동 권한 revision |
 
-`reference_path[0]`의 위치는 `start_pose`, 마지막 위치는 `goal_pose`와 같아야 한다. 연속한
-두 pose의 위치가 같으면 안 된다.
+일반 backend는 `reference_path`를 생략한다. 명시할 경우 첫 위치는 `start_pose`, 마지막
+위치는 `goal_pose`와 같아야 하며 연속 duplicate가 없어야 한다.
 
-### 4.1 지도 `RuntimeMap`
+### 4.1 자동 전역 경로 생성
+
+기본 `GRID_ASTAR`를 선택한 이유는 `RuntimeMap` 자체가 점유격자이고, 기존 구현이 차체 크기,
+0.08m 최소 여유, 금지 cell과 대각선 코너 절단 금지를 이미 함께 처리하기 때문이다.
+통로 그래프용 A*/Dijkstra/D* Lite는 별도 `GraphMap`이 필요한 반면 backend 기본 입력에는
+그 그래프가 없다.
+
+좌표 변환은 기존 `GridMap.world_to_cell()`과 `cell_to_pose()`를 사용한다. 변환식은
+`floor((world-origin)/resolution)`이며 planner가 반환한 cell center 중 첫점과 끝점은 서버가
+준 정확한 `start_pose`와 `goal_pose`로 복원한다. 중간 yaw는 다음 구간 방향, 마지막 yaw는
+`goal_pose.yaw_rad`를 따른다.
+
+### 4.2 지도 `RuntimeMap`
 
 ```python
 RuntimeMap(
@@ -167,7 +206,7 @@ RuntimeMap(
 - `resolution_m`: cell 한 칸의 실제 길이(m)
 - 지도·reference·차체·사람 위치는 같은 좌표계를 사용한다.
 
-### 4.2 자세 `RuntimePose`
+### 4.3 자세 `RuntimePose`
 
 ```python
 RuntimePose(x_m: float, y_m: float, yaw_rad: float = 0.0)
@@ -319,7 +358,6 @@ runtime.start_mission(
         ),
         start_pose=start,
         goal_pose=goal,
-        reference_path=(start, goal),
         observation_stream_id="camera-pipeline-1",
         observation_session_seed=101,
     )
@@ -365,6 +403,9 @@ command2 = runtime.step(
 | `start_mission()` 전 `step()` | `RuntimeStateError` |
 | 미션이 있는데 다시 `start_mission()` | `RuntimeStateError` |
 | native DWB가 필요한데 DLL 없음 | `RuntimeStateError` |
+| start/goal이 지도 밖·장애물·금지구역 | `RuntimePlanningError` |
+| 전역 경로가 없음 | `RuntimePlanningError` |
+| 자동 경로가 기존 reference validator를 통과하지 못함 | `RuntimeReferenceError` |
 | 자료형·finite·지도 구조 오류 | `TypeError` 또는 `ValueError` |
 | control tick 누락·역행 | 기존 controller를 catch-up하지 않고 안전정지 진행 |
 | 관측 sequence·map·hash 오류 | invalid 입력으로 gate에 전달해 제동·정지 |
@@ -391,8 +432,8 @@ command2 = runtime.step(
 
 | 담당 | 만들어야 하는 값 | 이 runtime이 하는 일 |
 |---|---|---|
-| 서버/미션 | mission ID·revision·목적지·권한 | 값 검증과 session 결박 |
-| 전역 경로 계층 | `reference_path` | reference validator 후 local 실행 |
+| 서버/미션 | mission ID·지도·시작·목적지·권한 | 값 검증과 session 결박 |
+| R7 navigation/runtime | 해당 없음 | 기존 Grid A*로 reference 생성·검증 |
 | localization/차체 | 현재 pose·linear/angular velocity | 최신 상태로 controller와 gate 계산 |
 | 카메라/인지 | Actor track ID·지도 위치·속도 | 관측 검증·방향 예측·충돌 안전검사 |
 | R7 runtime | 해당 없음 | 최종 선속도·각속도·상태 반환 |
@@ -402,6 +443,7 @@ command2 = runtime.step(
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q `
+  .\simulation\path_planning_lab\tests\test_runtime_global_planning.py `
   .\simulation\path_planning_lab\tests\test_runtime_r7_runtime.py
 .\.venv\Scripts\python.exe -m ruff check `
   .\simulation\path_planning_lab\src\hospital_path_lab\runtime
