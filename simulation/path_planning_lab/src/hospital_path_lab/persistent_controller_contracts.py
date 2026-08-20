@@ -12,6 +12,7 @@ from enum import StrEnum
 from hashlib import sha256
 from math import isclose, isfinite
 from re import fullmatch
+from typing import TYPE_CHECKING
 
 from hospital_path_lab.contracts import (
     GridSnapshot,
@@ -36,12 +37,11 @@ from hospital_path_lab.local_reference_contracts import (
 )
 from hospital_path_lab.local_reference_window import window_is_exact_slice
 from hospital_path_lab.map_factory import canonical_content_hash
-from hospital_path_lab.r5b_temporal_authorization import (
-    R5BTemporalExecutionAuthorization,
-    validate_r5b_temporal_authorization_for_tick,
-)
 from hospital_path_lab.spatial_oracle_contracts import spatial_grid_content_hash
 from hospital_path_lab.vehicle import VehicleProfile
+
+if TYPE_CHECKING:
+    from hospital_path_lab.r5b_temporal_authorization import R5BTemporalExecutionAuthorization
 
 PERSISTENT_REFERENCE_BINDING_SCHEMA_VERSION = "persistent-reference-binding-v1"
 PERSISTENT_CONTROLLER_INPUT_SCHEMA_VERSION = "persistent-controller-input-v1"
@@ -245,13 +245,18 @@ class PersistentControllerTickInput:
                 self.current_resume_authorization_revision,
                 "current_resume_authorization_revision",
             )
-        if self.temporal_execution_authorization is not None and not isinstance(
-            self.temporal_execution_authorization,
-            R5BTemporalExecutionAuthorization,
-        ):
-            raise TypeError(
-                "temporal_execution_authorization has an unsupported type"
+        if self.temporal_execution_authorization is not None:
+            from hospital_path_lab.r5b_temporal_authorization import (
+                R5BTemporalExecutionAuthorization,
             )
+
+            if not isinstance(
+                self.temporal_execution_authorization,
+                R5BTemporalExecutionAuthorization,
+            ):
+                raise TypeError(
+                    "temporal_execution_authorization has an unsupported type"
+                )
         _validate_reference_input_identity(self)
         _bind_or_check_hash(self, "tick_input_content_hash", self.expected_content_hash)
 
@@ -566,6 +571,10 @@ def _validate_reference_input_identity(value: PersistentControllerTickInput) -> 
         if value.temporal_execution_authorization is not None:
             raise ValueError("R5-A spatial input cannot claim temporal authorization")
     elif reference.evidence_level is ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL:
+        from hospital_path_lab.r5b_temporal_authorization import (
+            validate_r5b_temporal_authorization_for_tick,
+        )
+
         authorization = value.temporal_execution_authorization
         if authorization is None:
             raise ValueError("R5-B temporal input requires tick-bound authorization")

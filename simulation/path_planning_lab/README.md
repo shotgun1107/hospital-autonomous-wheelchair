@@ -5,6 +5,9 @@
 제품 코드·실물 주행·실제 사람 탑승 안전성의 증거가 아니다.
 
 구현과 시험의 연결 및 현재 한계는 [TRACEABILITY.md](TRACEABILITY.md)에서 추적한다.
+서버 Python 코드가 R7의 기존 controller·safety gate를 같은 프로세스에서 호출할 때의
+입력·출력·상태 경계는 [R7 Python runtime 연결 안내](../../docs/integration/r7-runtime-interface.md)를
+따른다. 이는 HTTP 서버나 제품 알고리즘 채택 문서가 아니다.
 움직이는 원형 Actor를 이용한 다음 비교 단계와 1시간 단위 구현 순서는
 [동적 사람 회피 비교실험 v5](../../docs/research/dynamic-person-avoidance-experiment-plan-2026-08-10.md)에
 동결했다.

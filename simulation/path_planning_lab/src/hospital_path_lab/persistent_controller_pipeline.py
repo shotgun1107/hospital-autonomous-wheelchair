@@ -1,17 +1,19 @@
 """R5 persistent controllers wired to the common dynamic safety gate.
 
 This is the deterministic 20 Hz functional lane described by the R5 research
-specification.  Python wall-clock time is recorded by controllers but does not
-advance simulation time; ``computation_time_s`` is an explicit fault input.
-The module does not run a corpus, inspect evaluator labels, or grant resume
-authority.
+specification. Python wall-clock time never advances simulation time. The
+historical ``computation_time_s`` fault input remains the default; a
+same-process runtime may instead ask this module to measure controller-call
+time for the existing deadline gate. The module does not run a corpus, inspect
+evaluator labels, or grant resume authority.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from math import cos, isfinite, sin
-from typing import Protocol
+from time import perf_counter_ns
+from typing import TYPE_CHECKING, Protocol
 
 from hospital_path_lab.contracts import GridSnapshot, Pose2D, RobotState, Twist2D
 from hospital_path_lab.dynamic_contracts import (
@@ -43,10 +45,10 @@ from hospital_path_lab.persistent_controller_contracts import (
     PersistentReferenceBinding,
     build_persistent_reference_binding,
 )
-from hospital_path_lab.r5b_temporal_authorization import (
-    R5BTemporalExecutionAuthorization,
-)
 from hospital_path_lab.reference_section_executor import R5_POSITION_TOLERANCE_M
+
+if TYPE_CHECKING:
+    from hospital_path_lab.r5b_temporal_authorization import R5BTemporalExecutionAuthorization
 
 PERSISTENT_CONTROLLER_PIPELINE_VERSION = "persistent-controller-pipeline-v2"
 _TOLERANCE = 1e-12
@@ -146,7 +148,7 @@ class PersistentControllerPipeline:
         *,
         observation_snapshot: DynamicObservationSnapshot,
         prediction_set: ActorPredictionSet | DirectionalPredictionSet | None,
-        computation_time_s: float = DYNAMIC_CONTROL_PERIOD_S,
+        computation_time_s: float | None = DYNAMIC_CONTROL_PERIOD_S,
         observation_safe: bool = True,
         path_still_valid: bool = True,
         local_safety_recheck_passed: bool = True,
@@ -155,9 +157,18 @@ class PersistentControllerPipeline:
         grid_snapshot: GridSnapshot | None = None,
         mission_cancelled: bool = False,
     ) -> PersistentPipelineStep:
-        """Run one exact 20 Hz step; current twist moves before gate output applies."""
+        """Run one exact 20 Hz step; current twist moves before gate output applies.
 
-        if not isfinite(computation_time_s) or computation_time_s < 0.0:
+        The historical default remains the deterministic simulation fault value
+        of ``0.05`` seconds.  A caller that passes ``None`` asks this adapter to
+        measure just the controller invocation and send that measured value to
+        the existing shared gate.  The latter is intended for a same-process
+        runtime facade; it does not advance simulation time.
+        """
+
+        if computation_time_s is not None and (
+            not isfinite(computation_time_s) or computation_time_s < 0.0
+        ):
             raise ValueError("computation_time_s must be finite and non-negative")
         for flag in (
             observation_safe,
@@ -255,7 +266,12 @@ class PersistentControllerPipeline:
             ),
             temporal_execution_authorization=temporal_execution_authorization,
         )
+        controller_started_ns = perf_counter_ns()
         controller_result = self.controller.step(tick_input)
+        measured_controller_time_s = (perf_counter_ns() - controller_started_ns) / 1_000_000_000
+        gate_computation_time_s = (
+            measured_controller_time_s if computation_time_s is None else computation_time_s
+        )
         direction_failure = _section_bound_direction_failure(
             controller_result,
             tick_input,
@@ -279,7 +295,7 @@ class PersistentControllerPipeline:
         proposal = persistent_result_to_dynamic_proposal(
             controller_result,
             tick_input=tick_input,
-            computation_time_s=computation_time_s,
+            computation_time_s=gate_computation_time_s,
         )
         context = DynamicSafetyContext(
             tick_id=tick,
@@ -326,6 +342,29 @@ class PersistentControllerPipeline:
         self.robot_state = state_after
         self.tick_id += 1
         return record
+
+    def synchronize_external_robot_state(self, robot_state: RobotState) -> None:
+        """Use an externally estimated robot state for the next controller tick.
+
+        This is intentionally a narrow state-injection seam: it does not alter
+        the controller, gate, reference session, or control tick.  A runtime
+        integration calls it immediately before :meth:`step` so the gate checks
+        the actual reported pose/twist instead of the pipeline's previous
+        simulation integration result.
+        """
+
+        if not isinstance(robot_state, RobotState):
+            raise TypeError("robot_state must be a RobotState")
+        values = (
+            robot_state.pose.x,
+            robot_state.pose.y,
+            robot_state.pose.yaw,
+            robot_state.twist.linear,
+            robot_state.twist.angular,
+        )
+        if not all(isfinite(value) for value in values):
+            raise ValueError("external robot_state values must be finite")
+        self.robot_state = robot_state
 
     def _hold_invalidated_reference(
         self,
