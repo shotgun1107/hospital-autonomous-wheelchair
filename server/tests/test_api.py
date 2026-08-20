@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from pytest import fixture, mark
 
 from hospital_server import create_app
+from hospital_server.demo import create_demo_app
 
 pytestmark = mark.anyio
 
@@ -145,3 +146,35 @@ async def test_http_errors_do_not_bypass_runtime_lifecycle() -> None:
             json=_mission_payload(mission_revision=2),
         )
         assert new_revision.status_code == 201
+
+
+async def test_interactive_demo_changes_output_when_actor_input_arrives() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=create_demo_app()),
+        base_url="http://testserver",
+    ) as client:
+        started = await client.post("/demo/start", json={"goal_x_m": 2.0})
+        assert started.status_code == 200
+
+        first = await client.post("/demo/step", json={})
+        second = await client.post("/demo/step", json={})
+        moving = await client.post("/demo/step", json={})
+        before_actor_due = await client.post(
+            "/demo/step",
+            json={"observation_mode": "actor", "actor_x_m": 1.2},
+        )
+        actor_due = await client.post(
+            "/demo/step",
+            json={"observation_mode": "actor", "actor_x_m": 1.2},
+        )
+
+        assert first.json()["command"]["motion_state"] == "holding"
+        assert second.json()["command"]["motion_state"] == "holding"
+        assert moving.json()["observation_frame_sent"] is True
+        assert moving.json()["command"]["motion_state"] == "moving"
+        assert before_actor_due.status_code == 200, before_actor_due.text
+        assert actor_due.status_code == 200, actor_due.text
+        assert before_actor_due.json()["observation_frame_sent"] is False
+        assert actor_due.json()["observation_frame_sent"] is True
+        assert actor_due.json()["input_observation_mode"] == "actor"
+        assert actor_due.json()["command"]["motion_state"] == "braking"

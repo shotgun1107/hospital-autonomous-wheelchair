@@ -24,6 +24,9 @@ DB, 로그인, 배차, raw 카메라 처리와 모터 통신은 포함하지 않
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - 상태 확인: `GET http://127.0.0.1:8000/health`
+- 쉬운 데모 시작: `POST /demo/start`
+- 값 변경 데모: `POST /demo/step`
+- 데모 상태: `GET /demo/status`
 - 미션 시작: `POST /v1/missions`
 - 제어 tick: `POST /v1/missions/{mission_id}/steps`
 - 상태 조회: `GET /v1/missions/{mission_id}`
@@ -32,6 +35,19 @@ DB, 로그인, 배차, raw 카메라 처리와 모터 통신은 포함하지 않
 같은 미션의 `steps` 요청은 서버 내부 lock으로 직렬 처리한다. tick을 건너뛰거나 순서를
 바꾸면 runtime의 기존 안전정지 흐름으로 들어간다. reset 뒤에도 같은
 `mission_id + mission_revision`은 다시 사용할 수 없으며 새 revision이 필요하다.
+
+Swagger에서 직접 값 변화를 보려면 다음 순서로 누른다.
+
+1. `POST /demo/start`에서 기본값 `goal_x_m=2.0`으로 실행한다.
+2. `POST /demo/step`을 기본값 `observation_mode=empty`로 세 번 실행한다.
+   결과의 `command.motion_state`가 `holding`, `holding`, `moving`으로 바뀐다.
+3. 같은 `/demo/step`에서 `observation_mode=actor`, `actor_x_m=1.2`,
+   `actor_y_m=0.5`로 바꾸어 두 번 실행한다.
+4. 두 번째 Actor 요청은 실제 10Hz frame 전달 tick이며 `observation_frame_sent=true`,
+   `command.motion_state=braking`으로 바뀐다.
+
+각 응답에는 실제로 사용한 control tick, 관측 frame 전송 여부, 입력 mode, 최종 선속도·
+각속도와 정지 이유가 함께 나온다. 데모를 처음부터 다시 하려면 Uvicorn을 재시작한다.
 
 ## 시험
 
