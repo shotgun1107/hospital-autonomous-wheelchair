@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 import hospital_path_lab.r5c_observation_diagnostic as r5c_diagnostic
+from hospital_path_lab.dynamic_contracts import DynamicMotionState
 from hospital_path_lab.dynamic_directional_prediction import (
     DirectionalPredictionStatus,
 )
@@ -13,6 +14,7 @@ from hospital_path_lab.dynamic_observation import (
     NORMAL_OBSERVATION_PROFILE,
     STRESS_OBSERVATION_PROFILE,
 )
+from hospital_path_lab.dynamic_safety import resume_authorization_content_hash
 from hospital_path_lab.r5c_observation_diagnostic import (
     run_r5c_crossing_completion_diagnostic,
 )
@@ -21,6 +23,10 @@ from hospital_path_lab.r7_failure_trace import (
     R7_FAILURE_TRACE_SCHEMA_VERSION,
     R7FailureTraceCollector,
     write_r7_failure_run_manifest,
+)
+from hospital_path_lab.r7_hidden_v4_qualification import (
+    _stress_result_is_conditionally_safe,
+    _trace_contract_proof,
 )
 
 _FULL_OBSERVATION_HORIZON_TICKS = 1_600
@@ -217,6 +223,9 @@ def test_normal_right_seed_8970341022568507592_completes_after_stop_bound_recove
         < result.completion_tick
     )
     assert trace.records[-1]["gate_state_after"] == "completed"
+    proof = _trace_contract_proof(trace.records, result)
+    assert proof["release_contract_violation_count"] == 0
+    assert proof["unauthorized_restart_count"] == 0
 
 
 def test_normal_left_seed_6422064046178126625_completes_with_continued_actor() -> None:
@@ -353,3 +362,157 @@ def test_completion_extension_does_not_emit_empty_at_old_world_boundary() -> Non
     assert directional is not None
     assert directional.status.value != "empty_frame"
     assert directional.prediction_set is not None
+
+
+def test_stress_left_seed_214092870162924582_conditionally_releases_then_restops(
+    tmp_path,
+) -> None:
+    trace = R7FailureTraceCollector()
+    result = run_r5c_crossing_completion_diagnostic(
+        side_index=0,
+        profile=STRESS_OBSERVATION_PROFILE,
+        tick_limit=503,
+        observation_horizon_ticks=_FULL_OBSERVATION_HORIZON_TICKS,
+        observation_seed=214092870162924582,
+        failure_trace=trace,
+    )
+
+    assert result.hard_failures == ()
+    assert result.outcome.value == "conservative_hold"
+    assert result.final_motion_state is DynamicMotionState.HOLDING
+    assert result.release_ticks == (497,)
+    assert result.first_motion_tick == 498
+    assert result.controller_call_count == 2
+    assert result.confirmed_stop_ticks == (502,)
+    assert result.minimum_static_clearance_m >= 0.08
+    assert result.minimum_actor_clearance_m is not None
+    assert result.minimum_actor_clearance_m >= 0.08
+    assert _stress_result_is_conditionally_safe(result)
+
+    release = trace.records[497]
+    assert release["release_permitted"] is True
+    assert release["confirmed_safe_frame_count_before"] >= 11
+    assert release["release_input_usable"] is True
+    assert release["last_event_was_no_frame"] is False
+    assert release["gate_state_before"] == "holding"
+    assert release["gate_state_after"] == "moving"
+    assert release["runtime_present_before"] is False
+    assert release["runtime_present_after"] is True
+    assert release["reference_stop_epoch"] == release["stop_epoch_after"]
+    assert release["resume_authorization_present_at_gate"] is True
+    assert release["resume_authorization_present_after_cleanup"] is False
+    assert release["resume_authorization_valid_at_release"] is True
+    assert release["resume_authorization_used_for_release"] is True
+    assert release["resume_authorization_consumed"] is True
+    assert release["resume_authorization_validation_failures"] == ()
+    assert isinstance(release["gate_stop_confirmed_at_s"], float)
+    assert (
+        release["resume_authorization_issued_or_revalidated_at_s"]
+        >= release["gate_stop_confirmed_at_s"]
+    )
+    assert release["temporal_authorization_present"] is True
+    assert (
+        release["temporal_authorization_content_hash"]
+        == release["temporal_authorization_expected_content_hash"]
+    )
+    assert (
+        release["temporal_authorization_reference_session_id"]
+        == release["reference_session_id"]
+    )
+    assert (
+        release["temporal_authorization_reference_content_hash"]
+        == release["reference_content_hash"]
+    )
+
+    proof = _trace_contract_proof(trace.records, result)
+    assert proof["release_contract_violation_count"] == 0
+    assert proof["unauthorized_restart_count"] == 0
+
+    persisted_trace = tmp_path / "stress-release-trace.jsonl"
+    trace.write_jsonl(persisted_trace)
+    reloaded_records = tuple(
+        json.loads(line)
+        for line in persisted_trace.read_text(encoding="utf-8").splitlines()
+    )
+    persisted_proof = _trace_contract_proof(reloaded_records, result)
+    assert persisted_proof["release_contract_violation_count"] == 0
+    assert persisted_proof["unauthorized_restart_count"] == 0
+
+    # Every mutation below describes evidence that must fail closed.  The
+    # trace hashes make this tampering observable in stored evidence; this
+    # targeted test also proves the evaluator rejects each primitive directly.
+    def mutated(**changes: object) -> dict[str, int | None]:
+        records = [dict(item) for item in trace.records]
+        records[497].update(changes)
+        return _trace_contract_proof(tuple(records), result)
+
+    for changes in (
+        {"resume_authorization_present_at_gate": False},
+        {"resume_authorization_content_hash": "0" * 64},
+        {"resume_authorization_stop_epoch": 0},
+        {"resume_authorization_issued_or_revalidated_at_s": -0.05},
+        {"resume_authorization_revision": 99},
+        {"resume_authorization_used_for_release": False},
+        {"resume_authorization_consumed": False},
+        {"resume_authorization_present_after_cleanup": True},
+        {"temporal_authorization_reference_session_id": "0" * 64},
+        {"temporal_authorization_reference_content_hash": "0" * 64},
+        {"temporal_authorization_content_hash": "0" * 64},
+        {"temporal_authorization_phase": "continuation"},
+        {"temporal_authorization_resume_authorization_revision": 99},
+        {"temporal_authorization_required": False},
+    ):
+        rejected = mutated(**changes)
+        assert rejected["release_contract_violation_count"] >= 1
+        assert rejected["unauthorized_restart_count"] >= 1
+
+    # A valid hash alone is insufficient: an authorization issued before the
+    # confirmed stop belongs to the wrong stop history and must fail closed.
+    predating_stop = [dict(item) for item in trace.records]
+    mutated_release = predating_stop[497]
+    stop_confirmed_at_s = mutated_release["gate_stop_confirmed_at_s"]
+    assert isinstance(stop_confirmed_at_s, float)
+    issued_at_s = stop_confirmed_at_s - 0.05
+    mutated_release["resume_authorization_issued_or_revalidated_at_s"] = issued_at_s
+    mutated_release["resume_authorization_content_hash"] = (
+        resume_authorization_content_hash(
+            mission_id=str(mutated_release["resume_authorization_mission_id"]),
+            stop_epoch=int(mutated_release["resume_authorization_stop_epoch"]),
+            issued_or_revalidated_at_s=issued_at_s,
+            authorization_revision=int(mutated_release["resume_authorization_revision"]),
+        )
+    )
+    rejected_predating_stop = _trace_contract_proof(tuple(predating_stop), result)
+    assert rejected_predating_stop["release_contract_violation_count"] >= 1
+    assert rejected_predating_stop["unauthorized_restart_count"] >= 1
+
+    replayed = [dict(item) for item in trace.records]
+    duplicate_release = dict(replayed[497])
+    duplicate_release["tick"] = 503
+    replayed.append(duplicate_release)
+    duplicate_proof = _trace_contract_proof(tuple(replayed), result)
+    assert duplicate_proof["release_contract_violation_count"] >= 1
+    assert duplicate_proof["unauthorized_restart_count"] >= 1
+
+    first_motion = trace.records[498]
+    assert first_motion["controller_called"] is True
+    assert first_motion["command_after_gate"] != {
+        "linear_mps": 0.0,
+        "angular_radps": 0.0,
+    }
+
+    dropout = trace.records[499]
+    assert dropout["observation_status"] == "stale"
+    assert dropout["last_event_was_no_frame"] is True
+    assert dropout["release_input_usable"] is False
+    assert dropout["controller_called"] is False
+    assert dropout["gate_state_before"] == "moving"
+    assert dropout["gate_state_after"] == "braking"
+    assert dropout["recovery_reason"] == "prediction_loss"
+
+    stopped = trace.records[502]
+    assert stopped["actual_stop_confirmed"] is True
+    assert stopped["gate_state_before"] == "braking"
+    assert stopped["gate_state_after"] == "holding"
+    assert stopped["stop_epoch_after"] == stopped["stop_epoch_before"] + 1
+    assert stopped["runtime_present_after"] is False

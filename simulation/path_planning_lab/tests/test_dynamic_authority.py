@@ -283,6 +283,81 @@ def test_eleven_new_safe_frames_and_current_epoch_authorization_resume() -> None
     assert decision.stop_epoch == 1
 
 
+def test_authorization_rejected_before_release_remains_usable() -> None:
+    gate = DynamicSafetyGate()
+    _drive_to_holding(gate)
+    authorization = build_resume_authorization(
+        mission_id="mission-v1",
+        stop_epoch=1,
+        issued_or_revalidated_at_s=0.10,
+        authorization_revision=7,
+    )
+
+    for sequence in range(11):
+        tick_id = 3 + sequence
+        rejected = gate.step(
+            _proposal(tick_id, sequence),
+            robot_state=RobotState(Pose2D(2.0, 2.0), Twist2D()),
+            context=replace(
+                _context(tick_id, sequence, authorization=authorization),
+                local_safety_recheck_passed=False,
+            ),
+        )
+
+    assert not rejected.resume_allowed
+    assert rejected.motion_state is DynamicMotionState.HOLDING
+
+    released = gate.step(
+        _proposal(14, 11),
+        robot_state=RobotState(Pose2D(2.0, 2.0), Twist2D()),
+        context=_context(14, 11, authorization=authorization),
+    )
+
+    assert released.resume_allowed
+    assert released.motion_state is DynamicMotionState.MOVING
+
+
+def test_successfully_released_authorization_cannot_be_replayed() -> None:
+    gate = DynamicSafetyGate()
+    _drive_to_holding(gate)
+    authorization = build_resume_authorization(
+        mission_id="mission-v1",
+        stop_epoch=1,
+        issued_or_revalidated_at_s=0.10,
+        authorization_revision=7,
+    )
+
+    for sequence in range(11):
+        tick_id = 3 + sequence
+        released = gate.step(
+            _proposal(tick_id, sequence),
+            robot_state=RobotState(Pose2D(2.0, 2.0), Twist2D()),
+            context=_context(tick_id, sequence, authorization=authorization),
+        )
+
+    assert released.resume_allowed
+    assert released.motion_state is DynamicMotionState.MOVING
+
+    # A normal new protective stop changes the epoch before another release.
+    # Restore the same confirmed hold deliberately to model a duplicated
+    # authorization delivery for the already released stop epoch.
+    gate.motion_state = DynamicMotionState.HOLDING
+    gate._consecutive_safe_frames = 10
+    gate._last_safe_sequence = 10
+
+    replayed = gate.step(
+        _proposal(14, 11),
+        robot_state=RobotState(Pose2D(2.0, 2.0), Twist2D()),
+        context=_context(14, 11, authorization=authorization),
+    )
+
+    assert not replayed.resume_allowed
+    assert replayed.motion_state is DynamicMotionState.HOLDING
+    assert replayed.consecutive_safe_frames == 11
+    assert "resume_authorization_already_consumed" in replayed.failure_reasons
+    assert replayed.counters.resume_authorizations_rejected == 1
+
+
 def test_hazard_clear_and_safe_frames_without_new_authorization_do_not_resume() -> None:
     gate = DynamicSafetyGate()
     _drive_to_holding(gate)

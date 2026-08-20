@@ -52,6 +52,7 @@ from hospital_path_lab.dynamic_witness_contracts import WitnessWorldSnapshot
 from hospital_path_lab.local_algorithms.dwb_reference.persistent_adapter import (
     PersistentSourceDerivedDwbController,
 )
+from hospital_path_lab.local_reference_contracts import ReferenceEvidenceLevel
 from hospital_path_lab.local_reference_window import project_reference_cursor
 from hospital_path_lab.map_factory import canonical_content_hash
 from hospital_path_lab.persistent_controller_contracts import PersistentControllerStatus
@@ -898,6 +899,7 @@ def _run_profile_diagnostic(
                 last_ready_sequence=last_ready_sequence,
                 gate_state_before=gate_state_before_tick,
                 stop_epoch_before=stop_epoch_before_tick,
+                gate_stop_confirmed_at_s=gate.stop_confirmed_at_s,
                 gate_safe_frames_before=gate_safe_frames_before_tick,
                 confirmed_safe_frames_before=confirmed_safe_before_tick,
                 confirmed_safe_frames_after=confirmed_safe_frame_count,
@@ -1400,6 +1402,7 @@ def _append_failure_trace_tick(
     last_ready_sequence: int | None,
     gate_state_before: DynamicMotionState,
     stop_epoch_before: int,
+    gate_stop_confirmed_at_s: float | None,
     gate_safe_frames_before: int,
     confirmed_safe_frames_before: int,
     confirmed_safe_frames_after: int,
@@ -1415,13 +1418,47 @@ def _append_failure_trace_tick(
 ) -> None:
     frame = snapshot.frame
     result = None if record is None else record.controller_result
+    safety_context = None if record is None else record.safety_context
+    safety_decision = decision if record is None else record.safety_decision
+    authorization = (
+        None if safety_context is None else safety_context.resume_authorization
+    )
+    tick_input = None if record is None else record.tick_input
+    temporal_authorization = (
+        None
+        if tick_input is None
+        else tick_input.temporal_execution_authorization
+    )
     after_state = gate_state_before if decision is None else decision.motion_state
     after_epoch = stop_epoch_before if decision is None else decision.stop_epoch
     safe_after = gate_safe_frames_before if decision is None else decision.consecutive_safe_frames
     gate_overrides_after = (
         gate_overrides_before if decision is None else decision.counters.gate_overrides
     )
-    reference = None if runtime_after is None else runtime_after.pipeline.full_reference
+    reference = (
+        tick_input.full_reference
+        if tick_input is not None
+        else None if runtime_after is None else runtime_after.pipeline.full_reference
+    )
+    authorization_present_at_gate = authorization is not None
+    authorization_present_after_cleanup = (
+        runtime_after is not None and runtime_after.resume_authorization is not None
+    )
+    authorization_valid_at_release = bool(
+        authorization_present_at_gate
+        and safety_decision is not None
+        and safety_decision.resume_allowed
+    )
+    authorization_used_for_release = bool(
+        authorization_valid_at_release
+        and gate_state_before is DynamicMotionState.HOLDING
+        and after_state is DynamicMotionState.MOVING
+        and safety_decision is not None
+        and safety_decision.proposal_accepted
+    )
+    authorization_consumed = bool(
+        authorization_used_for_release and not authorization_present_after_cleanup
+    )
     record_values: dict[str, object] = {
         "tick": tick,
         "simulation_time_s": tick * DYNAMIC_CONTROL_PERIOD_S,
@@ -1443,6 +1480,11 @@ def _append_failure_trace_tick(
         "gate_state_after": after_state.value,
         "stop_epoch_before": stop_epoch_before,
         "stop_epoch_after": after_epoch,
+        # This is the gate's confirmation time for the active stop epoch, not
+        # the trace-write time.  It lets the offline evaluator independently
+        # reject an otherwise well-formed authorization that predates the
+        # confirmed protective stop.
+        "gate_stop_confirmed_at_s": gate_stop_confirmed_at_s,
         "gate_consecutive_safe_frames_before": gate_safe_frames_before,
         "gate_consecutive_safe_frames_after": safe_after,
         "confirmed_safe_frame_count_before": confirmed_safe_frames_before,
@@ -1458,11 +1500,95 @@ def _append_failure_trace_tick(
         "reference_session_id": (
             None if reference is None else reference.reference_session_id
         ),
+        "reference_content_hash": (
+            None if reference is None else reference.reference_content_hash
+        ),
+        "reference_mission_id": None if reference is None else reference.mission_id,
         "reference_stop_epoch": None if reference is None else reference.stop_epoch,
+        "reference_evidence_level": (
+            None if reference is None else reference.evidence_level.value
+        ),
+        "temporal_authorization_required": (
+            reference is not None
+            and reference.evidence_level is ReferenceEvidenceLevel.GROUND_TRUTH_TEMPORAL
+        ),
+        # The runtime intentionally clears its one-shot authorization after the
+        # pipeline has consumed it.  Record the immutable gate input, not the
+        # post-cleanup runtime slot, so a valid release and its cleanup remain
+        # distinguishable in the evidence trace.
+        "resume_authorization_present_at_gate": authorization_present_at_gate,
+        "resume_authorization_present_after_cleanup": (
+            authorization_present_after_cleanup
+        ),
+        "resume_authorization_content_hash": (
+            None if authorization is None else authorization.content_hash
+        ),
+        "resume_authorization_mission_id": (
+            None if authorization is None else authorization.mission_id
+        ),
+        "resume_authorization_stop_epoch": (
+            None if authorization is None else authorization.stop_epoch
+        ),
+        "resume_authorization_issued_or_revalidated_at_s": (
+            None if authorization is None else authorization.issued_or_revalidated_at_s
+        ),
         "resume_authorization_revision": (
+            None if authorization is None else authorization.authorization_revision
+        ),
+        "resume_authorization_expected_revision": (
+            None if safety_context is None else safety_context.authorization_revision
+        ),
+        "resume_authorization_validation_failures": (
+            ()
+            if safety_decision is None
+            else tuple(
+                sorted(
+                    failure
+                    for failure in safety_decision.failure_reasons
+                    if failure.startswith("resume_authorization")
+                )
+            )
+        ),
+        "resume_authorization_valid_at_release": authorization_valid_at_release,
+        "resume_authorization_used_for_release": authorization_used_for_release,
+        "resume_authorization_consumed": authorization_consumed,
+        "temporal_authorization_present": temporal_authorization is not None,
+        "temporal_authorization_content_hash": (
             None
-            if runtime_after is None or runtime_after.resume_authorization is None
-            else runtime_after.resume_authorization.authorization_revision
+            if temporal_authorization is None
+            else temporal_authorization.authorization_content_hash
+        ),
+        "temporal_authorization_expected_content_hash": (
+            None
+            if temporal_authorization is None
+            else temporal_authorization.expected_content_hash
+        ),
+        "temporal_authorization_phase": (
+            None if temporal_authorization is None else temporal_authorization.phase.value
+        ),
+        "temporal_authorization_mission_id": (
+            None if temporal_authorization is None else temporal_authorization.mission_id
+        ),
+        "temporal_authorization_stop_epoch": (
+            None if temporal_authorization is None else temporal_authorization.stop_epoch
+        ),
+        "temporal_authorization_reference_session_id": (
+            None
+            if temporal_authorization is None
+            else temporal_authorization.reference_session_id
+        ),
+        "temporal_authorization_reference_content_hash": (
+            None
+            if temporal_authorization is None
+            else temporal_authorization.reference_content_hash
+        ),
+        "temporal_authorization_controller_tick": (
+            None if temporal_authorization is None else temporal_authorization.controller_tick
+        ),
+        "temporal_authorization_resume_authorization_revision": (
+            None
+            if temporal_authorization is None
+            else temporal_authorization.resume_authorization_revision
         ),
         "controller_status": None if result is None else result.status.value,
         "controller_failure_reason": None if result is None else result.failure_reason,

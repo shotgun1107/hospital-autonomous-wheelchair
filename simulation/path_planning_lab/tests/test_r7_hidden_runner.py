@@ -37,16 +37,35 @@ def test_runner_is_bound_to_v4_evidence_and_has_no_manual_seed_option() -> None:
     assert not any("seed" in option for option in option_strings)
 
 
-def test_v4_evidence_zip_and_receipt_are_accepted() -> None:
+def test_v4_evidence_is_historically_valid_but_rejected_by_current_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runner = _load_runner()
 
-    gate = runner._verify_r7_evidence(REPOSITORY_ROOT)
+    original_git_bytes = runner._git_bytes
+
+    def historical_git_bytes(root: Path, *args: str) -> bytes:
+        if len(args) == 2 and args[0] == "show" and args[1].startswith("HEAD:"):
+            _, relative = args[1].split(":", maxsplit=1)
+            return original_git_bytes(
+                root,
+                "show",
+                f"{runner.R7_IMPLEMENTATION_COMMIT}:{relative}",
+            )
+        return original_git_bytes(root, *args)
+
+    with monkeypatch.context() as historical:
+        historical.setattr(runner, "_git_bytes", historical_git_bytes)
+        gate = runner._verify_r7_evidence(REPOSITORY_ROOT)
 
     assert gate["release_gate_qualified"] is True
     assert gate["deadline_miss_count"] == 0
     assert gate["sample_count"] == 500
     assert gate["semantic_parity_case_count"] == 5
     assert gate["receipt_content_hash"] == runner.R7_RECEIPT_CONTENT_HASH
+
+    with pytest.raises(RuntimeError, match="frozen executable source changed"):
+        runner._verify_r7_evidence(REPOSITORY_ROOT)
 
 
 def test_tampered_evidence_zip_is_rejected_before_reading_cases(

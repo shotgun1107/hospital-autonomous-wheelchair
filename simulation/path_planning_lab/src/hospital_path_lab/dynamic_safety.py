@@ -221,6 +221,11 @@ class DynamicSafetyGate:
         self._candidate_rejected_by_gate = 0
         self._late_results_discarded = 0
         self._resume_authorizations_rejected = 0
+        # A valid authorization becomes spent only when it actually releases
+        # this gate from HOLDING.  Keep the exact content hash for the gate
+        # lifetime so a replay cannot turn the same protective-stop state
+        # into motion twice.
+        self._consumed_resume_authorization_hashes: set[str] = set()
 
     def step(
         self,
@@ -360,6 +365,12 @@ class DynamicSafetyGate:
                 )
             )
             if resume_allowed:
+                authorization = context.resume_authorization
+                if authorization is None:
+                    raise AssertionError(
+                        "a successful dynamic safety resume requires an authorization"
+                    )
+                self._consumed_resume_authorization_hashes.add(authorization.content_hash)
                 self.motion_state = DynamicMotionState.MOVING
                 self._consecutive_stop_ticks = 0
                 command = proposal.command
@@ -464,6 +475,8 @@ class DynamicSafetyGate:
         failures: list[str] = []
         if authorization.content_hash != expected_hash:
             failures.append("resume_authorization_hash_mismatch")
+        elif authorization.content_hash in self._consumed_resume_authorization_hashes:
+            failures.append("resume_authorization_already_consumed")
         if authorization.mission_id != context.mission_id:
             failures.append("resume_authorization_mission_mismatch")
         if authorization.stop_epoch != self.stop_epoch:
@@ -998,7 +1011,7 @@ def _pose_safety(
     failures: list[str] = []
     if forbidden_entry:
         failures.append("forbidden_zone_entry")
-    if physical_clearance < profile.minimum_clearance_m - _GEOMETRY_TOLERANCE:
+    elif static_clearance < profile.minimum_clearance_m - _GEOMETRY_TOLERANCE:
         failures.append("static_clearance_below_minimum")
     if actor_clearance is not None and actor_clearance < (
         profile.minimum_clearance_m - _GEOMETRY_TOLERANCE

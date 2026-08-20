@@ -19,7 +19,13 @@ from json import dumps
 from math import atan2, cos, hypot, pi, sin
 from time import perf_counter_ns
 
-from hospital_path_lab.contracts import PlanStatus, Pose2D, TrajectoryPoint, Twist2D
+from hospital_path_lab.contracts import (
+    PlanStatus,
+    Pose2D,
+    RobotState,
+    TrajectoryPoint,
+    Twist2D,
+)
 from hospital_path_lab.dynamic_contracts import ControllerSnapshot, build_controller_snapshot
 from hospital_path_lab.dynamic_safety import DynamicTrajectorySafetyEvidence
 from hospital_path_lab.dynamic_trajectory_constraints import (
@@ -30,6 +36,7 @@ from hospital_path_lab.local_reference_contracts import (
     ReferenceSectionKind,
     ReferenceTravelDirection,
 )
+from hospital_path_lab.local_reference_window import project_reference_cursor
 from hospital_path_lab.persistent_controller_contracts import (
     PERSISTENT_CONTROLLER_RESULT_SCHEMA_VERSION,
     PersistentControllerResult,
@@ -38,6 +45,8 @@ from hospital_path_lab.persistent_controller_contracts import (
 )
 from hospital_path_lab.reference_section_executor import (
     R5_POSITION_TOLERANCE_M,
+    R5_STOPPED_ANGULAR_VELOCITY_RADPS,
+    R5_STOPPED_LINEAR_VELOCITY_MPS,
     R5_YAW_TOLERANCE_RAD,
     ReferenceExecutorAction,
     ReferenceSectionExecutionDecision,
@@ -68,7 +77,7 @@ from .critics import (
 from .trajectory_generator import DwbReferenceTrajectoryGenerator
 
 PERSISTENT_DWB_CONTROLLER_NAME = "persistent_dwb_reference"
-PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v8-terminal-goal-tie"
+PERSISTENT_DWB_ADAPTER_VERSION = "persistent-dwb-reference-v9-bounded-terminal-goal-tie"
 
 R5_DWB_BYPASS_SCORING_LOOKAHEAD_M = 0.30
 R5_DWB_BYPASS_COMPLETION_TOLERANCE_M = 0.02
@@ -834,20 +843,28 @@ def _bind_stack_travel_direction(
         completion_tolerance,
     )
     aligned_forward = _aligned_forward_section(direction, yaw_error)
+    terminal_rotation_follows = _terminal_rotation_follows(
+        tick_input.full_reference,
+        active_section_index,
+    )
     terminal_rotation_approach = _terminal_rotation_approach(
         tick_input.full_reference,
         active_section_index,
-        tick_input.robot_state.pose,
+        tick_input.robot_state,
     )
     terminal_approach = _terminal_continuation_only(
         tick_input.full_reference,
         active_section_index,
     )
     stack.generator.set_prefer_forward_progress_on_exact_ties(
-        aligned_forward or terminal_rotation_approach
+        terminal_rotation_approach
+        if terminal_rotation_follows
+        else aligned_forward
     )
     stack.goal_align_critic.set_disable_near_goal(
-        aligned_forward or terminal_approach or terminal_rotation_approach
+        terminal_rotation_approach
+        if terminal_rotation_follows
+        else aligned_forward or terminal_approach
     )
     # A connector-tightened forward remainder keeps both alignment critics only
     # until its heading is aligned.  Leaving their forward-projection scores on
@@ -881,23 +898,109 @@ def _connector_tightened_forward_section(
 def _terminal_rotation_approach(
     reference: LocalManeuverReference,
     active_section_index: int,
-    current_pose: Pose2D,
+    current_state: RobotState,
 ) -> bool:
-    """Break grid-score zero-speed ties just before a planned terminal rotation."""
+    """Break a stopped, on-section tie just before a planned terminal rotation."""
 
+    if not _terminal_rotation_follows(reference, active_section_index):
+        return False
     section = reference.sections[active_section_index]
     if (
-        section.section_kind is not ReferenceSectionKind.FOLLOW_ORIGINAL
-        or section.travel_direction is not ReferenceTravelDirection.FORWARD
-        or active_section_index + 1 >= len(reference.sections)
-        or reference.sections[active_section_index + 1].section_kind
-        is not ReferenceSectionKind.ROTATE
+        abs(current_state.twist.linear)
+        > R5_STOPPED_LINEAR_VELOCITY_MPS + _TOLERANCE
+        or abs(current_state.twist.angular)
+        > R5_STOPPED_ANGULAR_VELOCITY_RADPS + _TOLERANCE
     ):
         return False
     target = reference.knots[section.last_knot_index].pose
-    return hypot(target.x - current_pose.x, target.y - current_pose.y) <= (
-        R5_DWB_TERMINAL_FORWARD_TIE_WINDOW_M + _TOLERANCE
+    target_distance_m = hypot(
+        target.x - current_state.pose.x,
+        target.y - current_state.pose.y,
     )
+    if not (
+        target_distance_m > R5_POSITION_TOLERANCE_M + _TOLERANCE
+        and target_distance_m
+        <= R5_DWB_TERMINAL_FORWARD_TIE_WINDOW_M + _TOLERANCE
+    ):
+        return False
+
+    start_arc_m = reference.knots[
+        section.first_knot_index
+    ].cumulative_translation_arc_m
+    end_arc_m = reference.knots[
+        section.last_knot_index
+    ].cumulative_translation_arc_m
+    projection = project_reference_cursor(
+        reference,
+        current_state.pose,
+        cursor_hint_m=start_arc_m,
+    )
+    if (
+        projection.ambiguous
+        or projection.source_section_index != active_section_index
+        or projection.distance_to_reference_m
+        > R5_POSITION_TOLERANCE_M + _TOLERANCE
+        or projection.cursor_arc_m < start_arc_m - _TOLERANCE
+        or projection.cursor_arc_m > end_arc_m + _TOLERANCE
+    ):
+        return False
+    remaining_arc_m = end_arc_m - projection.cursor_arc_m
+    completion_tolerance_m = translation_completion_tolerance_m(
+        reference,
+        active_section_index,
+    )
+    if (
+        remaining_arc_m <= completion_tolerance_m + _TOLERANCE
+        or remaining_arc_m
+        > R5_DWB_TERMINAL_FORWARD_TIE_WINDOW_M + _TOLERANCE
+    ):
+        return False
+
+    tangent = _terminal_section_tangent(reference, active_section_index)
+    if tangent is None:
+        return False
+    tangent_x, tangent_y = tangent
+    signed_remaining_m = (
+        (target.x - current_state.pose.x) * tangent_x
+        + (target.y - current_state.pose.y) * tangent_y
+    )
+    return signed_remaining_m > _TOLERANCE
+
+
+def _terminal_rotation_follows(
+    reference: LocalManeuverReference,
+    active_section_index: int,
+) -> bool:
+    section = reference.sections[active_section_index]
+    return (
+        section.section_kind is ReferenceSectionKind.FOLLOW_ORIGINAL
+        and section.travel_direction is ReferenceTravelDirection.FORWARD
+        and active_section_index + 1 < len(reference.sections)
+        and reference.sections[active_section_index + 1].section_kind
+        is ReferenceSectionKind.ROTATE
+    )
+
+
+def _terminal_section_tangent(
+    reference: LocalManeuverReference,
+    section_index: int,
+) -> tuple[float, float] | None:
+    """Return the final non-zero translation tangent of one reference section."""
+
+    section = reference.sections[section_index]
+    for knot_index in range(
+        section.last_knot_index,
+        section.first_knot_index,
+        -1,
+    ):
+        left = reference.knots[knot_index - 1].pose
+        right = reference.knots[knot_index].pose
+        dx = right.x - left.x
+        dy = right.y - left.y
+        length = hypot(dx, dy)
+        if length > _TOLERANCE:
+            return dx / length, dy / length
+    return None
 
 
 def _terminal_continuation_only(
