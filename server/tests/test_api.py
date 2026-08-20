@@ -153,6 +153,24 @@ async def test_interactive_demo_changes_output_when_actor_input_arrives() -> Non
         transport=ASGITransport(app=create_demo_app()),
         base_url="http://testserver",
     ) as client:
+        openapi = (await client.get("/openapi.json")).json()
+        assert "/demo/start" in openapi["paths"]
+        assert "/demo/step" in openapi["paths"]
+        assert "/demo/status" in openapi["paths"]
+        step_properties = openapi["components"]["schemas"]["DemoStepPayload"]["properties"]
+        assert set(step_properties) == {
+            "robot_x_m",
+            "robot_y_m",
+            "robot_yaw_rad",
+            "robot_linear_mps",
+            "robot_angular_radps",
+            "observation_mode",
+            "actor_x_m",
+            "actor_y_m",
+            "actor_vx_mps",
+            "actor_vy_mps",
+        }
+
         started = await client.post("/demo/start", json={"goal_x_m": 2.0})
         assert started.status_code == 200
 

@@ -3,6 +3,10 @@
 이 폴더는 `hospital_path_lab.runtime.R7Runtime`을 HTTP로 호출해 보는 작은 메모리 서버다.
 DB, 로그인, 배차, raw 카메라 처리와 모터 통신은 포함하지 않는다.
 
+필드별 요청·응답, 단위, 호출 순서와 오류 코드는
+[R7 FastAPI 송수신 명세](../docs/integration/r7-fastapi-api-spec.md)를 따른다. 실행 중인
+서버가 제공하는 기계 판독 명세는 `http://127.0.0.1:8000/openapi.json`이다.
+
 ## 설치
 
 프로젝트 루트의 Python 3.12 가상환경에서 실행한다.

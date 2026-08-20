@@ -5,6 +5,9 @@
 `hospital_path_lab.runtime.R7Runtime`은 서버 Python 코드가 기존 R7 경로 제어 묶음을
 같은 프로세스 안에서 호출할 수 있게 하는 얇은 연결층이다.
 
+HTTP 요청·응답 필드와 오류 코드는
+[R7 FastAPI 송수신 명세](r7-fastapi-api-spec.md)에 별도로 정리한다.
+
 ```text
 서버의 미션·지도·처리된 사람 관측
   → R7Runtime
